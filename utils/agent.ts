@@ -28,7 +28,7 @@ export function resolveAgent(params: {
     `» determineAgent: agentOverride=${agentOverride}, payload.agent=${params.payload.agent}, repoSettings.defaultAgent=${params.repoSettings.defaultAgent}`
   );
   const configuredAgentName =
-    agentOverride || params.payload.agent || params.repoSettings.defaultAgent || null;
+    agentOverride || params.payload.agent || params.repoSettings.defaultAgent || undefined;
 
   if (configuredAgentName) {
     const agent = agents[configuredAgentName];
@@ -38,14 +38,9 @@ export function resolveAgent(params: {
 
     // if explicitly configured (via override or payload), respect it even without matching keys
     // this allows users to force an agent selection (will fail later with clear error if no keys)
-    const isExplicitOverride = agentOverride !== undefined || params.payload.agent !== null;
-    if (isExplicitOverride) {
-      log.info(`» selected configured agent: ${agent.name}`);
-      return agent;
-    }
-
-    // for repo-level defaults, check if agent has matching keys before selecting
-    if (agentHasApiKeys(agent)) {
+    // for repo-level defaults, only select if agent has matching API keys
+    const isExplicitOverride = agentOverride !== undefined || params.payload.agent !== undefined;
+    if (isExplicitOverride || agentHasApiKeys(agent)) {
       log.info(`» selected configured agent: ${agent.name}`);
       return agent;
     }

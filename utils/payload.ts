@@ -1,13 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 import * as core from "@actions/core";
 import { type } from "arktype";
-import {
-  AgentName,
-  type AgentName as AgentNameType,
-  type AuthorPermission,
-  Effort,
-  type PayloadEvent,
-} from "../external.ts";
+import { AgentName, type AuthorPermission, Effort, type PayloadEvent } from "../external.ts";
 import type { RepoSettings } from "./repoSettings.ts";
 
 // tool permission enum types for inputs
@@ -19,11 +13,11 @@ const BashPermissionInput = type.enumerated("disabled", "restricted", "enabled")
 // permissions are derived from event.authorPermission instead
 const JsonPayload = type({
   "~pullfrog": "true",
-  "agent?": AgentName.or("null"),
+  "agent?": AgentName.or("undefined"),
   "prompt?": "string",
   "repoInstructions?": "string",
   "event?": "object",
-  "effort?": Effort,
+  "effort?": Effort.or("undefined"),
 });
 
 // permission levels that indicate collaborator status (have push access)
@@ -42,18 +36,18 @@ function isCollaborator(event: PayloadEvent): boolean {
 // if included, must match the type - so we need to explicitly allow undefined.
 export const Inputs = type({
   prompt: "string",
-  "effort?": Effort,
-  "agent?": AgentName.or("null"),
+  "effort?": Effort.or("undefined"),
+  "agent?": AgentName.or("undefined"),
   "web?": ToolPermissionInput.or("undefined"),
   "search?": ToolPermissionInput.or("undefined"),
   "write?": ToolPermissionInput.or("undefined"),
   "bash?": BashPermissionInput.or("undefined"),
-  "cwd?": "string|null",
+  "cwd?": type.string.or("undefined"),
 });
 
 export type Inputs = typeof Inputs.infer;
 
-function isAgentName(value: unknown): value is AgentNameType {
+function isAgentName(value: unknown): value is AgentName {
   return typeof value === "string" && AgentName(value) instanceof type.errors === false;
 }
 
@@ -61,9 +55,9 @@ function isPayloadEvent(value: unknown): value is PayloadEvent {
   return typeof value === "object" && value !== null && "trigger" in value;
 }
 
-function resolveCwd(cwd: string | null | undefined): string | null {
+function resolveCwd(cwd: string | undefined): string | undefined {
   const workspace = process.env.GITHUB_WORKSPACE;
-  if (!cwd) return workspace ?? null;
+  if (!cwd) return workspace;
   if (isAbsolute(cwd)) return cwd;
   return workspace ? resolve(workspace, cwd) : cwd;
 }
@@ -72,19 +66,17 @@ export function resolvePayload(repoSettings: RepoSettings) {
   const inputs = Inputs.assert({
     prompt: core.getInput("prompt", { required: true }),
     effort: core.getInput("effort") || undefined,
-    agent: core.getInput("agent") || null,
-    cwd: core.getInput("cwd") || null,
+    agent: core.getInput("agent") || undefined,
+    cwd: core.getInput("cwd") || undefined,
     web: core.getInput("web") || undefined,
     search: core.getInput("search") || undefined,
     write: core.getInput("write") || undefined,
     bash: core.getInput("bash") || undefined,
   });
 
-  // convert "null" string to null, validate agent name
-  const agent: AgentNameType | null =
-    inputs.agent !== undefined && inputs.agent !== "null" && isAgentName(inputs.agent)
-      ? inputs.agent
-      : null;
+  // validate agent name
+  const agent: AgentName | undefined =
+    inputs.agent !== undefined && isAgentName(inputs.agent) ? inputs.agent : undefined;
 
   // try to parse prompt as JSON payload (internal invocation)
   let jsonPayload: typeof JsonPayload.infer | null = null;
@@ -108,9 +100,8 @@ export function resolvePayload(repoSettings: RepoSettings) {
 
   // resolve agent from jsonPayload with type guard
   const jsonAgent = jsonPayload?.agent;
-  const resolvedAgent: AgentNameType | null =
-    agent ??
-    (jsonAgent !== undefined && jsonAgent !== "null" && isAgentName(jsonAgent) ? jsonAgent : null);
+  const resolvedAgent: AgentName | undefined =
+    agent ?? (jsonAgent !== undefined && isAgentName(jsonAgent) ? jsonAgent : undefined);
 
   // determine if permissions should be restricted based on event author
   // non-collaborators (read, triage, none, or missing) get restricted bash access

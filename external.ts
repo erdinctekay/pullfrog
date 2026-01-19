@@ -245,7 +245,7 @@ export type PayloadEvent =
 export interface WriteablePayload {
   "~pullfrog": true;
   /** agent slug identifier (e.g., "claude", "codex", "gemini") */
-  agent: AgentName | null;
+  agent?: AgentName | undefined;
   /** the prompt/instructions for the agent to execute (body if @pullfrog tagged + per-trigger instructions) */
   prompt: string;
   /** repo-level instructions (macro-expanded server-side) */
@@ -255,7 +255,7 @@ export interface WriteablePayload {
   /** effort level for model selection (mini, auto, max) - defaults to "auto" */
   effort?: Effort | undefined;
   /** working directory for the agent */
-  cwd?: string | null | undefined;
+  cwd?: string | undefined;
 }
 
 // immutable payload type for agent execution

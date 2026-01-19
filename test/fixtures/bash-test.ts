@@ -14,7 +14,6 @@ import type { Payload } from "../../external.ts";
  */
 export default {
   "~pullfrog": true,
-  agent: null,
   prompt: `Create a file called test-runner.js with the following content:
 
 \`\`\`javascript
