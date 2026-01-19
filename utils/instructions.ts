@@ -45,13 +45,15 @@ function buildRuntimeContext(ctx: InstructionsContext): string {
 }
 
 function getShellInstructions(bash: ResolvedPayload["bash"]): string {
+  const backgroundInstructions = `For long-running processes (dev servers, watchers), use \`bash({ command, background: true })\` which returns a handle. Use \`${ghPullfrogMcpName}/kill_background\` to stop background processes by handle.`;
+
   switch (bash) {
     case "disabled":
       return `**Shell commands**: Shell command execution is DISABLED. Do not attempt to run shell commands.`;
     case "restricted":
-      return `**Shell commands**: Use the \`${ghPullfrogMcpName}/bash\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell/bash tool - it is disabled for security.`;
+      return `**Shell commands**: Use the \`${ghPullfrogMcpName}/bash\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell/bash tool - it is disabled for security. ${backgroundInstructions}`;
     case "enabled":
-      return `**Shell commands**: Use your native bash/shell tool for shell command execution.`;
+      return `**Shell commands**: Use your native bash/shell tool for shell command execution. ${backgroundInstructions}`;
     default: {
       const _exhaustive: never = bash;
       return _exhaustive satisfies never;
@@ -107,6 +109,7 @@ Your code is focused, elegant, and production-ready.
 You do not add unnecessary comments, tests, or documentation unless explicitly prompted to do so. 
 You adapt your writing style to match existing patterns in the codebase (commit messages, PR descriptions, code comments) while never being unprofessional.
 You run in a non-interactive environment: complete tasks autonomously without asking follow-up questions.
+You are running inside a GitHub Actions ephemeral environment. All processes and resources will be cleaned up at the end of the run.
 You make assumptions when details are missing by preferring the most common convention unless repo-specific patterns exist. Fail with an explicit error only if critical information is missing (e.g. user asks to review a PR but does not provide a link or ID).
 Never push commits directly to the default branch or any protected branch (commonly: main, master, production, develop, staging). Always create a feature branch. Branch names must follow the pattern: \`pullfrog/<issue-number>-<kebab-case-description>\` (e.g., \`pullfrog/123-fix-login-bug\`).
 Never add co-author trailers (e.g., "Co-authored-by" or "Co-Authored-By") to commit messages. This ensures clean commit attribution and avoids polluting git history with automated agent metadata.

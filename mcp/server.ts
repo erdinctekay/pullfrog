@@ -10,10 +10,17 @@ import type { OctokitWithPlugins } from "../utils/github.ts";
 import type { ResolvedPayload } from "../utils/payload.ts";
 import type { RepoData } from "../utils/repoData.ts";
 
+export type BackgroundProcess = {
+  pid: number;
+  outputPath: string;
+  pidPath: string;
+};
+
 export interface ToolState {
   prNumber?: number;
   issueNumber?: number;
   selectedMode?: string;
+  backgroundProcesses: Map<string, BackgroundProcess>;
   review?: {
     id: number;
     nodeId: string;
@@ -45,6 +52,7 @@ export function initToolState(ctx: InitToolStateParams): ToolState {
       id: Number.isNaN(progressCommentId) ? null : progressCommentId,
       wasUpdated: false,
     },
+    backgroundProcesses: new Map(),
   };
 }
 
@@ -60,7 +68,7 @@ export interface ToolContext {
   jobId: string | undefined;
 }
 
-import { BashTool } from "./bash.ts";
+import { BashTool, KillBackgroundTool } from "./bash.ts";
 import { CheckoutPrTool } from "./checkout.ts";
 import { GetCheckSuiteLogsTool } from "./checkSuite.ts";
 import {
@@ -116,6 +124,27 @@ async function findAvailablePort(startPort: number): Promise<number> {
   throw new Error(`Could not find available port starting from ${startPort}`);
 }
 
+async function killBackgroundProcesses(toolState: ToolState): Promise<void> {
+  const backgroundProcesses = toolState.backgroundProcesses;
+  if (backgroundProcesses.size === 0) return;
+  for (const proc of backgroundProcesses.values()) {
+    try {
+      process.kill(-proc.pid, "SIGTERM");
+    } catch {
+      // already dead
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  for (const proc of backgroundProcesses.values()) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {
+      // already dead
+    }
+  }
+  backgroundProcesses.clear();
+}
+
 /**
  * Start the MCP HTTP server and return the URL and close function
  */
@@ -153,13 +182,14 @@ export async function startMcpHttpServer(
     PushBranchTool(ctx),
   ];
 
-  // only add BashTool if bash is not disabled
+  // only add BashTool and KillBackgroundTool if bash is not disabled
   // - "enabled": native bash + MCP bash
   // - "restricted": MCP bash only (native blocked by agent)
   // - "disabled": no bash at all
   const bash = ctx.payload.bash ?? "enabled";
   if (bash !== "disabled") {
     tools.push(BashTool(ctx));
+    tools.push(KillBackgroundTool(ctx));
   }
 
   tools.push(ReportProgressTool(ctx));
@@ -184,6 +214,7 @@ export async function startMcpHttpServer(
   return {
     url,
     [Symbol.asyncDispose]: async () => {
+      await killBackgroundProcesses(ctx.toolState);
       await server.stop();
     },
   };

@@ -1,4 +1,7 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, type StdioOptions, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { type } from "arktype";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -8,6 +11,7 @@ export const BashParams = type({
   description: "string",
   "timeout?": "number",
   "working_directory?": "string",
+  "background?": "boolean",
 });
 
 // patterns for sensitive env vars: suffixes (_KEY, _SECRET, _TOKEN) plus AI provider prefixes
@@ -34,21 +38,25 @@ function filterEnv(isPublicRepo: boolean): Record<string, string> {
   return filtered;
 }
 
+type SpawnSandboxedParams = {
+  command: string;
+  env: Record<string, string>;
+  cwd: string;
+  isPublicRepo: boolean;
+  stdio: StdioOptions;
+};
+
 /**
  * spawn command with filtered env. in CI, also use PID namespace isolation
  * to prevent child from reading /proc/$PPID/environ (only for public repos)
  */
-function spawnSandboxed(
-  command: string,
-  options: { env: Record<string, string>; cwd: string; isPublicRepo: boolean }
-): ChildProcess {
-  const stdio: ["ignore", "pipe", "pipe"] = ["ignore", "pipe", "pipe"];
-  const spawnOpts = { env: options.env, cwd: options.cwd, stdio, detached: true };
+function spawnSandboxed(params: SpawnSandboxedParams): ChildProcess {
+  const spawnOpts = { env: params.env, cwd: params.cwd, stdio: params.stdio, detached: true };
   // only use PID namespace isolation for public repos in CI
-  const useNamespaceIsolation = process.env.CI === "true" && options.isPublicRepo;
+  const useNamespaceIsolation = process.env.CI === "true" && params.isPublicRepo;
   return useNamespaceIsolation
-    ? spawn("unshare", ["--pid", "--fork", "--mount-proc", "bash", "-c", command], spawnOpts)
-    : spawn("bash", ["-c", command], spawnOpts);
+    ? spawn("unshare", ["--pid", "--fork", "--mount-proc", "bash", "-c", params.command], spawnOpts)
+    : spawn("bash", ["-c", params.command], spawnOpts);
 }
 
 /** kill process and its entire process group */
@@ -65,6 +73,14 @@ async function killProcessGroup(proc: ChildProcess): Promise<void> {
       /* already dead */
     }
   }
+}
+
+function getTempDir(): string {
+  const tempDir = process.env.PULLFROG_TEMP_DIR;
+  if (!tempDir) {
+    throw new Error("PULLFROG_TEMP_DIR not set");
+  }
+  return tempDir;
 }
 
 export function BashTool(ctx: ToolContext) {
@@ -84,10 +100,46 @@ Use this tool to:
     execute: execute(async (params) => {
       const timeout = Math.min(params.timeout ?? 120000, 600000);
       const cwd = params.working_directory ?? process.cwd();
-      const proc = spawnSandboxed(params.command, {
-        env: filterEnv(isPublicRepo),
+      const env = filterEnv(isPublicRepo);
+
+      if (params.background) {
+        const tempDir = getTempDir();
+        const handle = `bg-${randomUUID().slice(0, 8)}`;
+        const outputPath = join(tempDir, `${handle}.log`);
+        const pidPath = join(tempDir, `${handle}.pid`);
+        const logFd = openSync(outputPath, "a");
+        let proc: ChildProcess;
+        try {
+          proc = spawnSandboxed({
+            command: params.command,
+            env,
+            cwd,
+            isPublicRepo,
+            stdio: ["ignore", logFd, logFd],
+          });
+        } finally {
+          closeSync(logFd);
+        }
+        if (!proc.pid) {
+          throw new Error("failed to start background process");
+        }
+        proc.unref();
+        writeFileSync(pidPath, `${proc.pid}\n`);
+        ctx.toolState.backgroundProcesses.set(handle, { pid: proc.pid, outputPath, pidPath });
+        return {
+          handle,
+          outputPath,
+          pidPath,
+          message: `started background process ${handle} (pid ${proc.pid})`,
+        };
+      }
+
+      const proc = spawnSandboxed({
+        command: params.command,
+        env,
         cwd,
         isPublicRepo,
+        stdio: ["ignore", "pipe", "pipe"],
       });
 
       let stdout = "",
@@ -128,6 +180,45 @@ Use this tool to:
         output: output.trim(),
         exit_code: exitCode ?? (timedOut ? 124 : -1),
         timed_out: timedOut,
+      };
+    }),
+  });
+}
+
+export const KillBackgroundParams = type({
+  handle: type.string.describe("The handle of the background process to kill (e.g., bg-a1b2c3d4)"),
+});
+
+export function KillBackgroundTool(ctx: ToolContext) {
+  return tool({
+    name: "kill_background",
+    description: `Kill a background process by its handle. Use this to stop dev servers or other long-running processes started with bash({ background: true }).`,
+    parameters: KillBackgroundParams,
+    execute: execute(async (params) => {
+      const proc = ctx.toolState.backgroundProcesses.get(params.handle);
+      if (!proc) {
+        return {
+          success: false,
+          message: `no background process with handle ${params.handle}`,
+        };
+      }
+
+      try {
+        process.kill(-proc.pid, "SIGTERM");
+      } catch {
+        // already dead
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      try {
+        process.kill(-proc.pid, "SIGKILL");
+      } catch {
+        // already dead
+      }
+
+      ctx.toolState.backgroundProcesses.delete(params.handle);
+      return {
+        success: true,
+        message: `killed background process ${params.handle} (pid ${proc.pid})`,
       };
     }),
   });
