@@ -71,7 +71,7 @@ function resolveCwd(cwd: string | null | undefined): string | null {
 export function resolvePayload(repoSettings: RepoSettings) {
   const inputs = Inputs.assert({
     prompt: core.getInput("prompt", { required: true }),
-    effort: core.getInput("effort") || "auto",
+    effort: core.getInput("effort") || undefined,
     agent: core.getInput("agent") || null,
     cwd: core.getInput("cwd") || null,
     web: core.getInput("web") || undefined,

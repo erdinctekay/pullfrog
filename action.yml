@@ -9,7 +9,6 @@ inputs:
   effort:
     description: "Effort level: mini (fast), auto (default), max (most capable)"
     required: false
-    default: "auto"
   agent:
     description: "Agent to use: claude, codex, gemini, cursor, opencode"
     required: false
