@@ -31,7 +31,7 @@ export function validateCompatibility(payloadVersion: string, actionVersion: str
 
   const compatibilityRange = COMPATIBILITY_POLICY === 'same-features'
     ? `^${major}.${minor}.${major === 0 ? patch : 0}`
-    : `^${major}.${major === 0 ? minor : 0}.0`; // non-breaking
+    : `^${major}.${major === 0 ? minor : 0}.${major === 0 ? "x" : 0}`; // non-breaking
 
   if (!semver.satisfies(actionVersion, compatibilityRange)) {
     throw new Error(

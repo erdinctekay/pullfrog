@@ -10,6 +10,9 @@ describe('validateCompatibility', () => {
     ["1.0.0", "1.0.0"], // same
     ["1.0.0-alpha.1", "1.0.0"], // action is newer than pre-release
     ["0.1.0", "0.1.1"], // action is newer during active development
+    ["0.0.158", "0.0.158"], // bug #129
+    ["0.0.159", "0.0.158"], // bug #129
+    ["0.0.158", "0.0.159"], // bug #129
     ["1.0.0", "1.0.1"], // action patched
     ["1.0.0", "1.1.0"], // action has a new feature (backward compatible)
     ["1.0.1", "1.0.0"], // payload is newer (patch)
