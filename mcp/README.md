@@ -30,20 +30,50 @@ await mcp.call("gh_pullfrog/get_check_suite_logs", {
 ### review tools
 
 #### `get_review_comments`
-get all line-by-line comments and their replies for a specific pull request review.
+get all line-by-line comments for a specific pull request review, including full thread context for replies.
 
 **parameters:**
 - `pull_number` (number): the pull request number
 - `review_id` (number): the id from review.id in the webhook payload
+- `approved_by` (string, optional): only return comments this user gave a 👍 to
 
 **replaces:** `gh api repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments`
 
 **returns:**
-array of review comments including threaded replies:
-- file path, line number, comment body
-- side (LEFT/RIGHT) and position in diff
-- user, timestamps, html_url
-- in_reply_to_id for threaded comments (replies have this set to the parent comment id)
+- `commentsPath`: path to XML file with full comment details
+- `reviewer`: github username of the review author
+- `count`: number of comments to address
+
+**output format (XML):**
+```xml
+<review_comments count="2" reviewer="colinmcd94">
+
+<summary>
+  <comment id="67890" file="src/utils/auth.ts" line="42">Actually, can you use a type guard...</comment>
+  <comment id="67891" file="src/api/handler.ts" line="15">This should handle the error case</comment>
+</summary>
+
+<comment id="67890" file="src/utils/auth.ts" line="42" author="colinmcd94">
+  <thread>
+    <message id="12345" author="colinmcd94">Please add null checking here</message>
+    <message id="23456" author="octocat">What about using optional chaining?</message>
+  </thread>
+  <diff>
+@@ -40,7 +40,7 @@
+   const user = getUser(id);
+-  return user.name;
++  return user?.name;
+  </diff>
+  <body>Actually, can you use a type guard instead?</body>
+</comment>
+
+</review_comments>
+```
+
+- `<summary>` lists all comments to address with truncated preview
+- `<thread>` shows parent comments (when replying to existing thread)
+- `<diff>` contains the diff hunk around the commented line
+- `<body>` is the actual comment text to address
 
 **example:**
 ```typescript

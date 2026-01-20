@@ -5,6 +5,124 @@ import { log } from "../utils/log.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
+// graphql query to fetch all review threads with comments, replies, and reactions
+const REVIEW_THREADS_QUERY = `
+query ($owner: String!, $repo: String!, $pullNumber: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pullNumber) {
+      reviewThreads(first: 100) {
+        nodes {
+          diffSide
+          startDiffSide
+          comments(first: 100) {
+            nodes {
+              id
+              databaseId
+              body
+              path
+              line
+              startLine
+              url
+              author {
+                login
+              }
+              createdAt
+              updatedAt
+              pullRequestReview {
+                databaseId
+              }
+              replyTo {
+                databaseId
+              }
+              reactionGroups {
+                content
+                reactors(first: 10) {
+                  nodes {
+                    ... on Actor {
+                      login
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+type GraphQLReviewComment = {
+  id: string;
+  databaseId: number;
+  body: string;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  url: string;
+  author: {
+    login: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+  pullRequestReview: {
+    databaseId: number;
+  } | null;
+  replyTo: {
+    databaseId: number;
+  } | null;
+  reactionGroups:
+    | {
+        content: string;
+        reactors: {
+          nodes: ({ login: string } | null)[] | null;
+        };
+      }[]
+    | null;
+};
+
+type GraphQLReviewThread = {
+  diffSide: "LEFT" | "RIGHT";
+  startDiffSide: "LEFT" | "RIGHT" | null;
+  comments: {
+    nodes: (GraphQLReviewComment | null)[] | null;
+  } | null;
+} | null;
+
+type GraphQLResponse = {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        nodes: (GraphQLReviewThread | null)[] | null;
+      } | null;
+    } | null;
+  } | null;
+};
+
+const MAX_BODY_PREVIEW = 80;
+
+function truncateBody(body: string): string {
+  const oneLine = body.replace(/\n/g, " ").trim();
+  if (oneLine.length <= MAX_BODY_PREVIEW) return oneLine;
+  return oneLine.slice(0, MAX_BODY_PREVIEW - 3) + "...";
+}
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function hasThumbsUpFrom(comment: GraphQLReviewComment, username: string): boolean {
+  if (!comment.reactionGroups) return false;
+  const thumbsUp = comment.reactionGroups.find((g) => g.content === "THUMBS_UP");
+  if (!thumbsUp?.reactors?.nodes) return false;
+  return thumbsUp.reactors.nodes.some((r) => r?.login === username);
+}
+
 export const GetReviewComments = type({
   pull_number: type.number.describe("The pull request number"),
   review_id: type.number.describe("The review ID to get comments for"),
@@ -17,42 +135,82 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
   return tool({
     name: "get_review_comments",
     description:
-      "Get review comments for a pull request review, including diff context. " +
+      "Get review comments for a pull request review, including thread context. " +
       "When approved_by is provided, only returns comments that user approved with 👍. " +
-      "Returns commentsPath pointing to a file with full comment details.",
+      "Returns commentsPath pointing to a file with full comment details in XML format.",
     parameters: GetReviewComments,
     execute: execute(async ({ pull_number, review_id, approved_by }) => {
-      // fetch all review comments via REST API (includes diff_hunk)
-      const allComments = await ctx.octokit.paginate(ctx.octokit.rest.pulls.listReviewComments, {
+      // fetch the review to get reviewer username
+      const review = await ctx.octokit.rest.pulls.getReview({
         owner: ctx.repo.owner,
         repo: ctx.repo.name,
         pull_number,
+        review_id,
+      });
+      const reviewer = review.data.user?.login ?? "unknown";
+
+      // fetch all review threads using graphql (single API call)
+      const response = await ctx.octokit.graphql<GraphQLResponse>(REVIEW_THREADS_QUERY, {
+        owner: ctx.repo.owner,
+        repo: ctx.repo.name,
+        pullNumber: pull_number,
       });
 
-      // filter to target review
-      let reviewComments = allComments.filter((c) => c.pull_request_review_id === review_id);
-
-      // filter by thumbs up if approved_by is specified
-      if (approved_by) {
-        const approvedIds = new Set<number>();
-        for (const comment of reviewComments) {
-          const reactions = await ctx.octokit.rest.reactions.listForPullRequestReviewComment({
-            owner: ctx.repo.owner,
-            repo: ctx.repo.name,
-            comment_id: comment.id,
-          });
-          const hasThumbsUp = reactions.data.some(
-            (r) => r.content === "+1" && r.user?.login === approved_by
-          );
-          if (hasThumbsUp) approvedIds.add(comment.id);
-        }
-        reviewComments = reviewComments.filter((c) => approvedIds.has(c.id));
-      }
-
-      if (reviewComments.length === 0) {
+      const pullRequest = response.repository?.pullRequest;
+      if (!pullRequest?.reviewThreads?.nodes) {
         return {
           review_id,
           pull_number,
+          reviewer,
+          count: 0,
+          commentsPath: null,
+          message: "No review threads found",
+        };
+      }
+
+      // collect leaf comments (from target review) with their thread context
+      type LeafComment = {
+        comment: GraphQLReviewComment;
+        thread: GraphQLReviewComment[]; // parent comments in order (oldest first)
+        side: "LEFT" | "RIGHT";
+      };
+      const leafComments: LeafComment[] = [];
+
+      for (const thread of pullRequest.reviewThreads.nodes) {
+        if (!thread?.comments?.nodes) continue;
+
+        const threadComments = thread.comments.nodes.filter(
+          (c): c is GraphQLReviewComment => c !== null
+        );
+        if (threadComments.length === 0) continue;
+
+        // find comments from the target review (these are the "leaf" comments to address)
+        for (const comment of threadComments) {
+          if (comment.pullRequestReview?.databaseId !== review_id) continue;
+
+          // filter by approved_by if specified
+          if (approved_by && !hasThumbsUpFrom(comment, approved_by)) continue;
+
+          // get thread context (all comments before this one in the thread)
+          const threadContext = threadComments.filter(
+            (c) =>
+              c.createdAt < comment.createdAt ||
+              (c.createdAt === comment.createdAt && c.databaseId < comment.databaseId)
+          );
+
+          leafComments.push({
+            comment,
+            thread: threadContext,
+            side: thread.diffSide,
+          });
+        }
+      }
+
+      if (leafComments.length === 0) {
+        return {
+          review_id,
+          pull_number,
+          reviewer,
           count: 0,
           commentsPath: null,
           message: approved_by
@@ -61,26 +219,52 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
         };
       }
 
-      // format comments with diff context
+      // build XML output
       const lines: string[] = [];
-      for (const comment of reviewComments) {
-        lines.push(`${"=".repeat(60)}`);
-        lines.push(`COMMENT #${comment.id} by @${comment.user?.login ?? "unknown"}`);
-        lines.push(`File: ${comment.path}:${comment.line ?? comment.original_line ?? "?"}`);
-        if (comment.in_reply_to_id) {
-          lines.push(`Reply to: #${comment.in_reply_to_id}`);
+      lines.push(
+        `<review_comments count="${leafComments.length}" reviewer="${escapeXml(reviewer)}">`
+      );
+      lines.push("");
+
+      // summary section
+      lines.push("<summary>");
+      for (const leaf of leafComments) {
+        const line = leaf.comment.line ?? leaf.comment.startLine ?? 0;
+        const preview = escapeXml(truncateBody(leaf.comment.body));
+        lines.push(
+          `  <comment id="${leaf.comment.databaseId}" file="${escapeXml(leaf.comment.path)}" line="${line}">${preview}</comment>`
+        );
+      }
+      lines.push("</summary>");
+      lines.push("");
+
+      // detailed comments with thread context
+      for (const leaf of leafComments) {
+        const line = leaf.comment.line ?? leaf.comment.startLine ?? 0;
+        const author = leaf.comment.author?.login ?? "unknown";
+        lines.push(
+          `<comment id="${leaf.comment.databaseId}" file="${escapeXml(leaf.comment.path)}" line="${line}" author="${escapeXml(author)}">`
+        );
+
+        // thread history (parent comments)
+        if (leaf.thread.length > 0) {
+          lines.push("  <thread>");
+          for (const msg of leaf.thread) {
+            const msgAuthor = msg.author?.login ?? "unknown";
+            lines.push(
+              `    <message id="${msg.databaseId}" author="${escapeXml(msgAuthor)}">${escapeXml(msg.body)}</message>`
+            );
+          }
+          lines.push("  </thread>");
         }
-        lines.push("");
-        if (comment.diff_hunk) {
-          lines.push("```diff");
-          lines.push(comment.diff_hunk);
-          lines.push("```");
-          lines.push("");
-        }
-        lines.push("Comment:");
-        lines.push(comment.body);
+
+        // the actual comment body to address
+        lines.push(`  <body>${escapeXml(leaf.comment.body)}</body>`);
+        lines.push("</comment>");
         lines.push("");
       }
+
+      lines.push("</review_comments>");
 
       const content = lines.join("\n");
 
@@ -90,16 +274,17 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
         throw new Error("PULLFROG_TEMP_DIR not set");
       }
       const filename = approved_by
-        ? `review-${review_id}-approved-by-${approved_by}.txt`
-        : `review-${review_id}-comments.txt`;
+        ? `review-${review_id}-approved-by-${approved_by}.xml`
+        : `review-${review_id}-comments.xml`;
       const commentsPath = join(tempDir, filename);
       writeFileSync(commentsPath, content);
-      log.debug(`wrote ${reviewComments.length} comments to ${commentsPath}`);
+      log.debug(`wrote ${leafComments.length} comments to ${commentsPath}`);
 
       return {
         review_id,
         pull_number,
-        count: reviewComments.length,
+        reviewer,
+        count: leafComments.length,
         commentsPath,
       };
     }),

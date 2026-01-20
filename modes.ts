@@ -75,7 +75,8 @@ export function computeModes(): Mode[] {
 
 3. Fetch review comments using ${ghPullfrogMcpName}/get_review_comments with \`pull_number\` and \`review_id\` from EVENT DATA. This returns \`commentsPath\` - read that file for full comment details with diff context. If EVENT DATA contains a \`triggerer\` field (indicating who requested fixes), you can pass \`approved_by\` to filter to only comments they approved with 👍.
 
-4. Review the feedback provided. Understand each review comment and what changes are being requested.
+4. Review the feedback provided. Understand each review comment and what changes are being requested.    
+  - **If there are no actionable comments** (e.g., the review is an approval with no specific feedback to address), do NOT post a progress comment. Simply exit without taking action.
 
 5. If the request requires understanding the codebase structure or conventions, gather relevant context. Read AGENTS.md if it exists.
 
