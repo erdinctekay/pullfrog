@@ -101,11 +101,26 @@ type GraphQLResponse = {
 };
 
 const MAX_BODY_PREVIEW = 80;
+const MAX_THREAD_DEPTH = 10;
 
 function truncateBody(body: string): string {
   const oneLine = body.replace(/\n/g, " ").trim();
   if (oneLine.length <= MAX_BODY_PREVIEW) return oneLine;
   return oneLine.slice(0, MAX_BODY_PREVIEW - 3) + "...";
+}
+
+// walk up the replyTo chain to get actual conversation (oldest first)
+function getReplyChain(
+  comment: GraphQLReviewComment,
+  commentMap: Map<number, GraphQLReviewComment>,
+  depth = 0
+): GraphQLReviewComment[] {
+  if (depth >= MAX_THREAD_DEPTH) return [];
+  const parentId = comment.replyTo?.databaseId;
+  if (!parentId) return [];
+  const parent = commentMap.get(parentId);
+  if (!parent) return [];
+  return [...getReplyChain(parent, commentMap, depth + 1), parent];
 }
 
 function escapeXml(text: string): string {
@@ -140,15 +155,6 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
       "Returns commentsPath pointing to a file with full comment details in XML format.",
     parameters: GetReviewComments,
     execute: execute(async ({ pull_number, review_id, approved_by }) => {
-      // fetch the review to get reviewer username
-      const review = await ctx.octokit.rest.pulls.getReview({
-        owner: ctx.repo.owner,
-        repo: ctx.repo.name,
-        pull_number,
-        review_id,
-      });
-      const reviewer = review.data.user?.login ?? "unknown";
-
       // fetch all review threads using graphql (single API call)
       const response = await ctx.octokit.graphql<GraphQLResponse>(REVIEW_THREADS_QUERY, {
         owner: ctx.repo.owner,
@@ -161,11 +167,20 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
         return {
           review_id,
           pull_number,
-          reviewer,
+          reviewer: "unknown",
           count: 0,
           commentsPath: null,
           message: "No review threads found",
         };
+      }
+
+      // build a map of all comments for O(1) lookup when walking replyTo chains
+      const commentMap = new Map<number, GraphQLReviewComment>();
+      for (const thread of pullRequest.reviewThreads.nodes) {
+        if (!thread?.comments?.nodes) continue;
+        for (const comment of thread.comments.nodes) {
+          if (comment) commentMap.set(comment.databaseId, comment);
+        }
       }
 
       // collect leaf comments (from target review) with their thread context
@@ -191,16 +206,12 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
           // filter by approved_by if specified
           if (approved_by && !hasThumbsUpFrom(comment, approved_by)) continue;
 
-          // get thread context (all comments before this one in the thread)
-          const threadContext = threadComments.filter(
-            (c) =>
-              c.createdAt < comment.createdAt ||
-              (c.createdAt === comment.createdAt && c.databaseId < comment.databaseId)
-          );
+          // get thread context by walking up the replyTo chain (not just chronological)
+          const replyChain = getReplyChain(comment, commentMap);
 
           leafComments.push({
             comment,
-            thread: threadContext,
+            thread: replyChain,
             side: thread.diffSide,
           });
         }
@@ -210,7 +221,7 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
         return {
           review_id,
           pull_number,
-          reviewer,
+          reviewer: "unknown",
           count: 0,
           commentsPath: null,
           message: approved_by
@@ -218,6 +229,9 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
             : "No comments found for this review",
         };
       }
+
+      // derive reviewer from first comment (all comments in a review are from the same user)
+      const reviewer = leafComments[0].comment.author?.login ?? "unknown";
 
       // build XML output
       const lines: string[] = [];
