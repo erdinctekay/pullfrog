@@ -279,6 +279,7 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
       const commentsPath = join(tempDir, filename);
       writeFileSync(commentsPath, content);
       log.debug(`wrote ${leafComments.length} comments to ${commentsPath}`);
+      log.debug(`content: ${content}`);
 
       return {
         review_id,
