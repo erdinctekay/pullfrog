@@ -51,7 +51,7 @@ function buildRuntimeContext(ctx: InstructionsContext): string {
 }
 
 function buildEventData(event: PayloadEvent): string {
-  const { title, body, ...rest } = event;
+  const { title, body, trigger, ...rest } = event;
   const sections: string[] = [];
 
   // render title + body as markdown
@@ -66,10 +66,13 @@ function buildEventData(event: PayloadEvent): string {
     sections.push(trimmedBody);
   }
 
+  // include trigger in rest unless it's workflow_dispatch (not informative)
+  const restWithTrigger = trigger === "workflow_dispatch" ? rest : { trigger, ...rest };
+
   // separator and toon-encoded remaining fields
-  if (Object.keys(rest).length > 0) {
+  if (Object.keys(restWithTrigger).length > 0) {
     if (sections.length > 0) sections.push("---");
-    sections.push(toonEncode(rest));
+    sections.push(toonEncode(restWithTrigger));
   }
 
   return sections.join("\n\n");
