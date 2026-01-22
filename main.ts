@@ -3,6 +3,7 @@ import { initToolState, startMcpHttpServer } from "./mcp/server.ts";
 import { computeModes } from "./modes.ts";
 import { resolveAgent } from "./utils/agent.ts";
 import { validateApiKey } from "./utils/apiKeys.ts";
+import { resolveBody } from "./utils/body.ts";
 import { log, writeSummary } from "./utils/cli.ts";
 import { reportErrorToComment } from "./utils/errorReport.ts";
 import { createOctokit } from "./utils/github.ts";
@@ -48,6 +49,18 @@ export async function main(): Promise<MainResult> {
     const payload = resolvePayload(repo.repoSettings);
     if (payload.cwd && process.cwd() !== payload.cwd) {
       process.chdir(payload.cwd);
+    }
+
+    // resolve body - fetches body_html and converts to markdown if images present
+    // this ensures agents receive markdown with working signed image URLs
+    const originalBody = payload.event.body;
+    const resolvedBody = await resolveBody({ event: payload.event, octokit, repo });
+    if (resolvedBody !== originalBody) {
+      payload.event.body = resolvedBody;
+      // also update prompt if original body was included there
+      if (originalBody && payload.prompt.includes(originalBody)) {
+        payload.prompt = payload.prompt.replace(originalBody, resolvedBody ?? "");
+      }
     }
 
     const tmpdir = createTempDirectory();
