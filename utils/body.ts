@@ -2,6 +2,7 @@ import TurndownService from "turndown";
 import type { PayloadEvent } from "../external.ts";
 import type { OctokitWithPlugins } from "./github.ts";
 import type { RepoData } from "./repoData.ts";
+import { log } from "./cli.ts";
 
 const turndown = new TurndownService();
 
@@ -25,13 +26,30 @@ interface ResolveBodyContext {
 export async function resolveBody(ctx: ResolveBodyContext): Promise<string | null> {
   const body = ctx.event.body;
 
+  log.info(`[resolveBody] trigger: ${ctx.event.trigger}`);
+  log.info(`[resolveBody] original body (first 200 chars): ${body?.substring(0, 200)}`);
+  log.info(`[resolveBody] hasImages: ${hasImages(body)}`);
+
   // pass through if no images - no API call needed
-  if (!hasImages(body)) return body ?? null;
+  if (!hasImages(body)) {
+    log.info("[resolveBody] no images detected, returning original body");
+    return body ?? null;
+  }
 
+  log.info("[resolveBody] images detected, fetching body_html from GitHub API...");
   const bodyHtml = await fetchBodyHtml(ctx);
-  if (!bodyHtml) return body ?? null;
+  log.info(`[resolveBody] bodyHtml received: ${bodyHtml ? "yes" : "no"}`);
+  if (bodyHtml) {
+    log.info(`[resolveBody] bodyHtml (first 500 chars): ${bodyHtml.substring(0, 500)}`);
+  }
+  if (!bodyHtml) {
+    log.info("[resolveBody] no bodyHtml returned, returning original body");
+    return body ?? null;
+  }
 
-  return turndown.turndown(bodyHtml);
+  const resolved = turndown.turndown(bodyHtml);
+  log.info(`[resolveBody] resolved markdown (first 500 chars): ${resolved.substring(0, 500)}`);
+  return resolved;
 }
 
 async function fetchBodyHtml(ctx: ResolveBodyContext): Promise<string | undefined> {
