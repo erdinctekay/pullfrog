@@ -1,3 +1,4 @@
+// changes to tool permissions should be reflected in wiki/granular-tools.md
 import { ensureProgressCommentUpdated } from "./mcp/comment.ts";
 import { initToolState, startMcpHttpServer } from "./mcp/server.ts";
 import { computeModes } from "./modes.ts";

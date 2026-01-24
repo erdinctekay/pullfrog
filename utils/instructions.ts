@@ -1,3 +1,4 @@
+// changes to prompt assembly should be reflected in wiki/prompt.md
 import { execSync } from "node:child_process";
 import { encode as toonEncode } from "@toon-format/toon";
 import { ghPullfrogMcpName, type PayloadEvent } from "../external.ts";

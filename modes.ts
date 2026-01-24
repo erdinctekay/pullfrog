@@ -1,3 +1,4 @@
+// changes to mode definitions should be reflected in docs/modes.mdx
 import { type } from "arktype";
 import { ghPullfrogMcpName } from "./external.ts";
 

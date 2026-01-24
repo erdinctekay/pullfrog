@@ -1,3 +1,4 @@
+// changes to bash security (filterEnv, spawnBash) should be reflected in wiki/bash-sandbox.md, wiki/security.md, wiki/landlock.md, and docs/security.mdx
 import { type ChildProcess, type StdioOptions, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeFileSync } from "node:fs";

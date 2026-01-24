@@ -1,3 +1,6 @@
+// changes to effort level configuration should be reflected in wiki/effort.md and docs/effort.mdx
+// changes to tool permissions should be reflected in wiki/granular-tools.md
+// changes to web search configuration should be reflected in wiki/websearch.md
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
