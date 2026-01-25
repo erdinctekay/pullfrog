@@ -3,7 +3,6 @@ import type { Agent } from "../agents/index.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { createOctokit, type OctokitWithPlugins, parseRepoContext } from "../utils/github.ts";
 import { getGitHubInstallationToken } from "../utils/token.ts";
-import { fetchWorkflowRunInfo } from "../utils/workflowRun.ts";
 import type { ToolContext, ToolState } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -337,7 +336,7 @@ export async function deleteProgressComment(ctx: ToolContext): Promise<boolean> 
  * exited without ever calling reportProgress.
  *
  * Works even if MCP context is not initialized (e.g., if error occurs before MCP server starts).
- * Will fetch comment ID from database if not available in toolState.
+ * Uses comment ID from toolState (set during initToolState from initial fetch).
  */
 export async function ensureProgressCommentUpdated(toolState: ToolState): Promise<void> {
   // skip if comment was already updated during execution
@@ -350,26 +349,8 @@ export async function ensureProgressCommentUpdated(toolState: ToolState): Promis
     return;
   }
 
-  // try to get comment ID from toolState first, then from database if needed
-  let existingCommentId = toolState.progressComment.id;
-
-  // if not in toolState, try fetching from database using run ID
-  if (!existingCommentId) {
-    const runId = process.env.GITHUB_RUN_ID;
-    if (runId) {
-      try {
-        const workflowRunInfo = await fetchWorkflowRunInfo(runId);
-        if (workflowRunInfo.progressCommentId) {
-          existingCommentId = parseInt(workflowRunInfo.progressCommentId, 10);
-          if (Number.isNaN(existingCommentId)) {
-            existingCommentId = null;
-          }
-        }
-      } catch {
-        // database fetch failed, continue without comment ID
-      }
-    }
-  }
+  // get comment ID from toolState (already fetched during initToolState)
+  const existingCommentId = toolState.progressComment.id;
 
   // if still no comment ID, nothing to update
   if (!existingCommentId) {
