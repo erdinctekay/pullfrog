@@ -1,17 +1,33 @@
 #!/usr/bin/env node
 
 /**
- * simple check that GITHUB_TOKEN env var exists
+ * simple check that tokens exist via action inputs
  */
 
-const token = process.env.GITHUB_TOKEN;
+const token = process.env.INPUT_TOKEN;
+const anthropicKey = process.env.INPUT_ANTHROPIC_KEY;
+let failed = false;
 
+console.log("checking token input...");
 if (token) {
-  console.log(`GITHUB_TOKEN exists`);
-  console.log(`token prefix: ${token.substring(0, 10)}...`);
+  console.log(`token exists, prefix: ${token.substring(0, 10)}...`);
 } else {
-  console.error("GITHUB_TOKEN does not exist");
-  // github actions workflow command to fail the step
-  console.log("::error::GITHUB_TOKEN does not exist");
+  console.error("token input is empty");
+  console.log("::error::token input is empty");
+  failed = true;
+}
+
+console.log("checking anthropic_key input...");
+if (anthropicKey) {
+  console.log(`anthropic_key exists, prefix: ${anthropicKey.substring(0, 10)}...`);
+} else {
+  console.error("anthropic_key input is empty");
+  console.log("::error::anthropic_key input is empty");
+  failed = true;
+}
+
+if (failed) {
   process.exit(1);
 }
+
+console.log("all inputs present");
