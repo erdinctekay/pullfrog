@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as core from "@actions/core";
 import { log } from "./cli.ts";
 import { acquireNewToken } from "./github.ts";
+import { isGitHubActions } from "./globals.ts";
 
 // re-export for get-installation-token action
 export { acquireNewToken as acquireInstallationToken };
@@ -15,14 +16,36 @@ let githubInstallationToken: string | undefined;
  */
 export async function resolveInstallationToken() {
   assert(!githubInstallationToken, "GitHub installation token is already set.");
-  const acquiredToken = await acquireNewToken();
-  core.setSecret(acquiredToken);
-  githubInstallationToken = acquiredToken;
+  const originalToken = process.env.GITHUB_TOKEN;
+  if (originalToken) {
+    process.env.ORIGINAL_GITHUB_TOKEN = originalToken;
+  }
+  const externalToken = process.env.GH_TOKEN;
+  const token = externalToken || (await acquireNewToken());
+  process.env.GITHUB_TOKEN = token;
+  githubInstallationToken = token;
+
+  if (isGitHubActions) {
+    // out of caution, we don't call this here outside of the GitHub Actions environment
+    // given this uses `process.stdout.write(cmd.toString() + os.EOL)` under the hood,
+    core.setSecret(token);
+  }
+
   return {
-    token: acquiredToken,
-    [Symbol.asyncDispose]() {
+    token,
+    originalToken,
+    async [Symbol.asyncDispose]() {
       githubInstallationToken = undefined;
-      return revokeGitHubInstallationToken(acquiredToken);
+      if (originalToken) {
+        process.env.GITHUB_TOKEN = originalToken;
+      } else {
+        delete process.env.GITHUB_TOKEN;
+      }
+      // GH_TOKEN isn't acquired here, so it's not revoked here either
+      if (externalToken) {
+        return;
+      }
+      return revokeGitHubInstallationToken(token);
     },
   };
 }

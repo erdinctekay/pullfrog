@@ -1,6 +1,6 @@
 {
   "name": "@pullfrog/pullfrog",
-  "version": "0.0.159",
+  "version": "0.0.161",
   "type": "module",
   "files": [
     "index.js",
@@ -27,7 +27,6 @@
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
-    "@actions/github": "^6.0.1",
     "@anthropic-ai/claude-agent-sdk": "0.2.7",
     "@ark/fs": "0.53.0",
     "@ark/util": "0.53.0",

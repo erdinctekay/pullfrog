@@ -30,12 +30,11 @@ export async function main(): Promise<MainResult> {
   // normalize env var names to uppercase (handles case-insensitive workflow files)
   normalizeEnv();
 
-  // store original GITHUB_TOKEN
-  process.env.ORIGINAL_GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-
   const timer = new Timer();
-  const tokenRef = await resolveInstallationToken();
+
+  await using tokenRef = await resolveInstallationToken();
   process.env.GITHUB_TOKEN = tokenRef.token;
+
 
   const octokit = createOctokit(tokenRef.token);
   const runInfo = await resolveRun({ octokit });
@@ -82,7 +81,7 @@ export async function main(): Promise<MainResult> {
 
     await setupGit({
       token: tokenRef.token,
-      originalToken: process.env.ORIGINAL_GITHUB_TOKEN,
+      originalToken: tokenRef.originalToken,
       bashPermission: payload.bash,
       owner: runContext.repo.owner,
       name: runContext.repo.name,

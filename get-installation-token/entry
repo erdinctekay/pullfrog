@@ -25507,9 +25507,14 @@ var core3 = __toESM(require_core(), 1);
 // utils/log.ts
 var core = __toESM(require_core(), 1);
 var import_table = __toESM(require_src(), 1);
+
+// utils/globals.ts
 import { existsSync } from "node:fs";
+var isCloudflareSandbox = !!process.env.CLOUDFLARE_APPLICATION_ID && !!process.env.SANDBOX_VERSION;
 var isGitHubActions = !!process.env.GITHUB_ACTIONS;
 var isInsideDocker = existsSync("/.dockerenv");
+
+// utils/log.ts
 var isDebugEnabled = () => process.env.LOG_LEVEL === "debug" || process.env.ACTIONS_STEP_DEBUG === "true" || process.env.RUNNER_DEBUG === "1" || core.isDebug();
 function formatArgs(args) {
   return args.map((arg) => {

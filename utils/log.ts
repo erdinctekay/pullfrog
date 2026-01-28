@@ -2,14 +2,9 @@
  * Logging utilities that work well in both local and GitHub Actions environments
  */
 
-import { existsSync } from "node:fs";
 import * as core from "@actions/core";
 import { table } from "table";
-
-const isGitHubActions = !!process.env.GITHUB_ACTIONS;
-
-// detect if running inside Docker container (CI tests run in Docker with host env vars)
-const isInsideDocker = existsSync("/.dockerenv");
+import { isGitHubActions, isInsideDocker } from "./globals.ts";
 
 const isDebugEnabled = () =>
   process.env.LOG_LEVEL === "debug" ||
