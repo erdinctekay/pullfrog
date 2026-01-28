@@ -64,9 +64,6 @@ async function buildCommentFooter({
   return buildPullfrogFooter(footerParams);
 }
 
-const SUGGESTION_FORMAT_DESCRIPTION =
-  "when suggesting code changes, use GitHub's suggestion format with ```suggestion blocks to enable one-click apply (e.g., 'you could do this\\n```suggestion\\nsuggested code here\\n```'). note: suggestions only work on pull request line-level review comments, not on issue/PR-level comments.";
-
 function buildImplementPlanLink(
   owner: string,
   repo: string,
@@ -90,7 +87,7 @@ export async function addFooter(ctx: AddFooterCtx, body: string): Promise<string
 
 export const Comment = type({
   issueNumber: type.number.describe("the issue number to comment on"),
-  body: type.string.describe(`the comment body content. ${SUGGESTION_FORMAT_DESCRIPTION}`),
+  body: type.string.describe("the comment body content"),
 });
 
 export function CreateCommentTool(ctx: ToolContext) {
@@ -121,7 +118,7 @@ export function CreateCommentTool(ctx: ToolContext) {
 
 export const EditComment = type({
   commentId: type.number.describe("the ID of the comment to edit"),
-  body: type.string.describe(`the new comment body content. ${SUGGESTION_FORMAT_DESCRIPTION}`),
+  body: type.string.describe("the new comment body content"),
 });
 
 export function EditCommentTool(ctx: ToolContext) {
@@ -329,7 +326,7 @@ export const ReplyToReviewComment = type({
   pull_number: type.number.describe("the pull request number"),
   comment_id: type.number.describe("the ID of the review comment to reply to"),
   body: type.string.describe(
-    `extremely brief reply (1 sentence max) explaining what was fixed, e.g. 'Fixed by renaming to X' or 'Added null check'. ${SUGGESTION_FORMAT_DESCRIPTION}`
+    "extremely brief reply (1 sentence max) explaining what was fixed, e.g. 'Fixed by renaming to X' or 'Added null check'"
   ),
 });
 

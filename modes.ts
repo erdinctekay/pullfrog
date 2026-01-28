@@ -19,6 +19,8 @@ const reportProgressInstruction = `Use ${ghPullfrogMcpName}/report_progress to s
 
 const dependencyInstallationStep = `If this task will require running tests, builds, linters, or CLI commands that need installed packages, call \`${ghPullfrogMcpName}/start_dependency_installation\` NOW. This is non-blocking and allows dependencies to install in the background while you continue. Later, call \`${ghPullfrogMcpName}/await_dependency_installation\` before running commands that need them. Skip this step if only reading code or answering questions.`;
 
+const permalinkTip = `**TIP**: To reference specific code, use GitHub permalinks: \`https://github.com/{owner}/{repo}/blob/{commit_sha}/{path}#L{start}-L{end}\`. GitHub renders these as expandable code blocks.`;
+
 export function computeModes(): Mode[] {
   return [
     {
@@ -98,36 +100,35 @@ export function computeModes(): Mode[] {
       name: "Review",
       description:
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
-      prompt: `Follow these steps to review the PR. Think hard. Do not nitpick.
+      prompt: `Follow these steps to review the PR. Your job is to find problems—assume they exist until you've proven otherwise. Do not submit a clean review without thorough investigation.
 
 1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number. This should give you all PR metadata you need, including a \`diffPath\`: a path to a temp file containing the PR diff.
 
+2. **ANALYZE** - Read the modified files to understand the changes in context.
+   - **Understand the change**: What is being modified and why? What's the before/after behavior?
+   - **Evaluate the approach**: Is it sound? If not, focus on approach before implementation details.
 
-2. **ANALYZE** 
-   - Read the modified files to understand the changes in context. Make sure you understand what's being changed.
-   - Is it a good idea? Think about the tradeoffs.
-   - Is the approach sound? If not, focus on the approach first. Don't waste time on implementation details if the approach is wrong.
-   - Can you imagine a better approach? If so, explain. Make sure it's strictly better, not just different.
-   - Are there bugs, edge cases, security issues, or usability issues? Use your imagination.
+3. **INVESTIGATE** - Actively hunt for problems. Use these techniques:
+   - **Trace data flow**: Use grep to follow how data moves through the system. How is state passed? Where could it get lost?
+   - **Check boundaries**: What happens across process boundaries, module boundaries, async boundaries? State that exists in one context may not exist in another.
+   - **Explore failure modes**: What if this throws? What if that returns null? What if the network fails? What if this runs twice?
+   - **Verify assumptions**: If the code assumes X, verify X is actually true. Use grep, read related files, check documentation.
+   - **Consider lifecycle**: Initialization, cleanup, error recovery. Are resources acquired before use? Released after? What happens on cancellation?
+   - Do NOT stop at "this looks reasonable." Dig until you either find a problem or have concrete evidence there isn't one.
 
-3. **DRAFT** - For each inline comment, find the line in the diff. Each code line shows: \`| OLD | NEW | TYPE | CODE\`. Use the NEW line number (second column). When suggesting specific code changes, use GitHub's suggestion format with \`\`\`suggestion blocks to enable one-click apply. Example:
-   you could simplify this
-   \`\`\`suggestion
-   const result = data.map(x => x.value);
-   \`\`\`
-   or you could use reduce instead
-   \`\`\`suggestion
-   const result = data.reduce((acc, x) => [...acc, x.value], []);
-   \`\`\`
+4. **DRAFT** - For each issue found, create an inline comment. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`).
 
-4. **FILTER COMMENTS** - Do not nitpick! Do not leave compliments that are not actionable. Do not critique the code hygiene or anything stylistic.
+5. **FILTER** - Remove noise, keep substance:
+   - Remove style-only comments (formatting, naming conventions) unless they cause real confusion
+   - Remove compliments that aren't actionable
+   - Keep: bugs, logic errors, missing error handling, security issues, race conditions, resource leaks, incorrect assumptions
 
-5. **SUBMIT** — Use ${ghPullfrogMcpName}/create_pull_request_review with:
-- \`comments\`: Array of all inline comments with file paths and line numbers
-- \`body\`: Everything else. Aim for a 1-3 sentence summary of the urgency level (e.g., "minor suggestions" vs "blocking issues") and any critical callouts (e.g., API key exposure). It can be longer if there are concerns that do not lend themselves to inline comments.
-- If you have no substantive feedback, submit an empty comments array with a brief approving body.
-- Again, do not nitpick.
+6. **SUBMIT** — Use ${ghPullfrogMcpName}/create_pull_request_review:
+   - \`comments\`: Inline feedback on specific diff lines
+   - \`body\`: 1-3 sentence summary with urgency level and any concerns about code outside the diff
+   - If no issues found, submit with empty comments and a brief approving body
 
+${permalinkTip}
 `,
     },
     {
@@ -143,7 +144,9 @@ export function computeModes(): Mode[] {
 
 4. Create a structured plan with clear milestones
 
-5. ${reportProgressInstruction}`,
+5. ${reportProgressInstruction}
+
+${permalinkTip}`,
     },
     {
       name: "Fix",
