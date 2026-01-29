@@ -34,7 +34,6 @@ export async function main(): Promise<MainResult> {
   const timer = new Timer();
 
   await using tokenRef = await resolveInstallationToken();
-  process.env.GITHUB_TOKEN = tokenRef.token;
 
   const octokit = createOctokit(tokenRef.token);
   const runInfo = await resolveRun({ octokit });
@@ -81,7 +80,7 @@ export async function main(): Promise<MainResult> {
 
     await setupGit({
       token: tokenRef.token,
-      originalToken: tokenRef.originalToken,
+      githubJobToken: tokenRef.githubJobToken,
       bashPermission: payload.bash,
       owner: runContext.repo.owner,
       name: runContext.repo.name,

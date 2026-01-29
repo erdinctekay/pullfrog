@@ -30,6 +30,10 @@ inputs:
   bash:
     description: "Bash permission: disabled, restricted (filters secrets from env vars), or enabled. Public repos default to restricted for security; private repos default to enabled."
     required: false
+  token:
+    description: "GitHub-provided token with job-scoped permissions. Do not set this unless you know what you are doing."
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: "node24"

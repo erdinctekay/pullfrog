@@ -44,7 +44,7 @@ export function setupTestRepo(options: SetupOptions): void {
 
 interface SetupGitParams {
   token: string;
-  originalToken: string | undefined;
+  githubJobToken: string | undefined;
   bashPermission: BashPermission;
   owner: string;
   name: string;
@@ -134,7 +134,11 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
   // - restricted/disabled: workflow token (limited by permissions block)
   // this protects the base repo while allowing fork PR edits via fork remote
   const originToken =
-    params.bashPermission === "enabled" ? params.token : params.originalToken || params.token;
+    params.bashPermission === "enabled"
+      ? params.token
+      : // in GitHub Actions environment this less-capable job token should always be available in the action's input
+        // but in other environments there is no secondary token like this so we just use the installation token itself
+        params.githubJobToken || params.token;
 
   // non-PR events: set up origin with token, stay on default branch
   if (params.event.is_pr !== true || !params.event.issue_number) {

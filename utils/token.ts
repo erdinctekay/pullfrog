@@ -11,18 +11,35 @@ export { revokeGitHubInstallationToken as revokeInstallationToken };
 // store token in memory instead of process.env
 let githubInstallationToken: string | undefined;
 
+function setEnvironmentVariable(name: string, value: string | undefined) {
+  const hadValue = Object.hasOwn(process.env, name);
+  const originalValue = process.env[name];
+
+  if (typeof value === "string") {
+    process.env[name] = value;
+  } else {
+    delete process.env[name];
+  }
+
+  return () => {
+    if (hadValue) {
+      process.env[name] = originalValue;
+    } else {
+      delete process.env[name];
+    }
+  };
+}
+
 /**
  * Setup GitHub installation token for the action
  */
 export async function resolveInstallationToken() {
   assert(!githubInstallationToken, "GitHub installation token is already set.");
-  const originalToken = process.env.GITHUB_TOKEN;
-  if (originalToken) {
-    process.env.ORIGINAL_GITHUB_TOKEN = originalToken;
-  }
+  const githubJobToken = core.getInput("token");
   const externalToken = process.env.GH_TOKEN;
   const token = externalToken || (await acquireNewToken());
-  process.env.GITHUB_TOKEN = token;
+
+  const revertGithubToken = setEnvironmentVariable("GITHUB_TOKEN", token);
   githubInstallationToken = token;
 
   if (isGitHubActions) {
@@ -33,14 +50,12 @@ export async function resolveInstallationToken() {
 
   return {
     token,
-    originalToken,
+    // in GitHub Actions environment this fallback token should always come from the action's input
+    // but in other environments there is no secondary token like this so we just use the installation token itself
+    githubJobToken,
     async [Symbol.asyncDispose]() {
       githubInstallationToken = undefined;
-      if (originalToken) {
-        process.env.GITHUB_TOKEN = originalToken;
-      } else {
-        delete process.env.GITHUB_TOKEN;
-      }
+      revertGithubToken();
       // GH_TOKEN isn't acquired here, so it's not revoked here either
       if (externalToken) {
         return;
