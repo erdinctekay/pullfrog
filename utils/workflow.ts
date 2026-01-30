@@ -4,6 +4,7 @@ import { fetchWorkflowRunInfo, type WorkflowRunInfo } from "./workflowRun.ts";
 
 interface ResolveRunParams {
   octokit: OctokitWithPlugins;
+  apiToken: string;
 }
 
 export interface ResolveRunResult {
@@ -24,7 +25,9 @@ export async function resolveRun(params: ResolveRunParams): Promise<ResolveRunRe
   }
   const [owner, repo] = githubRepo.split("/");
 
-  const workflowRunInfo = runId ? await fetchWorkflowRunInfo(runId) : { progressCommentId: null };
+  const workflowRunInfo = runId
+    ? await fetchWorkflowRunInfo({ runId, apiToken: params.apiToken })
+    : { progressCommentId: null };
 
   if (workflowRunInfo.progressCommentId) {
     log.info(`» using pre-created progress comment: ${workflowRunInfo.progressCommentId}`);

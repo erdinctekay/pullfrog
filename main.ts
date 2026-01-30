@@ -37,14 +37,15 @@ export async function main(): Promise<MainResult> {
   await using tokenRef = await resolveInstallationToken();
 
   const octokit = createOctokit(tokenRef.token);
-  const runInfo = await resolveRun({ octokit });
+  const runContext = await resolveRunContextData({ octokit, token: tokenRef.token });
+  timer.checkpoint("runContextData");
+
+  const runInfo = await resolveRun({ octokit, apiToken: runContext.apiToken });
   const toolState = initToolState({ runInfo });
 
   setupExitHandler(toolState);
 
   try {
-    const runContext = await resolveRunContextData({ octokit, token: tokenRef.token });
-    timer.checkpoint("runContextData");
 
     // resolve payload after runContextData so permissions can use DB settings
     // precedence: action inputs > json payload > repoSettings > fallbacks
