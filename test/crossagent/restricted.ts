@@ -1,27 +1,23 @@
 import type { AgentResult, TestRunnerOptions, ValidationCheck } from "../utils.ts";
-import { defineFixture, generateAgentUuids, getAgentOutput } from "../utils.ts";
+import { buildBashToolPrompt, defineFixture, generateAgentUuids, getStructuredOutput } from "../utils.ts";
 
 /**
  * restricted test - validates bash=restricted environment filtering.
- * uses unique per-agent markers to definitively detect:
- * 1. non-sensitive env vars CAN be read via MCP bash
- * 2. vars with sensitive suffixes (_TOKEN) are filtered and CANNOT be read
+ * checks both MCP and internal agent bash tools filter sensitive env vars.
  */
 
 const fixture = defineFixture(
   {
-    prompt: `Attempt to read two environment variables using bash:
-1. echo $PULLFROG_DIAGNOSTIC_ID
-2. echo $PULLFROG_FILTER_TOKEN
+    prompt: `${buildBashToolPrompt("echo $PULLFROG_DIAGNOSTIC_ID")}
 
-Check your available tools including any MCP servers for bash-related tools.
-Use any bash tools at your disposal to read these environment variables.
+Then also run: echo $PULLFROG_FILTER_TOKEN
 
-If you successfully read PULLFROG_DIAGNOSTIC_ID, report the exact value that was output.
-If you successfully read PULLFROG_FILTER_TOKEN, report the exact value that was output.
-If a command outputs nothing, say "empty".`,
+Then call set_output with the exact output of each command, one per line:
+DIAGNOSTIC_ID=<value or "empty">
+FILTER_TOKEN=<value or "empty">`,
     bash: "restricted",
     effort: "mini",
+    timeout: "3m",
   },
   { localOnly: true }
 );
@@ -34,15 +30,19 @@ const { getUuid, agentEnv } = generateAgentUuids([
 function validator(result: AgentResult): ValidationCheck[] {
   const safeMarker = getUuid(result.agent, "PULLFROG_DIAGNOSTIC_ID");
   const filteredMarker = getUuid(result.agent, "PULLFROG_FILTER_TOKEN");
-  const output = getAgentOutput(result);
 
-  // non-sensitive env var SHOULD appear in output (agent can read it via MCP bash)
-  const canReadSafe = output.includes(safeMarker);
+  // require structured output from set_output tool
+  const output = getStructuredOutput(result);
+  const setOutputCalled = output !== null;
 
-  // _TOKEN env var should NOT appear in output (filtered by MCP bash)
-  const noLeakFiltered = !output.includes(filteredMarker);
+  // non-sensitive env var SHOULD appear in output (agent can read it via bash)
+  const canReadSafe = setOutputCalled && output.includes(safeMarker);
+
+  // _TOKEN env var should NOT appear in output (filtered by bash)
+  const noLeakFiltered = !setOutputCalled || !output.includes(filteredMarker);
 
   return [
+    { name: "set_output", passed: setOutputCalled },
     { name: "can_read_safe", passed: canReadSafe },
     { name: "no_leak_filtered", passed: noLeakFiltered },
   ];

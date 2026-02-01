@@ -1,14 +1,27 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentsManifest } from "../external.ts";
 import type { Inputs } from "../main.ts";
+import { installSignalHandlers, trackChild, untrackChild } from "../utils/subprocess.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
 export const actionDir = join(__dirname, "..");
 
 const LOCAL_TEST_WARNING = "This is a local test - do not post any comments to GitHub.";
+
+// reusable prompt for bash tool tests - covers both MCP and internal agent tools
+export function buildBashToolPrompt(command: string): string {
+  return `Try to run this bash command: ${command}
+
+Check ALL available tools that could execute shell commands:
+- MCP tools from gh_pullfrog server (e.g. bash tool)
+- Internal agent tools (e.g. Bash, Shell, Task that can run bash)
+- Any other tool that can execute commands`;
+}
 
 export type FixtureOptions = {
   localOnly?: boolean;
@@ -72,9 +85,14 @@ const AGENT_COLORS: Record<string, string> = {
 };
 const RESET = "\x1b[0m";
 
-function getAgentPrefix(agent: string): string {
-  const color = AGENT_COLORS[agent] ?? "\x1b[37m";
-  return `${color}[${agent}]${RESET}`;
+export type PrefixContext = {
+  test: string;
+  agent: string;
+};
+
+export function getPrefix(ctx: PrefixContext): string {
+  const color = AGENT_COLORS[ctx.agent] ?? "\x1b[37m";
+  return `${color}[${ctx.test}][${ctx.agent}]${RESET}`;
 }
 
 export interface AgentResult {
@@ -92,32 +110,52 @@ export function getAgentOutput(result: AgentResult): string {
     .join("\n");
 }
 
+// get structured output from set_output tool (via ::pullfrog-output:: marker)
+// returns null if no structured output was set by the agent
+export function getStructuredOutput(result: AgentResult): string | null {
+  const match = result.output.match(/::pullfrog-output::([A-Za-z0-9+/=]+)/);
+  if (!match) return null;
+  return Buffer.from(match[1], "base64").toString();
+}
+
 export interface ValidationCheck {
   name: string;
   passed: boolean;
 }
 
 export interface ValidationResult {
+  test: string;
   agent: string;
   passed: boolean;
+  canceled: boolean;
   checks: ValidationCheck[];
   output: string;
 }
 
 export type ValidatorFn = (result: AgentResult) => ValidationCheck[];
 
-export interface RunOptions {
+export type RunStreamingOptions = {
+  test: string;
+  agent: string;
   fixture: Inputs;
   env?: Record<string, string> | undefined;
-}
+  // return true if logging should be suppressed (e.g. Ctrl+C)
+  isCanceled?: () => boolean;
+};
 
 const DEFAULT_TEST_TIMEOUT = "10m";
 
 // run agent and stream output with prefix labels
-export async function runAgentStreaming(agent: string, options: RunOptions): Promise<AgentResult> {
+// note: activity timeout is enforced in action main and subprocess utils
+export async function runAgentStreaming(options: RunStreamingOptions): Promise<AgentResult> {
+  installSignalHandlers();
+
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
-    const prefix = getAgentPrefix(agent);
+    const prefix = getPrefix({ test: options.test, agent: options.agent });
+    function canLog(): boolean {
+      return !options.isCanceled || !options.isCanceled();
+    }
 
     // apply default timeout if not specified in fixture
     const fixture: Inputs = {
@@ -125,14 +163,34 @@ export async function runAgentStreaming(agent: string, options: RunOptions): Pro
       timeout: options.fixture.timeout ?? DEFAULT_TEST_TIMEOUT,
     };
 
+    // create unique HOME directory per test to avoid config file conflicts
+    // when multiple tests run in parallel (e.g., cursor writes ~/.cursor/mcp.json)
+    const mcpPort = options.env?.PULLFROG_MCP_PORT ?? "default";
+    const testHome = `/tmp/home-${mcpPort}-${Date.now()}`;
+    mkdirSync(testHome, { recursive: true });
+
     const child = spawn("node", ["play.ts", "--raw", JSON.stringify(fixture)], {
       cwd: actionDir,
       env: {
         ...process.env,
-        AGENT_OVERRIDE: agent,
+        AGENT_OVERRIDE: options.agent,
         ...options.env,
+        HOME: testHome,
       },
       stdio: "pipe",
+      detached: true,
+    });
+
+    // track child for cleanup on Ctrl+C
+    trackChild({ child, killGroup: true });
+
+    child.on("error", (err) => {
+      untrackChild(child);
+      resolve({
+        agent: options.agent,
+        success: false,
+        output: `spawn error: ${err.message}`,
+      });
     });
 
     // buffer for incomplete lines
@@ -148,7 +206,7 @@ export async function runAgentStreaming(agent: string, options: RunOptions): Pro
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        if (line.trim()) {
+        if (line.trim() && canLog()) {
           console.log(`${prefix} ${line}`);
         }
       }
@@ -158,46 +216,14 @@ export async function runAgentStreaming(agent: string, options: RunOptions): Pro
     child.stderr?.on("data", processChunk);
 
     child.on("close", (code) => {
+      untrackChild(child);
+
       // flush any remaining buffer
-      if (buffer.trim()) {
+      if (buffer.trim() && canLog()) {
         console.log(`${prefix} ${buffer}`);
       }
       resolve({
-        agent,
-        success: code === 0,
-        output: Buffer.concat(chunks).toString(),
-      });
-    });
-  });
-}
-
-// run agent silently (collect output without streaming)
-export async function runAgent(agent: string, options: RunOptions): Promise<AgentResult> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-
-    // apply default timeout if not specified in fixture
-    const fixture: Inputs = {
-      ...options.fixture,
-      timeout: options.fixture.timeout ?? DEFAULT_TEST_TIMEOUT,
-    };
-
-    const child = spawn("node", ["play.ts", "--raw", JSON.stringify(fixture)], {
-      cwd: actionDir,
-      env: {
-        ...process.env,
-        AGENT_OVERRIDE: agent,
-        ...options.env,
-      },
-      stdio: "pipe",
-    });
-
-    child.stdout?.on("data", (data) => chunks.push(data));
-    child.stderr?.on("data", (data) => chunks.push(data));
-
-    child.on("close", (code) => {
-      resolve({
-        agent,
+        agent: options.agent,
         success: code === 0,
         output: Buffer.concat(chunks).toString(),
       });
@@ -206,6 +232,7 @@ export async function runAgent(agent: string, options: RunOptions): Promise<Agen
 }
 
 export type ValidateResultOptions = {
+  test: string;
   // if true, test passes when validation checks pass regardless of agent success
   // (used for tests like timeout that expect the agent run to fail)
   expectFailure?: boolean | undefined;
@@ -214,40 +241,23 @@ export type ValidateResultOptions = {
 export function validateResult(
   result: AgentResult,
   validator: ValidatorFn,
-  options?: ValidateResultOptions
+  options: ValidateResultOptions
 ): ValidationResult {
   const checks = validator(result);
   const allPassed = checks.every((c) => c.passed);
 
   // for tests with expectFailure: passed = agent failed AND all validation checks pass
   // for normal tests: passed = agent succeeded AND all validation checks pass
-  const passed = options?.expectFailure
-    ? !result.success && allPassed
-    : result.success && allPassed;
+  const passed = options.expectFailure ? !result.success && allPassed : result.success && allPassed;
 
   return {
+    test: options.test,
     agent: result.agent,
     passed,
+    canceled: false,
     checks,
     output: result.output,
   };
-}
-
-export interface RunAllOptions {
-  fixture: Inputs;
-  env?: Record<string, string> | undefined;
-  // per-agent env vars (for unique markers)
-  agentEnv?: Map<string, Record<string, string>> | undefined;
-}
-
-// run all agents in parallel with streaming output
-export async function runAllAgentsStreaming(options: RunAllOptions): Promise<AgentResult[]> {
-  return Promise.all(
-    agents.map((agent) => {
-      const env = { ...options.env, ...options.agentEnv?.get(agent) };
-      return runAgentStreaming(agent, { fixture: options.fixture, env });
-    })
-  );
 }
 
 export interface TestRunnerOptions {
@@ -260,28 +270,33 @@ export interface TestRunnerOptions {
   // if true, test passes when agent fails AND validation checks pass
   // (used for tests like timeout that expect the agent run to fail)
   expectFailure?: boolean;
+  // if true, test is agent-agnostic and only needs to run once with any agent
+  // agnostic tests run with claude by default, but can be run with specific agent via CLI
+  agnostic?: boolean;
 }
 
 export function printSingleValidation(validation: ValidationResult): void {
   const checksStr = validation.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");
-  console.log(`\nvalidation: ${checksStr}`);
+  const color = AGENT_COLORS[validation.agent] ?? "";
+  const canceledNote = validation.canceled ? " (canceled)" : "";
+  console.log(
+    `\n${color}[${validation.test}][${validation.agent}]${RESET} ${checksStr}${canceledNote}`
+  );
 }
 
 export function printResults(validations: ValidationResult[]): void {
-  // build header from check names
-  const checkNames = validations[0]?.checks.map((c) => c.name) ?? [];
-  const headerCols = checkNames.map((n) => n.toUpperCase().padEnd(14)).join("");
-
-  console.log("Results:");
+  console.log("\nresults:");
   console.log("-".repeat(70));
-  console.log(`STATUS  AGENT       ${headerCols}`);
+  console.log("status  test          agent       checks");
   console.log("-".repeat(70));
 
   for (const v of validations) {
     const color = AGENT_COLORS[v.agent] ?? "";
-    const status = v.passed ? "✅ PASS" : "❌ FAIL";
-    const checkCols = v.checks.map((c) => (c.passed ? "✓" : "✗").padEnd(14)).join("");
-    console.log(`${status}  ${color}${v.agent.padEnd(10)}${RESET}  ${checkCols}`);
+    const status = v.canceled ? "❌ canceled" : v.passed ? "✅ pass" : "❌ fail";
+    const checkCols = v.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");
+    console.log(
+      `${status}  ${v.test.padEnd(12)}  ${color}${v.agent.padEnd(10)}${RESET}  ${checkCols}`
+    );
   }
   console.log("-".repeat(70));
 

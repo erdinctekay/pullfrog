@@ -1,6 +1,12 @@
 // changes to tool permissions should be reflected in wiki/granular-tools.md
 import { initToolState, startMcpHttpServer } from "./mcp/server.ts";
 import { computeModes } from "./modes.ts";
+import {
+  type ActivityTimeout,
+  createProcessOutputActivityTimeout,
+  DEFAULT_ACTIVITY_CHECK_INTERVAL_MS,
+  DEFAULT_ACTIVITY_TIMEOUT_MS,
+} from "./utils/activity.ts";
 import { resolveAgent } from "./utils/agent.ts";
 import { validateAgentApiKey } from "./utils/apiKeys.ts";
 import { resolveBody } from "./utils/body.ts";
@@ -14,6 +20,7 @@ import { resolvePayload } from "./utils/payload.ts";
 import { handleAgentResult } from "./utils/run.ts";
 import { resolveRunContextData } from "./utils/runContextData.ts";
 import { createTempDirectory, setupGit } from "./utils/setup.ts";
+import { killTrackedChildren } from "./utils/subprocess.ts";
 import { parseTimeString, TIMEOUT_DISABLED } from "./utils/time.ts";
 import { Timer } from "./utils/timer.ts";
 import { resolveInstallationToken } from "./utils/token.ts";
@@ -33,6 +40,7 @@ export async function main(): Promise<MainResult> {
   normalizeEnv();
 
   const timer = new Timer();
+  let activityTimeout: ActivityTimeout | null = null;
 
   await using tokenRef = await resolveInstallationToken();
 
@@ -116,6 +124,11 @@ export async function main(): Promise<MainResult> {
     });
 
     // run agent, optionally with timeout enforcement
+    activityTimeout = createProcessOutputActivityTimeout({
+      timeoutMs: DEFAULT_ACTIVITY_TIMEOUT_MS,
+      checkIntervalMs: DEFAULT_ACTIVITY_CHECK_INTERVAL_MS,
+    });
+    activityTimeout.promise.catch(() => {}); // prevent unhandled rejection if agent wins race
     const agentPromise = agent.run({
       payload,
       mcpServerUrl: mcpHttpServer.url,
@@ -128,11 +141,11 @@ export async function main(): Promise<MainResult> {
     // - #notimeout to disable timeout entirely
     let result: Awaited<typeof agentPromise>;
     if (payload.timeout === TIMEOUT_DISABLED) {
-      result = await agentPromise;
+      result = await Promise.race([agentPromise, activityTimeout.promise]);
     } else {
       const parsed = payload.timeout ? parseTimeString(payload.timeout) : null;
       if (payload.timeout && parsed === null) {
-        log.warning(`Invalid timeout format "${payload.timeout}", using default 1h`);
+        log.warning(`invalid timeout format "${payload.timeout}", using default 1h`);
       }
       const timeoutMs = parsed ?? 3600000;
       const actualTimeout = parsed !== null ? payload.timeout : "1h";
@@ -144,7 +157,7 @@ export async function main(): Promise<MainResult> {
       });
       timeoutPromise.catch(() => {}); // prevent unhandled rejection if agent wins race
       try {
-        result = await Promise.race([agentPromise, timeoutPromise]);
+        result = await Promise.race([agentPromise, timeoutPromise, activityTimeout.promise]);
       } finally {
         clearTimeout(timeoutId);
       }
@@ -155,12 +168,18 @@ export async function main(): Promise<MainResult> {
       await writeSummary(toolState.lastProgressBody);
     }
 
+    // emit structured output marker for test validation
+    if (toolState.output) {
+      log.info(`::pullfrog-output::${Buffer.from(toolState.output).toString("base64")}`);
+    }
+
     return {
       ...handleAgentResult(result),
       result: toolState.output,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+    const errorMessage = error instanceof Error ? error.message : "unknown error occurred";
+    killTrackedChildren();
     log.error(errorMessage);
     try {
       await reportErrorToComment({ toolState, error: errorMessage });
@@ -171,5 +190,9 @@ export async function main(): Promise<MainResult> {
       success: false,
       error: errorMessage,
     };
+  } finally {
+    if (activityTimeout) {
+      activityTimeout.stop();
+    }
   }
 }

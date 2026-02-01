@@ -28,6 +28,6 @@ export const test: TestRunnerOptions = {
   name: "timeout tests",
   fixture,
   validator,
-  // agnostic tests expect failures, so override the default success check
   expectFailure: true,
+  agnostic: true,
 };

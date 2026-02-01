@@ -199,9 +199,12 @@ export const cursor = agent({
             log.warning("Tool call failed");
           } else {
             // log successful tool result so it appears in output
-            const text = result?.content?.[0]?.text?.text;
+            // handle both formats: { text: string } or { text: { text: string } }
+            const contentItem = result?.content?.[0];
+            const textValue = contentItem?.text;
+            const text = typeof textValue === "string" ? textValue : textValue?.text;
             if (text) {
-              console.log(text);
+              log.debug(`tool output: ${text}`);
             }
           }
         }

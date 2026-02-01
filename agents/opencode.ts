@@ -498,6 +498,10 @@ const messageHandlers = {
     if (status === "error") {
       const errorMsg = typeof output === "string" ? output : JSON.stringify(output);
       log.error(`» ❌ tool call failed: ${errorMsg}`);
+    } else if (output) {
+      // log successful tool result so it appears in captured output
+      const outputStr = typeof output === "string" ? output : JSON.stringify(output);
+      log.debug(`tool output: ${outputStr}`);
     }
   },
   result: async (event: OpenCodeResultEvent) => {

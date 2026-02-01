@@ -246,6 +246,11 @@ const messageHandlers: {
     } else if (item.type === "mcp_tool_call") {
       if (item.status === "failed" && item.error) {
         log.warning(`MCP tool call failed: ${item.error.message}`);
+      } else if ((item as any).output) {
+        // log successful MCP tool call output so it appears in captured output
+        const output = (item as any).output;
+        const outputStr = typeof output === "string" ? output : JSON.stringify(output);
+        log.debug(`tool output: ${outputStr}`);
       }
     } else if (item.type === "reasoning") {
       // Display reasoning in a human-readable format

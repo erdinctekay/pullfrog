@@ -1,7 +1,7 @@
 import "./arkConfig.ts";
-import { createServer } from "node:net";
 // this must be imported first
 import { FastMCP, type Tool } from "fastmcp";
+import { createServer } from "node:net";
 import type { Agent } from "../agents/index.ts";
 import { ghPullfrogMcpName } from "../external.ts";
 import type { Mode } from "../modes.ts";
@@ -95,68 +95,43 @@ import { SelectModeTool } from "./selectMode.ts";
 import { addTools } from "./shared.ts";
 import { UploadFileTool } from "./upload.ts";
 
-/**
- * Find an available port starting from the given port
- */
-async function findAvailablePort(startPort: number): Promise<number> {
-  const checkPort = (port: number): Promise<boolean> => {
-    return new Promise((resolve) => {
-      const server = createServer();
-      server.once("error", () => {
-        server.close();
-        resolve(false);
-      });
-      server.listen(port, () => {
-        server.close(() => {
-          resolve(true);
-        });
-      });
+const mcpPortStart = 3764;
+const mcpPortAttempts = 100;
+const mcpHost = "127.0.0.1";
+const mcpEndpoint = "/mcp";
+
+function readEnvPort(): number | null {
+  const rawPort = process.env.PULLFROG_MCP_PORT;
+  if (!rawPort) return null;
+  const parsed = Number.parseInt(rawPort, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
+    throw new Error(`invalid PULLFROG_MCP_PORT: ${rawPort}`);
+  }
+  return parsed;
+}
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
     });
-  };
-
-  let port = startPort;
-  while (port < startPort + 100) {
-    if (await checkPort(port)) {
-      return port;
-    }
-    port++;
-  }
-  throw new Error(`Could not find available port starting from ${startPort}`);
-}
-
-async function killBackgroundProcesses(toolState: ToolState): Promise<void> {
-  const backgroundProcesses = toolState.backgroundProcesses;
-  if (backgroundProcesses.size === 0) return;
-  for (const proc of backgroundProcesses.values()) {
-    try {
-      process.kill(-proc.pid, "SIGTERM");
-    } catch {
-      // already dead
-    }
-  }
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  for (const proc of backgroundProcesses.values()) {
-    try {
-      process.kill(-proc.pid, "SIGKILL");
-    } catch {
-      // already dead
-    }
-  }
-  backgroundProcesses.clear();
-}
-
-/**
- * Start the MCP HTTP server and return the URL and close function
- */
-export async function startMcpHttpServer(
-  ctx: ToolContext
-): Promise<{ url: string; [Symbol.asyncDispose]: () => Promise<void> }> {
-  const server = new FastMCP({
-    name: ghPullfrogMcpName,
-    version: "0.0.1",
+    server.listen(port, mcpHost);
   });
+}
 
-  // create all tools as factories, passing ctx
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function isAddressInUse(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("eaddrinuse") || message.includes("address already in use");
+}
+function buildTools(ctx: ToolContext): Tool<any, any>[] {
   const tools: Tool<any, any>[] = [
     SelectModeTool(ctx),
     StartDependencyInstallationTool(ctx),
@@ -195,28 +170,121 @@ export async function startMcpHttpServer(
 
   tools.push(ReportProgressTool(ctx));
 
+  return tools;
+}
+
+type McpStartResult = {
+  server: FastMCP;
+  url: string;
+  port: number;
+};
+
+async function tryStartMcpServer(ctx: ToolContext, port: number): Promise<McpStartResult | null> {
+  const server = new FastMCP({
+    name: ghPullfrogMcpName,
+    version: "0.0.1",
+  });
+  const tools = buildTools(ctx);
   addTools(ctx, server, tools);
 
-  const port = await findAvailablePort(3764);
-  const host = "127.0.0.1";
-  const endpoint = "/mcp";
+  try {
+    await server.start({
+      transportType: "httpStream",
+      httpStream: {
+        port,
+        host: mcpHost,
+        endpoint: mcpEndpoint,
+      },
+    });
+    const url = `http://${mcpHost}:${port}${mcpEndpoint}`;
+    return { server, url, port };
+  } catch (error) {
+    if (!isAddressInUse(error)) {
+      throw error;
+    }
+    try {
+      await server.stop();
+    } catch {
+      // ignore cleanup errors on failed start
+    }
+    return null;
+  }
+}
 
-  await server.start({
-    transportType: "httpStream",
-    httpStream: {
-      port,
-      host,
-      endpoint,
-    },
-  });
+async function selectMcpPort(ctx: ToolContext): Promise<McpStartResult> {
+  let lastError: unknown = null;
 
-  const url = `http://${host}:${port}${endpoint}`;
+  const requestedPort = readEnvPort();
+  if (requestedPort !== null) {
+    if (await isPortAvailable(requestedPort)) {
+      const requestedResult = await tryStartMcpServer(ctx, requestedPort);
+      if (requestedResult) {
+        return requestedResult;
+      }
+    }
+  }
+
+  // randomize start offset to reduce collision chance in parallel runs
+  const randomOffset = Math.floor(Math.random() * 50);
+
+  for (let offset = 0; offset < mcpPortAttempts; offset++) {
+    const port = mcpPortStart + randomOffset + offset;
+    try {
+      if (!(await isPortAvailable(port))) {
+        continue;
+      }
+      const result = await tryStartMcpServer(ctx, port);
+      if (result) {
+        return result;
+      }
+    } catch (error) {
+      lastError = error;
+      if (!isAddressInUse(error)) {
+        throw error;
+      }
+    }
+  }
+
+  const message = getErrorMessage(lastError);
+  throw new Error(
+    `could not find available mcp port starting at ${mcpPortStart} (last error: ${message})`
+  );
+}
+
+async function killBackgroundProcesses(toolState: ToolState): Promise<void> {
+  const backgroundProcesses = toolState.backgroundProcesses;
+  if (backgroundProcesses.size === 0) return;
+  for (const proc of backgroundProcesses.values()) {
+    try {
+      process.kill(-proc.pid, "SIGTERM");
+    } catch {
+      // already dead
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  for (const proc of backgroundProcesses.values()) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {
+      // already dead
+    }
+  }
+  backgroundProcesses.clear();
+}
+
+/**
+ * Start the MCP HTTP server and return the URL and close function
+ */
+export async function startMcpHttpServer(
+  ctx: ToolContext
+): Promise<{ url: string; [Symbol.asyncDispose]: () => Promise<void> }> {
+  const startResult = await selectMcpPort(ctx);
 
   return {
-    url,
+    url: startResult.url,
     [Symbol.asyncDispose]: async () => {
       await killBackgroundProcesses(ctx.toolState);
-      await server.stop();
+      await startResult.server.stop();
     },
   };
 }

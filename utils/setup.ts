@@ -6,6 +6,7 @@ import type { BashPermission, PayloadEvent } from "../external.ts";
 import { checkoutPrBranch } from "../mcp/checkout.ts";
 import type { ToolState } from "../mcp/server.ts";
 import { log } from "./cli.ts";
+import { isInsideDocker } from "./globals.ts";
 import type { OctokitWithPlugins } from "./github.ts";
 import { $ } from "./shell.ts";
 
@@ -27,15 +28,17 @@ export function createTempDirectory(): string {
  * Setup the test repository for running actions
  */
 export function setupTestRepo(options: SetupOptions): void {
-  const { tempDir } = options;
+  const tempDir = options.tempDir;
   const repo = process.env.GITHUB_REPOSITORY;
   if (!repo) throw new Error("GITHUB_REPOSITORY is required");
   log.info(`» cloning ${repo} into ${tempDir}...`);
 
-  // use HTTPS with token in CI, SSH locally
-  if (process.env.CI) {
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) throw new Error("GITHUB_TOKEN is required in CI");
+  // use https with token in ci or when running inside docker
+  if (process.env.CI || isInsideDocker) {
+    const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+    if (!token) {
+      throw new Error("GITHUB_TOKEN or GH_TOKEN is required for https clone in ci or docker");
+    }
     $("git", ["clone", `https://x-access-token:${token}@github.com/${repo}.git`, tempDir]);
   } else {
     $("git", ["clone", `git@github.com:${repo}.git`, tempDir]);

@@ -126,6 +126,11 @@ const messageHandlers = {
       const errorMsg =
         typeof event.output === "string" ? event.output : JSON.stringify(event.output);
       log.warning(`Tool call failed: ${errorMsg}`);
+    } else if (event.output) {
+      // log successful tool result so it appears in output
+      const outputStr =
+        typeof event.output === "string" ? event.output : JSON.stringify(event.output);
+      log.debug(`tool output: ${outputStr}`);
     }
   },
   result: async (event: GeminiResultEvent) => {
