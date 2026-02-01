@@ -16,7 +16,7 @@ import { setupExitHandler } from "./utils/exitHandler.ts";
 import { createOctokit } from "./utils/github.ts";
 import { resolveInstructions } from "./utils/instructions.ts";
 import { normalizeEnv } from "./utils/normalizeEnv.ts";
-import { resolvePayload } from "./utils/payload.ts";
+import { resolvePayload, resolvePromptInput } from "./utils/payload.ts";
 import { handleAgentResult } from "./utils/run.ts";
 import { resolveRunContextData } from "./utils/runContextData.ts";
 import { createTempDirectory, setupGit } from "./utils/setup.ts";
@@ -42,22 +42,28 @@ export async function main(): Promise<MainResult> {
   const timer = new Timer();
   let activityTimeout: ActivityTimeout | null = null;
 
+  // parse prompt early to extract progressCommentId for toolState
+  const resolvedPromptInput = resolvePromptInput();
+
+  const toolState = initToolState({
+    progressCommentId:
+      typeof resolvedPromptInput !== "string" ? resolvedPromptInput.progressCommentId : undefined,
+  });
+
+  setupExitHandler(toolState);
+
   await using tokenRef = await resolveInstallationToken();
 
   const octokit = createOctokit(tokenRef.token);
   const runContext = await resolveRunContextData({ octokit, token: tokenRef.token });
   timer.checkpoint("runContextData");
 
-  const runInfo = await resolveRun({ octokit, apiToken: runContext.apiToken });
-  const toolState = initToolState({ runInfo });
-
-  setupExitHandler(toolState);
+  const runInfo = await resolveRun({ octokit });
 
   try {
-
     // resolve payload after runContextData so permissions can use DB settings
     // precedence: action inputs > json payload > repoSettings > fallbacks
-    const payload = resolvePayload(runContext.repoSettings);
+    const payload = resolvePayload(resolvedPromptInput, runContext.repoSettings);
     if (payload.cwd && process.cwd() !== payload.cwd) {
       process.chdir(payload.cwd);
     }

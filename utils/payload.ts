@@ -17,12 +17,13 @@ export const JsonPayload = type({
   "~pullfrog": "true",
   version: "string",
   "agent?": AgentName.or("undefined"),
-  "prompt?": "string",
+  prompt: "string",
   "eventInstructions?": "string",
   "repoInstructions?": "string",
   "event?": "object",
   "effort?": Effort.or("undefined"),
   "timeout?": type.string.or("undefined"),
+  "progressCommentId?": type.string.or("undefined"),
 });
 
 // permission levels that indicate collaborator status (have push access)
@@ -68,9 +69,32 @@ function resolveCwd(cwd: string | undefined): string | undefined {
   return workspace ? resolve(workspace, cwd) : cwd;
 }
 
-export function resolvePayload(repoSettings: RepoSettings) {
-  const inputs = Inputs.assert({
-    prompt: core.getInput("prompt", { required: true }),
+export type ResolvedPromptInput = string | typeof JsonPayload.infer;
+
+export function resolvePromptInput(): ResolvedPromptInput {
+  const prompt = core.getInput("prompt", { required: true });
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(prompt);
+  } catch {
+    // JSON parse error is fine (plain text prompt)
+    return prompt;
+  }
+
+  if (!parsed || typeof parsed !== "object" || !("~pullfrog" in parsed)) {
+    // if it doesn't look like a pullfrog payload, return the plain text prompt
+    return prompt;
+  }
+
+  // validation errors should propagate
+  const jsonPayload = JsonPayload.assert(parsed);
+  validateCompatibility(jsonPayload.version, packageJson.version);
+  return jsonPayload;
+}
+
+function resolveNonPromptInputs() {
+  return Inputs.omit("prompt").assert({
     effort: core.getInput("effort") || undefined,
     timeout: core.getInput("timeout") || undefined,
     agent: core.getInput("agent") || undefined,
@@ -80,29 +104,22 @@ export function resolvePayload(repoSettings: RepoSettings) {
     write: core.getInput("write") || undefined,
     bash: core.getInput("bash") || undefined,
   });
+}
+
+export function resolvePayload(
+  resolvedPromptInput: ResolvedPromptInput,
+  repoSettings: RepoSettings
+) {
+  const [prompt, jsonPayload] =
+    typeof resolvedPromptInput !== "string"
+      ? [resolvedPromptInput.prompt, resolvedPromptInput]
+      : [resolvedPromptInput, undefined];
+
+  const inputs = resolveNonPromptInputs();
 
   // validate agent name
   const agent: AgentName | undefined =
     inputs.agent !== undefined && isAgentName(inputs.agent) ? inputs.agent : undefined;
-
-  // try to parse prompt as JSON payload (internal invocation)
-  let jsonPayload: typeof JsonPayload.infer | null = null;
-  try {
-    const parsed = JSON.parse(inputs.prompt);
-    // if it looks like a pullfrog payload but fails validation, that's an error
-    if (parsed && typeof parsed === "object" && "~pullfrog" in parsed) {
-      jsonPayload = JsonPayload.assert(parsed);
-    }
-  } catch (error) {
-    // JSON parse error is fine (plain text prompt), but validation error should propagate
-    if (error instanceof type.errors) {
-      throw new Error(`invalid pullfrog payload: ${error.summary}`);
-    }
-    // not JSON, treat as plain string prompt
-  }
-
-  // validate version compatibility from jsonPayload
-  if (jsonPayload) validateCompatibility(jsonPayload.version, packageJson.version);
 
   // resolve event - use type guard for jsonPayload.event, fallback to unknown trigger
   const rawEvent = jsonPayload?.event;
@@ -141,9 +158,7 @@ export function resolvePayload(repoSettings: RepoSettings) {
     "~pullfrog": true as const,
     version: jsonPayload?.version ?? packageJson.version,
     agent: resolvedAgent,
-    // inverted: jsonPayload.prompt extracts the text from the JSON payload,
-    // whereas inputs.prompt IS the raw JSON string when internally dispatched
-    prompt: jsonPayload?.prompt ?? inputs.prompt,
+    prompt,
     eventInstructions: jsonPayload?.eventInstructions,
     repoInstructions: jsonPayload?.repoInstructions,
     event,

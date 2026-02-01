@@ -35,16 +35,19 @@ export interface ToolState {
   output?: string;
 }
 
-import type { ResolveRunResult } from "../utils/workflow.ts";
-
 interface InitToolStateParams {
-  runInfo: ResolveRunResult;
+  progressCommentId: string | undefined;
 }
 
-export function initToolState(ctx: InitToolStateParams): ToolState {
-  const progressCommentIdStr = ctx.runInfo.workflowRunInfo.progressCommentId;
-  const progressCommentId = progressCommentIdStr ? parseInt(progressCommentIdStr, 10) : null;
+export function initToolState(params: InitToolStateParams): ToolState {
+  const progressCommentId = params.progressCommentId
+    ? parseInt(params.progressCommentId, 10)
+    : null;
   const resolvedId = Number.isNaN(progressCommentId) ? null : progressCommentId;
+
+  if (progressCommentId) {
+    log.info(`» using pre-created progress comment: ${progressCommentId}`);
+  }
 
   return {
     progressCommentId: resolvedId,
@@ -65,6 +68,7 @@ export interface ToolContext {
   jobId: string | undefined;
 }
 
+import { log } from "../utils/cli.ts";
 import type { RunContextData } from "../utils/runContextData.ts";
 import { BashTool, KillBackgroundTool } from "./bash.ts";
 import { CheckoutPrTool } from "./checkout.ts";

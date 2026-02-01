@@ -47,7 +47,7 @@ export const agentsManifest = {
 
 // agent name type - union of agent slugs
 export type AgentName = keyof typeof agentsManifest;
-export const AgentName = type.enumerated(...Object.keys(agentsManifest));
+export const AgentName = type.enumerated(...(Object.keys(agentsManifest) as AgentName[]));
 
 export type AgentApiKeyName = (typeof agentsManifest)[AgentName]["apiKeyNames"][number];
 
@@ -259,6 +259,8 @@ export interface WriteablePayload {
   timeout?: string | undefined;
   /** working directory for the agent */
   cwd?: string | undefined;
+  /** pre-created progress comment ID for updating status */
+  progressCommentId?: string | undefined;
 }
 
 // immutable payload type for agent execution

@@ -1,16 +1,13 @@
 import { log } from "./cli.ts";
 import type { OctokitWithPlugins } from "./github.ts";
-import { fetchWorkflowRunInfo, type WorkflowRunInfo } from "./workflowRun.ts";
 
 interface ResolveRunParams {
   octokit: OctokitWithPlugins;
-  apiToken: string;
 }
 
 export interface ResolveRunResult {
   runId: string;
   jobId: string | undefined;
-  workflowRunInfo: WorkflowRunInfo;
 }
 
 /**
@@ -24,14 +21,6 @@ export async function resolveRun(params: ResolveRunParams): Promise<ResolveRunRe
     throw new Error(`GITHUB_REPOSITORY env var must be set to "owner/repo", got: ${githubRepo}`);
   }
   const [owner, repo] = githubRepo.split("/");
-
-  const workflowRunInfo = runId
-    ? await fetchWorkflowRunInfo({ runId, apiToken: params.apiToken })
-    : { progressCommentId: null };
-
-  if (workflowRunInfo.progressCommentId) {
-    log.info(`» using pre-created progress comment: ${workflowRunInfo.progressCommentId}`);
-  }
 
   let jobId: string | undefined;
   const jobName = process.env.GITHUB_JOB;
@@ -48,5 +37,5 @@ export async function resolveRun(params: ResolveRunParams): Promise<ResolveRunRe
     }
   }
 
-  return { runId, jobId, workflowRunInfo };
+  return { runId, jobId };
 }

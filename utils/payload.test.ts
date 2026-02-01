@@ -49,16 +49,19 @@ describe("Inputs schema", () => {
 });
 
 describe("JsonPayload schema", () => {
-  it("requires ~pullfrog and version", () => {
-    const result = JsonPayload.assert({ "~pullfrog": true, version: "1.2.3" });
-    expect(result).toMatchObject({ "~pullfrog": true, version: "1.2.3" });
+  it("requires ~pullfrog and version and prompt", () => {
+    const result = JsonPayload.assert({
+      "~pullfrog": true,
+      version: "1.2.3",
+      prompt: "test prompt",
+    });
+    expect(result).toMatchObject({ "~pullfrog": true, version: "1.2.3", prompt: "test prompt" });
     expect(() => JsonPayload.assert({})).toThrow();
     expect(() => JsonPayload.assert({ "~pullfrog": true })).toThrow();
     expect(() => JsonPayload.assert({ version: "1.2.3" })).toThrow();
   });
 
   it.each([
-    ["prompt", "test prompt"],
     ["agent", "claude"],
     ["agent", "codex"],
     ["agent", "cursor"],
@@ -72,12 +75,17 @@ describe("JsonPayload schema", () => {
     ["timeout", "30s"],
     ["event", { trigger: "unknown" }],
   ] as const)("should accept optional %s with value %s", (prop, value) => {
-    const input = { "~pullfrog": true, version: "1.2.3", [prop]: value };
+    const input = { "~pullfrog": true, version: "1.2.3", prompt: "test prompt", [prop]: value };
     expect(() => JsonPayload.assert(input)).not.toThrow();
   });
 
   it.each([["agent"], ["effort"]] as const)("should reject invalid %s values", (prop) => {
-    const input = { "~pullfrog": true, version: "1.2.3", [prop]: "invalid" as any };
+    const input = {
+      "~pullfrog": true,
+      version: "1.2.3",
+      prompt: "test prompt",
+      [prop]: "invalid" as any,
+    };
     expect(() => JsonPayload.assert(input)).toThrow();
   });
 });
