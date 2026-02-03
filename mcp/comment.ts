@@ -26,7 +26,7 @@ async function buildCommentFooter({
   const repoContext = parseRepoContext();
   const runId = process.env.GITHUB_RUN_ID;
 
-  let workflowRunHtmlUrl: string | undefined;
+  let jobId: string | undefined;
   if (runId && octokit) {
     try {
       // fetch jobs to get the job URL for deep linking
@@ -35,10 +35,10 @@ async function buildCommentFooter({
         repo: repoContext.name,
         run_id: parseInt(runId, 10),
       });
-      // use the first job's URL if available
-      workflowRunHtmlUrl = jobs.jobs[0]?.html_url ?? undefined;
+      // use the first job's ID available
+      jobId = jobs.jobs[0]?.id.toString();
     } catch {
-      // fall back to building URL from runId if jobs can't be fetched
+      // fall back to computed URL from runId alone
     }
   }
 
@@ -49,12 +49,7 @@ async function buildCommentFooter({
       url: agent?.url || "https://pullfrog.com",
     },
     workflowRun: runId
-      ? {
-          owner: repoContext.owner,
-          repo: repoContext.name,
-          runId,
-          ...(workflowRunHtmlUrl ? { htmlUrl: workflowRunHtmlUrl } : {}),
-        }
+      ? { owner: repoContext.owner, repo: repoContext.name, runId, jobId }
       : undefined,
   };
 

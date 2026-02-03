@@ -22,6 +22,8 @@ export interface BuildPullfrogFooterParams {
   agent?: AgentInfo | undefined;
   /** add "View workflow run" link */
   workflowRun?: WorkflowRunFooterInfo | undefined;
+  /** alternative: just pass a pre-built URL directly (for shortlinks etc.) */
+  workflowRunUrl?: string | undefined;
   /** arbitrary custom parts (e.g., action links) */
   customParts?: string[];
 }
@@ -29,26 +31,29 @@ export interface BuildPullfrogFooterParams {
 /**
  * build a pullfrog footer with configurable parts
  * always includes: frog logo at start, pullfrog.com link and X link at end
+ * order: action links (customParts) > workflow run > agent > attribution > reference links
  */
 export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
   const parts: string[] = [];
 
-  if (params.triggeredBy) {
-    parts.push("Triggered by [Pullfrog](https://pullfrog.com)");
+  if (params.customParts) {
+    parts.push(...params.customParts);
+  }
+
+  if (params.workflowRunUrl) {
+    parts.push(`[View workflow run](${params.workflowRunUrl})`);
+  } else if (params.workflowRun) {
+    const baseUrl = `https://github.com/${params.workflowRun.owner}/${params.workflowRun.repo}/actions/runs/${params.workflowRun.runId}`;
+    const url = params.workflowRun.jobId ? `${baseUrl}/job/${params.workflowRun.jobId}` : baseUrl;
+    parts.push(`[View workflow run](${url})`);
   }
 
   if (params.agent) {
     parts.push(`Using [${params.agent.displayName}](${params.agent.url})`);
   }
 
-  if (params.customParts) {
-    parts.push(...params.customParts);
-  }
-
-  if (params.workflowRun) {
-    const baseUrl = `https://github.com/${params.workflowRun.owner}/${params.workflowRun.repo}/actions/runs/${params.workflowRun.runId}`;
-    const url = params.workflowRun.jobId ? `${baseUrl}/job/${params.workflowRun.jobId}` : baseUrl;
-    parts.push(`[View workflow run](${url})`);
+  if (params.triggeredBy) {
+    parts.push("Triggered by [Pullfrog](https://pullfrog.com)");
   }
 
   const allParts = [
