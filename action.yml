@@ -42,6 +42,8 @@ outputs:
 runs:
   using: "node24"
   main: "entry"
+  post: "post"
+  post-if: "failure() || cancelled()"
 
 branding:
   icon: "code"

@@ -67,6 +67,14 @@ await build({
   plugins: [stripShebangPlugin],
 });
 
+// Build the post cleanup entry bundle
+await build({
+  ...sharedConfig,
+  entryPoints: ["./post.ts"],
+  outfile: "./post",
+  plugins: [stripShebangPlugin],
+});
+
 // Build the get-installation-token action
 await build({
   ...sharedConfig,
