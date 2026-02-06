@@ -14,13 +14,13 @@ import { type AgentRunContext, agent } from "./shared.ts";
 
 // configuration based on effort level
 // https://developers.openai.com/codex/models/
-// gpt-5.2-codex is not yet available via api key (even through codex cli)
+// gpt-5.3-codex announced 2026-02-05 but not yet available in codex CLI
 type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type CodexEffortConfig = { model: string; reasoningEffort?: ModelReasoningEffort };
 const codexEffortConfig: Record<Effort, CodexEffortConfig> = {
   mini: { model: "gpt-5.1-codex-mini", reasoningEffort: "low" },
-  auto: { model: "gpt-5.1-codex" },
-  max: { model: "gpt-5.1-codex-max", reasoningEffort: "high" },
+  auto: { model: "gpt-5.2-codex" },
+  max: { model: "gpt-5.2-codex", reasoningEffort: "high" },
 };
 
 function writeCodexConfig(ctx: AgentRunContext): string {

@@ -13,15 +13,15 @@ import { installFromNpmTarball } from "../utils/install.ts";
 import { spawn } from "../utils/subprocess.ts";
 import { type AgentRunContext, agent } from "./shared.ts";
 
-// Model selection based on effort level
-// Note: mini uses Haiku for speed, auto uses opusplan for balance, max uses Opus for capability
+// model selection based on effort level
+// these are aliases that always resolve to the latest version
 const claudeEffortModels: Record<Effort, string> = {
   mini: "haiku",
   auto: "opusplan",
   max: "opus",
 };
 
-// FUTURE: Consider using Anthropic's "effort" parameter (beta) with Opus 4.5 for all tasks.
+// FUTURE: Consider using Anthropic's "effort" parameter (beta) with Opus.
 // This would allow a single model with effort levels ("low", "medium", "high") controlling
 // token spend across responses, tool calls, and thinking. Requires beta header "effort-2025-11-24".
 // See: https://platform.claude.com/docs/en/build-with-claude/effort
