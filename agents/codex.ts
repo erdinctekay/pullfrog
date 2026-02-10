@@ -15,14 +15,52 @@ import { type AgentRunContext, agent } from "./shared.ts";
 
 // configuration based on effort level
 // https://developers.openai.com/codex/models/
-// gpt-5.3-codex announced 2026-02-05 but not yet available in codex CLI
 type ModelReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 type CodexEffortConfig = { model: string; reasoningEffort?: ModelReasoningEffort };
-const codexEffortConfig: Record<Effort, CodexEffortConfig> = {
-  mini: { model: "gpt-5.1-codex-mini", reasoningEffort: "low" },
-  auto: { model: "gpt-5.2-codex" },
-  max: { model: "gpt-5.2-codex", reasoningEffort: "high" },
-};
+
+// preferred model for auto/max — falls back to gpt-5.2-codex if API key lacks access
+const PREFERRED_MODEL = "gpt-5.3-codex";
+const FALLBACK_MODEL = "gpt-5.2-codex";
+
+function getCodexEffortConfig(model: string): Record<Effort, CodexEffortConfig> {
+  return {
+    mini: { model: "gpt-5.1-codex-mini", reasoningEffort: "low" },
+    auto: { model },
+    max: { model, reasoningEffort: "high" },
+  };
+}
+
+// check if a model is available for the given API key via GET /v1/models
+async function isModelAvailable(ctx: { apiKey: string; model: string }): Promise<boolean> {
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${ctx.apiKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      log.warning(
+        `failed to list models (HTTP ${response.status}), falling back to ${FALLBACK_MODEL}`
+      );
+      return false;
+    }
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    return body.data.some((m) => m.id === ctx.model);
+  } catch (err) {
+    log.warning(`failed to list models: ${err}, falling back to ${FALLBACK_MODEL}`);
+    return false;
+  }
+}
+
+// resolve the best available model for auto/max effort levels
+async function resolveModel(apiKey: string): Promise<string> {
+  const available = await isModelAvailable({ apiKey, model: PREFERRED_MODEL });
+  if (available) {
+    log.info(`» ${PREFERRED_MODEL} is available for this API key`);
+    return PREFERRED_MODEL;
+  }
+  log.info(`» ${PREFERRED_MODEL} not available, using ${FALLBACK_MODEL}`);
+  return FALLBACK_MODEL;
+}
 
 function writeCodexConfig(ctx: AgentRunContext): string {
   const codexDir = join(ctx.tmpdir, ".codex");
@@ -95,14 +133,14 @@ export const codex = agent({
       throw new Error("OPENAI_API_KEY is required for codex agent");
     }
 
-    // install CLI at start of run
-    const cliPath = await installCodex();
+    // install CLI and resolve model concurrently
+    const [cliPath, model] = await Promise.all([installCodex(), resolveModel(apiKey)]);
 
     // write config file (creates ~/.codex/config.toml)
     const codexDir = writeCodexConfig(ctx);
 
     // get model and reasoning effort based on effort level
-    const effortConfig = codexEffortConfig[ctx.payload.effort];
+    const effortConfig = getCodexEffortConfig(model)[ctx.payload.effort];
     log.info(`» using model: ${effortConfig.model} (effort: ${ctx.payload.effort})`);
     if (effortConfig.reasoningEffort) {
       log.info(`» using modelReasoningEffort: ${effortConfig.reasoningEffort}`);

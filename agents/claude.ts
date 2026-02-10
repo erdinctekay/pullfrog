@@ -17,16 +17,18 @@ import { type AgentRunContext, agent } from "./shared.ts";
 // model selection based on effort level
 // these are aliases that always resolve to the latest version
 const claudeEffortModels: Record<Effort, string> = {
-  mini: "haiku",
-  auto: "opusplan",
+  mini: "sonnet",
+  auto: "opus",
   max: "opus",
 };
 
-// FUTURE: Consider using Anthropic's "effort" parameter (beta) with Opus.
-// This would allow a single model with effort levels ("low", "medium", "high") controlling
-// token spend across responses, tool calls, and thinking. Requires beta header "effort-2025-11-24".
-// See: https://platform.claude.com/docs/en/build-with-claude/effort
-// This approach could replace model selection if effort proves effective for controlling capability.
+// Claude Code CLI --effort level per pullfrog effort
+// null = use default (high). "max" is Opus 4.6 only.
+const claudeEffortLevels: Record<Effort, string | null> = {
+  mini: null,
+  auto: null,
+  max: "max",
+};
 
 /**
  * Build disallowedTools list from payload permissions.
@@ -81,9 +83,10 @@ export const claude = agent({
     // install CLI at start of run
     const cliPath = await installClaude();
 
-    // select model based on effort level
+    // select model and effort level
     const model = claudeEffortModels[ctx.payload.effort];
-    log.info(`» using model: ${model} (effort: ${ctx.payload.effort})`);
+    const effortLevel = claudeEffortLevels[ctx.payload.effort];
+    log.info(`» using model: ${model}${effortLevel ? ` (effort: ${effortLevel})` : ""}`);
 
     // build disallowedTools based on tool permissions
     const disallowedTools = buildDisallowedTools(ctx);
@@ -109,6 +112,11 @@ export const claude = agent({
       "stream-json",
       "--verbose",
     ];
+
+    // add --effort flag if specified (e.g. "max" for Opus 4.6)
+    if (effortLevel) {
+      args.push("--effort", effortLevel);
+    }
 
     // add disallowed tools if any
     if (disallowedTools.length > 0) {
@@ -301,5 +309,6 @@ const messageHandlers: SDKMessageHandlers = {
   system: () => {},
   stream_event: () => {},
   tool_progress: () => {},
+  tool_use_summary: () => {},
   auth_status: () => {},
 };

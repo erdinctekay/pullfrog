@@ -12,8 +12,8 @@ importers:
         specifier: ^1.11.1
         version: 1.11.1
       '@anthropic-ai/claude-agent-sdk':
-        specifier: 0.2.7
-        version: 0.2.7(zod@4.3.5)
+        specifier: 0.2.39
+        version: 0.2.39(zod@4.3.5)
       '@ark/fs':
         specifier: 0.53.0
         version: 0.53.0
@@ -30,8 +30,8 @@ importers:
         specifier: ^7.6.1
         version: 7.6.1
       '@openai/codex-sdk':
-        specifier: 0.80.0
-        version: 0.80.0
+        specifier: 0.98.0
+        version: 0.98.0
       '@opencode-ai/sdk':
         specifier: ^1.0.143
         version: 1.0.143
@@ -111,8 +111,8 @@ packages:
   '@actions/io@1.1.3':
     resolution: {integrity: sha512-wi9JjgKLYS7U/z8PPbco+PvTb/nRWjeoFlJ1Qer83k/3C5PHQi28hiVdeE2kHXmIL99mQFawx8qt/JPjZilJ8Q==}
 
-  '@anthropic-ai/claude-agent-sdk@0.2.7':
-    resolution: {integrity: sha512-I1/zcnLah74kZeRkj/1QnDaC6ItJ2m/Bftlm25uoaRkZx7i7SkcpqM9jGE/r2A8PMxnw5WpabP60Xgj99CrTuw==}
+  '@anthropic-ai/claude-agent-sdk@0.2.39':
+    resolution: {integrity: sha512-wR1TBH62X6E1YwRnWa+A2Eau7AfpTWtfpnwQXO3yRY31FtmzOjPkQb93hbF3AkT0WL7YF9mxBBwJKUa3ZEc5+A==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       zod: ^4.0.0
@@ -620,8 +620,8 @@ packages:
   '@octokit/webhooks-types@7.6.1':
     resolution: {integrity: sha512-S8u2cJzklBC0FgTwWVLaM8tMrDuDMVE4xiTK4EYXM9GntyvrdbSoxqDQa+Fh57CCNApyIpyeqPhhFEmHPfrXgw==}
 
-  '@openai/codex-sdk@0.80.0':
-    resolution: {integrity: sha512-4+/bZOSjJAPsuM6yceQoVbNUK7UTS03QMKxCrFClObxD1j6n5oh7OSJniyff2MmF0DI7yHnf9omzfFL7RoLWnQ==}
+  '@openai/codex-sdk@0.98.0':
+    resolution: {integrity: sha512-TbPgrBpuSNMJyOXys0HNsh6UoP5VIHu1fVh2KDdACi5XyB0vuPtzBZC+qOsxHz7WXEQPFlomPLyxS6JnE5Okmg==}
     engines: {node: '>=18'}
 
   '@opencode-ai/sdk@1.0.143':
@@ -1664,7 +1664,7 @@ snapshots:
 
   '@actions/io@1.1.3': {}
 
-  '@anthropic-ai/claude-agent-sdk@0.2.7(zod@4.3.5)':
+  '@anthropic-ai/claude-agent-sdk@0.2.39(zod@4.3.5)':
     dependencies:
       zod: 4.3.5
     optionalDependencies:
@@ -2012,7 +2012,7 @@ snapshots:
 
   '@octokit/webhooks-types@7.6.1': {}
 
-  '@openai/codex-sdk@0.80.0': {}
+  '@openai/codex-sdk@0.98.0': {}
 
   '@opencode-ai/sdk@1.0.143': {}
 
