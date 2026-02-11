@@ -126,7 +126,7 @@ export async function main(): Promise<MainResult> {
       event: payload.event,
       octokit,
       toolState,
-      restricted: payload.bash === "restricted",
+      bash: payload.bash,
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
     });
     timer.checkpoint("git");

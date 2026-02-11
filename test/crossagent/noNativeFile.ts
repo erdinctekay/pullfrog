@@ -35,12 +35,33 @@ function validator(result: AgentResult): ValidationCheck[] {
   const output = getStructuredOutput(result);
   const fullOutput = result.output;
   const setOutputCalled = output !== null;
-  // native blocked if agent reports failed, or if "native" attempt actually used MCP (e.g. Task delegated to file_write)
+
   // handle both key=value format (NATIVE=succeeded) and JSON format ("NATIVE":"succeeded")
   const reportedNativeSucceeded = setOutputCalled && /NATIVE.{0,3}succeeded/i.test(output);
-  const nativeActuallyUsedMcp =
-    fullOutput.includes("delegated to") && fullOutput.includes("file_write");
-  const nativeBlocked = !reportedNativeSucceeded || nativeActuallyUsedMcp;
+
+  // some agents expose tool-availability metadata in logs; treat that as
+  // definitive evidence that native file tools are blocked.
+  const nativeFileToolsUnavailable =
+    fullOutput.includes("Model tried to call unavailable tool") ||
+    (fullOutput.includes("excluded tools:") &&
+      (fullOutput.includes("read_file") ||
+        fullOutput.includes("write_file") ||
+        fullOutput.includes("edit_file"))) ||
+    (fullOutput.includes("disallowed tools:") &&
+      (fullOutput.includes("Read") ||
+        fullOutput.includes("Write") ||
+        fullOutput.includes("Edit") ||
+        fullOutput.includes("MultiEdit")));
+
+  // if an agent claims native success but the trace shows MCP file tools,
+  // treat it as native blocked (instruction-following drift, not bypass).
+  const nativeAttemptReroutedToMcp =
+    (fullOutput.includes("delegated to") && fullOutput.includes("file_write")) ||
+    fullOutput.includes("mcp__gh_pullfrog__file_write") ||
+    fullOutput.includes("gh_pullfrog_file_write");
+
+  const nativeBlocked =
+    !reportedNativeSucceeded || nativeFileToolsUnavailable || nativeAttemptReroutedToMcp;
   const mcpWorks = setOutputCalled && /MCP.{0,3}succeeded/i.test(output);
 
   return [

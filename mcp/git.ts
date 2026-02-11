@@ -1,3 +1,4 @@
+import { regex } from "arkregex";
 import { type } from "arktype";
 import { log } from "../utils/cli.ts";
 import { $git } from "../utils/gitAuth.ts";
@@ -132,7 +133,7 @@ export function PushBranchTool(ctx: ToolContext) {
       }
       $git("push", pushArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash === "restricted",
+        restricted: ctx.payload.bash !== "enabled",
       });
 
       return {
@@ -155,12 +156,51 @@ const AUTH_REQUIRED_REDIRECT: Record<string, string> = {
   clone: "Repository already cloned. Use checkout_pr for PR branches.",
 };
 
+// SECURITY: subcommands blocked when bash is disabled.
+// in disabled mode the agent has NO shell access, so these subcommands are the
+// primary escape vectors for arbitrary code execution. in restricted mode the
+// agent already has bash in a stripped sandbox, so blocking these is redundant.
+const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
+  config: "Blocked: git config can set up filter drivers or hooks that execute arbitrary code.",
+  submodule:
+    "Blocked: git submodule can reference malicious repositories and execute code on update.",
+  "update-index":
+    "Blocked: git update-index can modify index entries in ways that bypass file protections.",
+  "filter-branch": "Blocked: git filter-branch executes arbitrary code on repository history.",
+  replace: "Blocked: git replace can redirect object lookups.",
+  // subcommands that accept --exec or similar flags for arbitrary code execution
+  rebase: "Blocked: git rebase --exec can execute arbitrary shell commands.",
+  bisect: "Blocked: git bisect run can execute arbitrary shell commands.",
+};
+
+// SECURITY: subcommand-specific arg flags that execute code.
+// only blocked when bash is disabled — in restricted mode the agent already
+// has shell access in a stripped sandbox, so these provide no additional security.
+//
+// NOTE: global git flags like -c and --config-env are NOT included here
+// because they only work before the subcommand. in the MCP tool, the
+// subcommand is always first, so -c in args is parsed as a subcommand flag
+// (e.g., git log -c = combined diff format), not config injection.
+// the subcommand check (rejecting "-" prefix) already blocks that attack.
+//
+// matched as: arg === flag OR arg starts with flag + "="
+// (avoids false positives like --exclude matching --exec)
+const NOBASH_BLOCKED_ARGS = ["--exec", "--extcmd", "--upload-pack", "--receive-pack"];
+
+// SECURITY: subcommand must match [a-z][a-z0-9-]* to reject flags passed as the subcommand.
+// this blocks injection of global git options like -c, -C, --exec-path, --config-env, etc.
+//
+// critical attack: git -c "alias.x=!evil-command" x
+//   -> sets alias "x" to a shell command via -c config injection, then runs it
+//   -> achieves arbitrary code execution even with bash=disabled
+const subcommandPattern = regex("^[a-z][a-z0-9-]*$");
+
 const Git = type({
-  subcommand: type.string.describe("Git subcommand (e.g., 'status', 'log', 'diff')"),
+  subcommand: type(subcommandPattern).describe("Git subcommand (e.g., 'status', 'log', 'diff')"),
   args: type.string.array().describe("Additional arguments for the git command").optional(),
 });
 
-export function GitTool(_ctx: ToolContext) {
+export function GitTool(ctx: ToolContext) {
   return tool({
     name: "git",
     description:
@@ -173,6 +213,28 @@ export function GitTool(_ctx: ToolContext) {
       const redirect = AUTH_REQUIRED_REDIRECT[subcommand];
       if (redirect) {
         throw new Error(`git ${subcommand} requires authentication. ${redirect}`);
+      }
+
+      // SECURITY: block dangerous subcommands when bash is disabled.
+      // in restricted mode the agent has bash in a stripped sandbox, so blocking
+      // these through the MCP tool is redundant (agent can do it via bash).
+      if (ctx.payload.bash === "disabled") {
+        const blocked = NOBASH_BLOCKED_SUBCOMMANDS[subcommand];
+        if (blocked) {
+          throw new Error(blocked);
+        }
+
+        // block subcommand-specific flags that execute arbitrary code
+        for (const arg of args) {
+          const isBlocked = NOBASH_BLOCKED_ARGS.some(
+            (flag) => arg === flag || arg.startsWith(flag + "=")
+          );
+          if (isBlocked) {
+            throw new Error(
+              `Blocked: '${arg}' flag can execute arbitrary code and is not allowed.`
+            );
+          }
+        }
       }
 
       const output = $("git", [subcommand, ...args]);
@@ -198,7 +260,7 @@ export function GitFetchTool(ctx: ToolContext) {
       }
       $git("fetch", fetchArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash === "restricted",
+        restricted: ctx.payload.bash !== "enabled",
       });
       return { success: true, ref: params.ref };
     }),
@@ -226,7 +288,7 @@ export function DeleteBranchTool(ctx: ToolContext) {
 
       $git("push", ["origin", "--delete", params.branchName], {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash === "restricted",
+        restricted: ctx.payload.bash !== "enabled",
       });
       return { success: true, deleted: params.branchName };
     }),
@@ -256,7 +318,7 @@ export function PushTagsTool(ctx: ToolContext) {
       const pushArgs = [...(params.force ? ["-f"] : []), "origin", `refs/tags/${params.tag}`];
       $git("push", pushArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash === "restricted",
+        restricted: ctx.payload.bash !== "enabled",
       });
       return { success: true, tag: params.tag };
     }),

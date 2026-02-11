@@ -91,13 +91,38 @@ function resolveAndValidatePath(filePath: string): string {
   return resolved;
 }
 
-function validateWritePath(filePath: string): string {
-  const resolved = resolveAndValidatePath(filePath);
+// SECURITY: files that git interprets and can trigger code execution.
+// .gitattributes can define filter drivers (clean/smudge) that execute arbitrary commands.
+// .gitmodules can reference malicious submodule URLs that execute code on update.
+// only blocked when bash is disabled — in restricted mode the agent already has bash
+// and could write these files via shell, so blocking via MCP is redundant.
+const GIT_INTERPRETED_FILES = [".gitattributes", ".gitmodules"];
+
+type BashPermission = "disabled" | "restricted" | "enabled";
+
+type ValidateWritePathParams = {
+  filePath: string;
+  bashPermission: BashPermission;
+};
+
+function validateWritePath(params: ValidateWritePathParams): string {
+  const resolved = resolveAndValidatePath(params.filePath);
   const cwd = realpathSync(process.cwd());
   const relative = resolved.slice(cwd.length + 1);
   if (relative === ".git" || relative.startsWith(".git/")) {
-    throw new Error(`writing to .git is not allowed: ${filePath}`);
+    throw new Error(`writing to .git is not allowed: ${params.filePath}`);
   }
+
+  // block git-interpreted files only when bash is disabled (no shell = no other way to create them)
+  if (params.bashPermission === "disabled") {
+    const basename = relative.split("/").pop() || "";
+    if (GIT_INTERPRETED_FILES.includes(basename)) {
+      throw new Error(
+        `writing to ${basename} is not allowed when bash is ${params.bashPermission} (can trigger code execution via git filter drivers): ${params.filePath}`
+      );
+    }
+  }
+
   return resolved;
 }
 
@@ -128,13 +153,16 @@ export function FileReadTool(_ctx: ToolContext) {
   });
 }
 
-export function FileWriteTool(_ctx: ToolContext) {
+export function FileWriteTool(ctx: ToolContext) {
   return tool({
     name: "file_write",
     description: `Write content to a file in the repository. Path is relative to the repository root. Only paths within the current repository are allowed. Writes to .git/ are blocked. Creates parent directories if needed.`,
     parameters: FileWriteParams,
     execute: execute(async (params) => {
-      const resolved = validateWritePath(params.path);
+      const resolved = validateWritePath({
+        filePath: params.path,
+        bashPermission: ctx.payload.bash,
+      });
       const dir = dirname(resolved);
       mkdirSync(dir, { recursive: true });
       writeFileSync(resolved, params.content, "utf-8");
@@ -143,7 +171,7 @@ export function FileWriteTool(_ctx: ToolContext) {
   });
 }
 
-export function FileEditTool(_ctx: ToolContext) {
+export function FileEditTool(ctx: ToolContext) {
   return tool({
     name: "file_edit",
     description: `Replace text in a file. old_string must match exactly (including whitespace and indentation). By default replaces a single unique occurrence — set replace_all to replace every occurrence. Path is relative to the repository root. Writes to .git/ are blocked.`,
@@ -156,7 +184,10 @@ export function FileEditTool(_ctx: ToolContext) {
         throw new Error("old_string and new_string are identical");
       }
 
-      const resolved = validateWritePath(params.path);
+      const resolved = validateWritePath({
+        filePath: params.path,
+        bashPermission: ctx.payload.bash,
+      });
       const content = readFileSync(resolved, "utf-8");
       const count = content.split(params.old_string).length - 1;
 
@@ -179,13 +210,16 @@ export function FileEditTool(_ctx: ToolContext) {
   });
 }
 
-export function FileDeleteTool(_ctx: ToolContext) {
+export function FileDeleteTool(ctx: ToolContext) {
   return tool({
     name: "file_delete",
     description: `Delete a file from the repository. Path is relative to the repository root. Only paths within the current repository are allowed. Deletes to .git/ are blocked. Cannot delete directories.`,
     parameters: FileDeleteParams,
     execute: execute(async (params) => {
-      const resolved = validateWritePath(params.path);
+      const resolved = validateWritePath({
+        filePath: params.path,
+        bashPermission: ctx.payload.bash,
+      });
       unlinkSync(resolved);
       return { path: params.path, deleted: true };
     }),

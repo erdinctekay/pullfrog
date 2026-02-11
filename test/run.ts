@@ -11,7 +11,9 @@ import {
   setSignalHandler,
 } from "../utils/subprocess.ts";
 import {
+  type AgentResult,
   agents,
+  getPrefix,
   printResults,
   printSingleValidation,
   runAgentStreaming,
@@ -201,6 +203,67 @@ function buildCanceledValidation(ctx: CanceledValidationContext): ValidationResu
   };
 }
 
+const MAX_RETRIES = 2;
+const RATE_LIMIT_BACKOFF_MS = 60_000; // 1 minute for rate limits
+const FLAKY_RETRY_BACKOFF_MS = 5_000; // 5 seconds for transient failures
+
+type RetryDecision = { retry: false } | { retry: true; reason: string; backoffMs: number };
+
+/**
+ * determine if a failed test run should be retried.
+ *
+ * retryable (transient infrastructure failures):
+ *   - rate limit errors from API providers
+ *   - agent crashed/errored but no security-relevant checks failed
+ *     (e.g., agent didn't call set_output due to MCP connection drop)
+ *   - set_output not called — all output-dependent checks cascade fail
+ *
+ * NOT retryable (genuine test failures):
+ *   - security checks failed (sandbox breach, token leak, etc.)
+ *   - agent successfully ran and called set_output but produced wrong results
+ */
+function shouldRetry(result: AgentResult, validation: ValidationResult): RetryDecision {
+  // rate limit: agent never got to run properly
+  if (!result.success && result.output.includes("Rate limit reached")) {
+    return { retry: true, reason: "rate limited", backoffMs: RATE_LIMIT_BACKOFF_MS };
+  }
+
+  // already passed — no retry needed
+  if (validation.passed) {
+    return { retry: false };
+  }
+
+  // if the test has a set_output check and it failed, other check failures are
+  // cascade failures — validators gate their checks on `setOutputCalled && ...`
+  // so they always fail when there's no structured output.
+  // security-relevant checks (like no_leak_filtered, native_blocked) are designed
+  // to PASS when set_output wasn't called (defensive coding). so cascade failures
+  // are never genuine security findings — they're transient instruction-following
+  // issues (MCP connection drop, agent confusion, low effort level, etc.).
+  const setOutputCheck = validation.checks.find((c) => c.name === "set_output");
+  if (setOutputCheck && !setOutputCheck.passed) {
+    return {
+      retry: true,
+      reason: "set_output not called (cascade)",
+      backoffMs: FLAKY_RETRY_BACKOFF_MS,
+    };
+  }
+
+  // set_output was called (or test has no set_output check) — if any other check
+  // failed, that's a genuine test failure with real data, not a cascade. don't retry.
+  const otherCheckFailed = validation.checks.some((c) => !c.passed && c.name !== "set_output");
+  if (otherCheckFailed) {
+    return { retry: false };
+  }
+
+  // agent process failed (non-zero exit) but no structured output to validate
+  if (!result.success) {
+    return { retry: true, reason: "agent process failed", backoffMs: FLAKY_RETRY_BACKOFF_MS };
+  }
+
+  return { retry: false };
+}
+
 async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
   const testConfig = ctx.testInfo.config;
   const env: Record<string, string> = {};
@@ -247,21 +310,52 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
     }
   }
 
-  const result = await runAgentStreaming({
-    test: ctx.testInfo.name,
-    agent: ctx.agent,
-    fixture: testConfig.fixture,
-    env,
-    fileEnv,
-    isCanceled: () => ctx.cancelState.canceled,
-  });
+  const prefix = getPrefix({ test: ctx.testInfo.name, agent: ctx.agent });
 
-  const validation = validateResult(result, testConfig.validator, {
-    test: ctx.testInfo.name,
-    expectFailure: testConfig.expectFailure,
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (ctx.cancelState.canceled) break;
+
+    // allocate a fresh port on retries (previous server is gone)
+    if (attempt > 0) {
+      env.PULLFROG_MCP_PORT = String(allocateMcpPort());
+    }
+
+    const result = await runAgentStreaming({
+      test: ctx.testInfo.name,
+      agent: ctx.agent,
+      fixture: testConfig.fixture,
+      env,
+      fileEnv,
+      isCanceled: () => ctx.cancelState.canceled,
+    });
+
+    const validation = validateResult(result, testConfig.validator, {
+      test: ctx.testInfo.name,
+      expectFailure: testConfig.expectFailure,
+    });
+
+    // check if we should retry
+    if (attempt < MAX_RETRIES) {
+      const decision = shouldRetry(result, validation);
+      if (decision.retry) {
+        console.log(
+          `\n${prefix} ${decision.reason} — retrying in ${decision.backoffMs / 1000}s (retry ${attempt + 1}/${MAX_RETRIES})...\n`
+        );
+        await new Promise((r) => setTimeout(r, decision.backoffMs));
+        continue;
+      }
+    }
+
+    ctx.results.set(getRunKey(ctx.testInfo.name, ctx.agent), validation);
+    return validation;
+  }
+
+  // should not reach here, but handle canceled state
+  return buildCanceledValidation({
+    testInfo: ctx.testInfo,
+    agent: ctx.agent,
+    signal: ctx.cancelState.signal ?? "SIGTERM",
   });
-  ctx.results.set(getRunKey(ctx.testInfo.name, ctx.agent), validation);
-  return validation;
 }
 
 async function main(): Promise<void> {

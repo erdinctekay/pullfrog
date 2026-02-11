@@ -1,9 +1,9 @@
 import { log } from "../utils/cli.ts";
 import { installNodeDependencies } from "./installNodeDependencies.ts";
 import { installPythonDependencies } from "./installPythonDependencies.ts";
-import type { PrepDefinition, PrepResult } from "./types.ts";
+import type { PrepDefinition, PrepOptions, PrepResult } from "./types.ts";
 
-export type { PrepResult } from "./types.ts";
+export type { PrepOptions, PrepResult } from "./types.ts";
 
 // register all prep steps here
 const prepSteps: PrepDefinition[] = [installNodeDependencies, installPythonDependencies];
@@ -12,7 +12,7 @@ const prepSteps: PrepDefinition[] = [installNodeDependencies, installPythonDepen
  * run all prep steps sequentially.
  * failures are logged as warnings but don't stop the run.
  */
-export async function runPrepPhase(): Promise<PrepResult[]> {
+export async function runPrepPhase(options: PrepOptions): Promise<PrepResult[]> {
   log.debug("» starting prep phase...");
   const startTime = Date.now();
   const results: PrepResult[] = [];
@@ -25,7 +25,7 @@ export async function runPrepPhase(): Promise<PrepResult[]> {
     }
 
     log.debug(`» running ${step.name}...`);
-    const result = await step.run();
+    const result = await step.run(options);
     results.push(result);
 
     if (result.dependenciesInstalled) {

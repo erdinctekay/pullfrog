@@ -182,7 +182,7 @@ export async function checkoutPrBranch(
   pullNumber: number,
   params: CheckoutPrBranchParams
 ): Promise<CheckoutPrBranchResult> {
-  const { octokit, owner, name, gitToken, toolState, restricted } = params;
+  const { octokit, owner, name, gitToken, toolState, bash } = params;
   log.info(`» checking out PR #${pullNumber}...`);
 
   // fetch PR metadata
@@ -215,7 +215,10 @@ export async function checkoutPrBranch(
   } else {
     // fetch base branch so origin/<base> exists for diff operations
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", ["--no-tags", "origin", baseBranch], { token: gitToken, restricted });
+    $git("fetch", ["--no-tags", "origin", baseBranch], {
+      token: gitToken,
+      restricted: bash !== "enabled",
+    });
 
     // checkout base branch first to avoid "refusing to fetch into current branch" error
     // -B creates or resets the branch to match origin/baseBranch
@@ -225,7 +228,7 @@ export async function checkoutPrBranch(
     log.debug(`» fetching PR #${pullNumber} (${localBranch})...`);
     $git("fetch", ["--no-tags", "origin", `pull/${pullNumber}/head:${localBranch}`], {
       token: gitToken,
-      restricted,
+      restricted: bash !== "enabled",
     });
 
     // checkout the branch
@@ -237,7 +240,10 @@ export async function checkoutPrBranch(
   // fetch if we skipped checkout (already on branch) - otherwise already fetched above
   if (alreadyOnBranch) {
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", ["--no-tags", "origin", baseBranch], { token: gitToken, restricted });
+    $git("fetch", ["--no-tags", "origin", baseBranch], {
+      token: gitToken,
+      restricted: bash !== "enabled",
+    });
   }
 
   // configure push remote for this branch
@@ -310,7 +316,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
         name: ctx.repo.name,
         gitToken: ctx.gitToken,
         toolState: ctx.toolState,
-        restricted: ctx.payload.bash === "restricted",
+        bash: ctx.payload.bash,
         postCheckoutScript: ctx.postCheckoutScript,
       });
 

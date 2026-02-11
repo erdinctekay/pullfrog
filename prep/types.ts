@@ -24,8 +24,13 @@ export interface UnknownLanguagePrepResult extends PrepResultBase {
 
 export type PrepResult = NodePrepResult | PythonPrepResult | UnknownLanguagePrepResult;
 
+export type PrepOptions = {
+  /** when true, lifecycle scripts (postinstall, etc.) are suppressed */
+  ignoreScripts: boolean;
+};
+
 export interface PrepDefinition {
   name: string;
   shouldRun: () => Promise<boolean> | boolean;
-  run: () => Promise<PrepResult>;
+  run: (options: PrepOptions) => Promise<PrepResult>;
 }

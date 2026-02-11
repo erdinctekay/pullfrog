@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { describe, expect, it } from "vitest";
+import { acquireNewToken } from "../utils/github.ts";
 import {
   buildThreadBlocks,
   formatReviewThreads,
@@ -10,13 +11,15 @@ import {
   type ReviewThreadsQueryResponse,
 } from "./reviewComments.ts";
 
-describe("formatReviewThreads", () => {
-  it("formats thread blocks with TOC and correct line numbers", async () => {
-    const token = process.env.GH_TOKEN;
-    if (!token) {
-      throw new Error("GH_TOKEN is not set");
-    }
+async function getToken(): Promise<string> {
+  // prefer explicit GH_TOKEN, fall back to acquiring one via GitHub App credentials
+  if (process.env.GH_TOKEN) return process.env.GH_TOKEN;
+  return await acquireNewToken();
+}
 
+describe("formatReviewThreads", () => {
+  it("formats thread blocks with TOC and correct line numbers", { timeout: 30000 }, async () => {
+    const token = await getToken();
     const octokit = new Octokit({ auth: token });
     const pullNumber = 49;
     const reviewId = 3485940013;

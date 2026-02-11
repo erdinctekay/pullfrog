@@ -40,8 +40,9 @@ type SafeGitSubcommand = "fetch" | "push";
 type GitAuthOptions = {
   token: string;
   cwd?: string;
-  // restricted bash mode: agents can write to .git/hooks/, so we disable hooks
-  // to prevent token exfiltration via malicious hooks reading GIT_CONFIG_PARAMETERS
+  // when true, disables hooks during authenticated git operations to prevent
+  // token exfiltration via malicious hooks reading GIT_CONFIG_PARAMETERS.
+  // should be true whenever bash is not "enabled" (both restricted and disabled).
   restricted?: boolean;
 };
 
@@ -124,8 +125,8 @@ export function $git(
   const gitPath = verifyGitBinary();
   const cwd = options.cwd ?? process.cwd();
 
-  // SECURITY: disable hooks in restricted mode to prevent token exfiltration
-  // agents could write malicious .git/hooks/pre-push that reads GIT_CONFIG_PARAMETERS
+  // SECURITY: disable hooks during authenticated operations to prevent token exfiltration.
+  // in restricted mode, agents can write .git/hooks/ via bash; in disabled mode, defense-in-depth.
   if (options.restricted) {
     const hasHooksOverride = args.some(
       (arg) => arg.toLowerCase().includes("hookspath") || arg.toLowerCase().includes("hooks")

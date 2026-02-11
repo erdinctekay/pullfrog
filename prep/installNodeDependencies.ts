@@ -5,7 +5,7 @@ import { detect } from "package-manager-detector";
 import { resolveCommand } from "package-manager-detector/commands";
 import { log } from "../utils/cli.ts";
 import { spawn } from "../utils/subprocess.ts";
-import type { NodePackageManager, NodePrepResult, PrepDefinition } from "./types.ts";
+import type { NodePackageManager, NodePrepResult, PrepDefinition, PrepOptions } from "./types.ts";
 
 // install command templates for each package manager (version placeholder: {version})
 const nodePackageManagers: Record<NodePackageManager, string[]> = {
@@ -88,7 +88,7 @@ export const installNodeDependencies: PrepDefinition = {
     return existsSync(packageJsonPath);
   },
 
-  run: async (): Promise<NodePrepResult> => {
+  run: async (options: PrepOptions): Promise<NodePrepResult> => {
     // check packageManager field in package.json first (takes priority)
     const fromPackageJson = getPackageManagerFromPackageJson();
 
@@ -110,6 +110,19 @@ export const installNodeDependencies: PrepDefinition = {
 
     // check if package manager is available, install if needed
     if (!(await isCommandAvailable(packageManager))) {
+      // SECURITY: when bash is disabled, don't install package managers.
+      // installPackageManager runs `npm install -g` or `curl | sh` (for deno),
+      // both of which execute code. the package manager must already be available.
+      if (options.ignoreScripts) {
+        return {
+          language: "node",
+          packageManager,
+          dependenciesInstalled: false,
+          issues: [
+            `${packageManager} is not available and cannot be installed when bash is disabled (would execute code)`,
+          ],
+        };
+      }
       log.info(`» ${packageManager} not found, attempting to install...`);
       const installError = await installPackageManager(packageManager, installSpec);
       if (installError) {
@@ -131,6 +144,13 @@ export const installNodeDependencies: PrepDefinition = {
         dependenciesInstalled: false,
         issues: [`no install command found for ${agent}`],
       };
+    }
+
+    // SECURITY: when bash is disabled, suppress lifecycle scripts to prevent
+    // agents from injecting arbitrary code execution via package.json scripts
+    if (options.ignoreScripts) {
+      resolved.args.push("--ignore-scripts");
+      log.info("» --ignore-scripts enabled (bash disabled)");
     }
 
     const fullCommand = `${resolved.command} ${resolved.args.join(" ")}`;

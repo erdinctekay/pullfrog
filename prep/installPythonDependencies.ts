@@ -2,7 +2,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../utils/cli.ts";
 import { spawn } from "../utils/subprocess.ts";
-import type { PrepDefinition, PythonPackageManager, PythonPrepResult } from "./types.ts";
+import type {
+  PrepDefinition,
+  PrepOptions,
+  PythonPackageManager,
+  PythonPrepResult,
+} from "./types.ts";
 
 interface PythonConfig {
   file: string;
@@ -98,7 +103,7 @@ export const installPythonDependencies: PrepDefinition = {
     return PYTHON_CONFIGS.some((config) => existsSync(join(cwd, config.file)));
   },
 
-  run: async (): Promise<PythonPrepResult> => {
+  run: async (options: PrepOptions): Promise<PythonPrepResult> => {
     const cwd = process.cwd();
 
     // find the first matching config
@@ -114,6 +119,30 @@ export const installPythonDependencies: PrepDefinition = {
     }
 
     log.info(`» detected python config: ${config.file} (using ${config.tool})`);
+
+    // SECURITY: when bash is disabled, skip ALL python dependency installation.
+    // every python install path can potentially execute arbitrary code:
+    //   - setup.py / pyproject.toml: directly execute build backends
+    //   - requirements.txt: can contain "-e ." or local path references that
+    //     trigger setup.py execution
+    //   - Pipfile/poetry.lock: can contain path dependencies pointing to local
+    //     directories with malicious setup.py
+    //   - source distributions from PyPI also execute setup.py
+    // there is no equivalent of npm's --ignore-scripts for pip.
+    if (options.ignoreScripts) {
+      log.info(
+        `» skipping python install (bash disabled, python packages can execute arbitrary code)`
+      );
+      return {
+        language: "python",
+        packageManager: config.tool,
+        configFile: config.file,
+        dependenciesInstalled: false,
+        issues: [
+          `skipped: python dependency installation can execute arbitrary code (setup.py, build backends, local path references), which is blocked when bash is disabled`,
+        ],
+      };
+    }
 
     // check if the tool is available, install if needed
     const isAvailable = await isCommandAvailable(config.tool);

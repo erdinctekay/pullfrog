@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { PrepResult } from "../prep/index.ts";
+import type { PrepOptions, PrepResult } from "../prep/index.ts";
 import { runPrepPhase } from "../prep/index.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -75,8 +75,14 @@ function startInstallation(ctx: ToolContext): void {
     return;
   }
 
+  // SECURITY: when bash is disabled, suppress lifecycle scripts to prevent
+  // agents from using package.json scripts as a backdoor for code execution
+  const prepOptions: PrepOptions = {
+    ignoreScripts: ctx.payload.bash === "disabled",
+  };
+
   // initialize state and start installation
-  const promise = runPrepPhase();
+  const promise = runPrepPhase(prepOptions);
   ctx.toolState.dependencyInstallation = {
     status: "in_progress",
     promise,

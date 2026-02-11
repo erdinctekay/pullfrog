@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PayloadEvent } from "../external.ts";
+import type { BashPermission, PayloadEvent } from "../external.ts";
 import { checkoutPrBranch } from "../mcp/checkout.ts";
 import type { ToolState } from "../mcp/server.ts";
 import { log } from "./cli.ts";
@@ -51,8 +51,11 @@ export interface GitContext {
   name: string;
   octokit: OctokitWithPlugins;
   toolState: ToolState;
-  // restricted bash mode: disables git hooks to prevent token exfiltration
-  restricted: boolean;
+  // bash permission level — controls hook and security behavior:
+  //   enabled: full bash, hooks run, no restrictions
+  //   restricted: MCP bash in stripped env, hooks run, token protection on auth ops
+  //   disabled: no bash, hooks disabled globally, all code execution paths blocked
+  bash: BashPermission;
   postCheckoutScript: string | null;
 }
 
@@ -104,13 +107,17 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
       log.debug(`» git user already configured (${currentEmail}), skipping`);
     }
 
-    // disable git hooks for predictability - prevents pre-commit hooks
-    // from blocking commits or causing unexpected side effects
-    execSync("git config --local core.hooksPath /dev/null", {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
-    log.debug("» git hooks disabled");
+    // SECURITY: disable git hooks when bash is disabled to prevent code execution.
+    // in restricted mode, hooks run in the stripped sandbox — that's fine.
+    // in enabled mode, the agent has full bash anyway.
+    // in disabled mode, hooks are the primary code-execution escape vector.
+    if (params.bash === "disabled") {
+      execSync("git config --local core.hooksPath /dev/null", {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      log.debug("» git hooks disabled (bash=disabled)");
+    }
   } catch (error) {
     // If git config fails, log warning but don't fail the action
     // This can happen if we're not in a git repo or git isn't available
