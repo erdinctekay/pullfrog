@@ -120,6 +120,7 @@ async function installCodex(): Promise<string> {
     packageName: "@openai/codex",
     version: "latest",
     executablePath: "bin/codex.js",
+    installDependencies: true,
   });
 }
 
