@@ -25874,7 +25874,10 @@ async function acquireTokenViaGitHubApp(opts) {
 }
 async function acquireNewToken(opts) {
   if (isOIDCAvailable()) {
-    return await retry(() => acquireTokenViaOIDC(opts), { label: "token exchange" });
+    return await retry(() => acquireTokenViaOIDC(opts), {
+      label: "token exchange",
+      shouldRetry: (error2) => error2 instanceof Error && (error2.name === "AbortError" || error2.message.includes("fetch failed") || error2.message.includes("ECONNRESET") || error2.message.includes("ETIMEDOUT") || error2.message.includes("Token exchange failed"))
+    });
   } else {
     return await acquireTokenViaGitHubApp(opts);
   }

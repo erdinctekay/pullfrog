@@ -289,7 +289,16 @@ async function acquireTokenViaGitHubApp(opts?: AcquireTokenOptions): Promise<str
 
 export async function acquireNewToken(opts?: AcquireTokenOptions): Promise<string> {
   if (isOIDCAvailable()) {
-    return await retry(() => acquireTokenViaOIDC(opts), { label: "token exchange" });
+    return await retry(() => acquireTokenViaOIDC(opts), {
+      label: "token exchange",
+      shouldRetry: (error) =>
+        error instanceof Error &&
+        (error.name === "AbortError" ||
+          error.message.includes("fetch failed") ||
+          error.message.includes("ECONNRESET") ||
+          error.message.includes("ETIMEDOUT") ||
+          error.message.includes("Token exchange failed")),
+    });
   } else {
     // local development via GitHub App
     return await acquireTokenViaGitHubApp(opts);
