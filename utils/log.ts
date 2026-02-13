@@ -7,10 +7,7 @@ import { table } from "table";
 import { isGitHubActions, isInsideDocker } from "./globals.ts";
 
 const isDebugEnabled = () =>
-  process.env.LOG_LEVEL === "debug" ||
-  process.env.ACTIONS_STEP_DEBUG === "true" ||
-  process.env.RUNNER_DEBUG === "1" ||
-  core.isDebug();
+  process.env.LOG_LEVEL === "debug" || process.env.ACTIONS_STEP_DEBUG === "true" || core.isDebug();
 
 /**
  * Format arguments into a single string for logging
