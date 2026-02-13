@@ -132,7 +132,8 @@ export type CheckoutPrResult = {
   number: number;
   title: string;
   base: string;
-  head: string;
+  localBranch: string;
+  remoteBranch: string;
   isFork: boolean;
   maintainerCanModify: boolean;
   url: string;
@@ -356,7 +357,8 @@ export function CheckoutPrTool(ctx: ToolContext) {
         number: pr.data.number,
         title: pr.data.title,
         base: pr.data.base.ref,
-        head: pr.data.head.ref,
+        localBranch: `pr-${pull_number}`,
+        remoteBranch: `refs/heads/${pr.data.head.ref}`,
         isFork: headRepo.full_name !== pr.data.base.repo.full_name,
         maintainerCanModify: pr.data.maintainer_can_modify,
         url: pr.data.html_url,
@@ -367,7 +369,9 @@ export function CheckoutPrTool(ctx: ToolContext) {
           `the diff file at diffPath contains a table of contents (TOC) at the top listing every changed file with its line range. ` +
           `use the line ranges to read specific files from the diff instead of reading the entire file. ` +
           `for example, if the TOC says "src/foo.ts → lines 5-42", read lines 5-42 from diffPath to see that file's changes. ` +
-          `review files selectively based on relevance rather than reading everything sequentially.`,
+          `review files selectively based on relevance rather than reading everything sequentially. ` +
+          `the local branch is 'localBranch' (pr-{number}), not the remote branch name. ` +
+          `when pushing, omit branchName to use the current branch. do not use remoteBranch as a local branch name.`,
       } satisfies CheckoutPrResult;
     }),
   });

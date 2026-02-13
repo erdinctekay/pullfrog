@@ -14,37 +14,26 @@ type PushDestination = {
 
 /**
  * get where git would actually push this branch.
- * uses git's native @{push} resolution, falls back to origin if unset.
+ * reads branch.X.pushRemote and branch.X.merge set by checkout_pr.
+ *
+ * NOTE: we read git config directly instead of using @{push} because
+ * push.default=simple (git's default) requires local/remote branch names
+ * to match. since checkout_pr uses pr-N as the local name, @{push} resolves
+ * to origin/pr-N instead of the actual remote branch.
  *
  * for branches created via checkout_pr: uses configured pushRemote/merge
  * for new branches (git checkout -b): falls back to origin/<branch>
  */
 function getPushDestination(branch: string): PushDestination {
-  // try git's @{push} resolution first (works for checkout_pr branches)
   try {
-    const pushRef = $(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${branch}@{push}`],
-      { log: false }
-    ).trim();
-
-    // pushRef is like "origin/main" or "pr-123/feature/foo"
-    // parse carefully to handle branch names with slashes
-    const slashIndex = pushRef.indexOf("/");
-    if (slashIndex === -1) {
-      throw new Error(`unexpected push ref format: ${pushRef}`);
-    }
-    const remoteName = pushRef.slice(0, slashIndex);
-    const remoteBranch = pushRef.slice(slashIndex + 1);
-
-    // get the actual URL git would push to (handles remote.X.pushurl)
-    const url = $("git", ["remote", "get-url", "--push", remoteName], { log: false }).trim();
-
-    return { remoteName, remoteBranch, url };
+    const pushRemote = $("git", ["config", `branch.${branch}.pushRemote`], { log: false }).trim();
+    const merge = $("git", ["config", `branch.${branch}.merge`], { log: false }).trim();
+    const remoteBranch = merge.replace(/^refs\/heads\//, "");
+    const url = $("git", ["remote", "get-url", "--push", pushRemote], { log: false }).trim();
+    return { remoteName: pushRemote, remoteBranch, url };
   } catch {
-    // @{push} not configured - branch was created locally without checkout_pr
-    // fall back to origin with the same branch name
-    log.debug(`no push tracking for ${branch}, falling back to origin/${branch}`);
+    // no push config - branch was created locally without checkout_pr
+    log.debug(`no push config for ${branch}, falling back to origin/${branch}`);
     const url = $("git", ["remote", "get-url", "--push", "origin"], { log: false }).trim();
     return { remoteName: "origin", remoteBranch: branch, url };
   }
@@ -95,7 +84,10 @@ export function PushBranchTool(ctx: ToolContext) {
   return tool({
     name: "push_branch",
     description:
-      "Push the current branch (or specified branch) to the remote repository. Git automatically determines the correct remote based on branch config (set by checkout_pr for fork PRs). Never force push unless explicitly requested. Pushes to the default branch are blocked in restricted mode.",
+      "Push the current branch to the remote repository. Omit branchName to push the current branch (recommended). " +
+      "If specifying branchName, use the LOCAL branch name (e.g., 'pr-1'), not the remote branch name. " +
+      "The correct remote and remote branch are determined automatically from branch config set by checkout_pr. " +
+      "Never force push unless explicitly requested. Pushes to the default branch are blocked in restricted mode.",
     parameters: PushBranch,
     execute: execute(async ({ branchName, force }) => {
       // permission check
