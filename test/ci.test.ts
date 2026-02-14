@@ -114,9 +114,9 @@ describe("ci workflow consistency", () => {
       expect(getEnvVarNames(rootJob)).toEqual(expectedAgentEnvVars);
     });
 
-    it("fail-fast is disabled in both", () => {
-      expect(rootJob.strategy!["fail-fast"]).toBe(false);
-      expect(actionJob.strategy!["fail-fast"]).toBe(false);
+    it("fail-fast is enabled in both", () => {
+      expect(rootJob.strategy!["fail-fast"]).toBe(true);
+      expect(actionJob.strategy!["fail-fast"]).toBe(true);
     });
   });
 
@@ -148,9 +148,9 @@ describe("ci workflow consistency", () => {
       expect(getEnvVarNames(rootJob)).toEqual(expectedAgnosticEnvVars);
     });
 
-    it("fail-fast is disabled in both", () => {
-      expect(rootJob.strategy!["fail-fast"]).toBe(false);
-      expect(actionJob.strategy!["fail-fast"]).toBe(false);
+    it("fail-fast is enabled in both", () => {
+      expect(rootJob.strategy!["fail-fast"]).toBe(true);
+      expect(actionJob.strategy!["fail-fast"]).toBe(true);
     });
   });
 });
