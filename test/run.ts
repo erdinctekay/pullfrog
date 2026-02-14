@@ -316,9 +316,9 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
     env.OPENCODE_MODEL ??= "google/gemini-3-pro-preview";
   }
 
-  // gemini: override to pro for all tests (including mini-effort) to avoid flash's tight RPD quota limits
+  // gemini: override to 2.5-flash for all tests (including mini-effort) to avoid quota limits
   if (ctx.agent === "gemini") {
-    env.GEMINI_MODEL ??= "gemini-3-pro-preview";
+    env.GEMINI_MODEL ??= "gemini-2.5-flash";
   }
 
   // build file-based env vars for MCP servers that don't inherit parent env
