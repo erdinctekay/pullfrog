@@ -15,7 +15,7 @@ const fixture = defineFixture(
   {
     prompt: `This is a test to determine token visibility in bash tool calls.
     
-${buildBashToolPrompt("echo $PULLFROG_DIAGNOSTIC_ID")}
+${buildBashToolPrompt("echo $PULLFROG_TEST_VALUE")}
 
 Then also run: echo $PULLFROG_TEST_TOKEN
 
@@ -29,10 +29,10 @@ FILTER_TOKEN=<value or "empty">`,
   { localOnly: true }
 );
 
-const { getUuid, agentEnv } = generateAgentUuids(["PULLFROG_DIAGNOSTIC_ID", "PULLFROG_TEST_TOKEN"]);
+const { getUuid, agentEnv } = generateAgentUuids(["PULLFROG_TEST_VALUE", "PULLFROG_TEST_TOKEN"]);
 
 function validator(result: AgentResult): ValidationCheck[] {
-  const safeMarker = getUuid(result.agent, "PULLFROG_DIAGNOSTIC_ID");
+  const safeMarker = getUuid(result.agent, "PULLFROG_TEST_VALUE");
   const filteredMarker = getUuid(result.agent, "PULLFROG_TEST_TOKEN");
 
   // require structured output from set_output tool
