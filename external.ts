@@ -61,6 +61,28 @@ export type ToolPermission = "disabled" | "enabled";
 export type BashPermission = "disabled" | "restricted" | "enabled";
 export type PushPermission = "disabled" | "restricted" | "enabled";
 
+// workflow yml permissions for GITHUB_TOKEN
+export type WorkflowPermissionValue = "read" | "write" | "none";
+export type WorkflowIdTokenPermissionValue = "write" | "none";
+
+export interface WorkflowPermissions {
+  actions?: WorkflowPermissionValue;
+  attestations?: WorkflowPermissionValue;
+  checks?: WorkflowPermissionValue;
+  contents?: WorkflowPermissionValue;
+  deployments?: WorkflowPermissionValue;
+  discussions?: WorkflowPermissionValue;
+  "id-token"?: WorkflowIdTokenPermissionValue;
+  issues?: WorkflowPermissionValue;
+  models?: WorkflowPermissionValue;
+  packages?: WorkflowPermissionValue;
+  pages?: WorkflowPermissionValue;
+  "pull-requests"?: WorkflowPermissionValue;
+  "repository-projects"?: WorkflowPermissionValue;
+  "security-events"?: WorkflowPermissionValue;
+  statuses?: WorkflowPermissionValue;
+}
+
 // permission level for the author who triggered the event
 // matches GitHub's permission levels: admin > write > maintain > triage > read > none
 export type AuthorPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none";

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { agentsManifest } from "../external.ts";
+import { agentsManifest, type WorkflowPermissions } from "../external.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const actionDir = join(__dirname, "..");
@@ -13,7 +13,7 @@ const rootDir = join(actionDir, "..");
 type WorkflowJob = {
   "runs-on": string;
   "timeout-minutes"?: number;
-  permissions?: Record<string, string>;
+  permissions?: WorkflowPermissions;
   strategy?: { "fail-fast": boolean; matrix: Record<string, string[]> };
   env?: Record<string, string>;
   steps?: unknown[];
