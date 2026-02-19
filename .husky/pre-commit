@@ -1,6 +1,8 @@
 # sync action lockfile when action/package.json changes
 if git diff --cached --name-only | grep -q "^action/package.json$"; then
     echo "🔒 syncing action/pnpm-lock.yaml..."
-    pnpm --ignore-workspace -C action install --no-frozen-lockfile
+    # note: pnpm -C action install will *not* treat "action" as a monorepo root if run from repo root;
+    # to install with action/ as the workspace root (and search upwards), cd into action first:
+    (cd action && pnpm install --no-frozen-lockfile)
     git add action/pnpm-lock.yaml
 fi
