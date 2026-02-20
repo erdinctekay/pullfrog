@@ -99,7 +99,7 @@ export function computeModes(): Mode[] {
       name: "Review",
       description:
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
-      prompt: `Follow these steps to review the PR. Your job is to find problems—assume they exist until you've proven otherwise. Do not submit a clean review without thorough investigation.
+      prompt: `Follow these steps to review the PR. Your job is to find problems—assume they exist until you've proven otherwise. Do not submit a clean review without thorough investigation. **If you have nothing interesting to say, do NOT submit a review at all—use \`report_progress\` instead.**
 
 1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number. This should give you all PR metadata you need, including a \`diffPath\`: a path to a temp file containing the PR diff.
 
@@ -113,21 +113,17 @@ export function computeModes(): Mode[] {
    - **Explore failure modes**: What if this throws? What if that returns null? What if the network fails? What if this runs twice?
    - **Verify assumptions**: If the code assumes X, verify X is actually true. Use grep, read related files, check documentation.
    - **Consider lifecycle**: Initialization, cleanup, error recovery. Are resources acquired before use? Released after? What happens on cancellation?
+   - **Spot performance issues**: Nested loops over large collections, blocking I/O, memory leaks, excessive object creation in hot paths, inefficient array operations (e.g., repeated \`.find()\` in a loop).
+   - **Check PR consistency**: Does the PR title/description match the actual code changes? Flag significant discrepancies.
    - Do NOT stop at "this looks reasonable." Dig until you either find a problem or have concrete evidence there isn't one.
 
-4. **DRAFT LINE-BY-LINE COMMENTS** - For each issue found, draft an inline comment on the specific line. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 6.
+4. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable: the author should need to change something in response. 2-3 sentences max. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 5. Non-actionable comments (praise, style preferences, minor optimizations, documentation nits) must not be drafted. If no comments survive and you have no significant concerns, **do not submit a review** — use \`${ghPullfrogMcpName}/report_progress\` to note the PR was reviewed and no issues were found.
 
-5. **FILTER LINE-BY-LINE COMMENTS** - Each inline comment must be actionable. Remove anything that doesn't require action:
-   - **Not actionable → no comment**: Do NOT create inline comments for compliments (e.g., "this looks clean", "nice refactor") or general observations. These waste reviewer attention.
-   - **Actionable by agent → keep**: Bugs, logic errors, missing error handling, security issues, race conditions, resource leaks, incorrect assumptions.
-   - **Requires human decision → keep**: If something needs human judgment (architectural choice, product decision, tradeoff evaluation), create a comment clearly stating what decision is needed and why.
-   - Remove style-only comments (formatting, naming conventions) unless they cause real confusion.
+5. **WRITE SUMMARY** - Draft a 1-3 sentence summary for the review body. Include urgency level and any concerns about code outside the diff.
 
-6. **WRITE SUMMARY** - Draft a 1-3 sentence summary for the review body. Include urgency level and any concerns about code outside the diff.
-
-7. **SUBMIT** — Use ${ghPullfrogMcpName}/create_pull_request_review:
-   - \`body\`: The summary from step 6
-   - \`comments\`: The filtered inline comments from step 5
+6. **SUBMIT** — Use ${ghPullfrogMcpName}/create_pull_request_review:
+   - \`body\`: The summary from step 5
+   - \`comments\`: The inline comments from step 4
 
 ${permalinkTip}
 `,
