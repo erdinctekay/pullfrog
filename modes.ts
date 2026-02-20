@@ -117,7 +117,7 @@ export function computeModes(): Mode[] {
    - **Check PR consistency**: Does the PR title/description match the actual code changes? Flag significant discrepancies.
    - Do NOT stop at "this looks reasonable." Dig until you either find a problem or have concrete evidence there isn't one.
 
-4. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable: the author should need to change something in response. 2-3 sentences max. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 5. Non-actionable comments (praise, style preferences, minor optimizations, documentation nits) must not be drafted. If no comments survive and you have no significant concerns, **do not submit a review** — use \`${ghPullfrogMcpName}/report_progress\` to note the PR was reviewed and no issues were found.
+4. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable: the author should need to change something in response. 2-3 sentences max. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 5. Non-actionable comments (praise, style preferences, minor optimizations, documentation nits) must not be drafted. If no comments survive and you have no significant concerns, **do not submit a review**. Use \`${ghPullfrogMcpName}/report_progress\` to note the PR was reviewed and no issues were found.
 
 5. **WRITE SUMMARY** - Draft a 1-3 sentence summary for the review body. Include urgency level and any concerns about code outside the diff.
 
