@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type } from "arktype";
-import type { BashPermission } from "../external.ts";
+import type { ShellPermission } from "../external.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -42,7 +42,7 @@ export const ListDirectoryParams = type({
 // SECURITY: files that git interprets and can trigger code execution.
 // .gitattributes can define filter drivers (clean/smudge) that execute arbitrary commands.
 // .gitmodules can reference malicious submodule URLs that execute code on update.
-// only blocked when bash is disabled — in restricted mode the agent already has bash
+// only blocked when shell is disabled — in restricted mode the agent already has shell
 // and could write these files via shell, so blocking via MCP is redundant.
 const GIT_INTERPRETED_FILES = [".gitattributes", ".gitmodules"];
 
@@ -80,18 +80,18 @@ function resolveReadPath(filePath: string): string {
 }
 
 // resolve and validate a write path. enforces:
-// - repo-scoping with symlink protection (when bash !== "enabled")
+// - repo-scoping with symlink protection (when shell !== "enabled")
 // - .git/ always blocked (defense-in-depth)
-// - .gitattributes/.gitmodules blocked when bash === "disabled"
+// - .gitattributes/.gitmodules blocked when shell === "disabled"
 //
-// when bash=enabled, repo-scoping is dropped — the agent can write anywhere via native
-// bash, so restricting file_write to the repo would be security theater.
-function resolveWritePath(filePath: string, bashPermission: BashPermission): string {
+// when shell=enabled, repo-scoping is dropped — the agent can write anywhere via native
+// shell, so restricting file_write to the repo would be security theater.
+function resolveWritePath(filePath: string, shellPermission: ShellPermission): string {
   const cwd = realpathSync(process.cwd());
   const resolved = resolve(cwd, filePath);
 
-  // repo-scoping: enforced when agent doesn't have full bash
-  if (bashPermission !== "enabled") {
+  // repo-scoping: enforced when agent doesn't have full shell
+  if (shellPermission !== "enabled") {
     if (existsSync(resolved)) {
       const real = realpathSync(resolved);
       if (real !== cwd && !real.startsWith(cwd + "/")) {
@@ -121,17 +121,17 @@ function resolveWritePath(filePath: string, bashPermission: BashPermission): str
     }
   }
 
-  // .git always blocked anywhere in the path (defense-in-depth even with bash=enabled)
+  // .git always blocked anywhere in the path (defense-in-depth even with shell=enabled)
   if (resolved.includes("/.git/") || resolved.endsWith("/.git")) {
     throw new Error(`writing to .git is not allowed: ${filePath}`);
   }
 
-  // git-interpreted files blocked anywhere in the path when bash is disabled
-  if (bashPermission === "disabled") {
+  // git-interpreted files blocked anywhere in the path when shell is disabled
+  if (shellPermission === "disabled") {
     const basename = resolved.split("/").pop() || "";
     if (GIT_INTERPRETED_FILES.includes(basename)) {
       throw new Error(
-        `writing to ${basename} is not allowed when bash is ${bashPermission} (can trigger code execution via git filter drivers): ${filePath}`
+        `writing to ${basename} is not allowed when shell is ${shellPermission} (can trigger code execution via git filter drivers): ${filePath}`
       );
     }
   }
@@ -176,7 +176,7 @@ export function FileWriteTool(ctx: ToolContext) {
       "Writes to .git/ are blocked. Creates parent directories if needed.",
     parameters: FileWriteParams,
     execute: execute(async (params) => {
-      const resolved = resolveWritePath(params.path, ctx.payload.bash);
+      const resolved = resolveWritePath(params.path, ctx.payload.shell);
       const dir = dirname(resolved);
       mkdirSync(dir, { recursive: true });
       writeFileSync(resolved, params.content, "utf-8");
@@ -201,7 +201,7 @@ export function FileEditTool(ctx: ToolContext) {
         throw new Error("old_string and new_string are identical");
       }
 
-      const resolved = resolveWritePath(params.path, ctx.payload.bash);
+      const resolved = resolveWritePath(params.path, ctx.payload.shell);
       const content = readFileSync(resolved, "utf-8");
       const count = content.split(params.old_string).length - 1;
 
@@ -232,7 +232,7 @@ export function FileDeleteTool(ctx: ToolContext) {
       "Deletes to .git/ are blocked. Cannot delete directories.",
     parameters: FileDeleteParams,
     execute: execute(async (params) => {
-      const resolved = resolveWritePath(params.path, ctx.payload.bash);
+      const resolved = resolveWritePath(params.path, ctx.payload.shell);
       unlinkSync(resolved);
       return { path: params.path, deleted: true };
     }),

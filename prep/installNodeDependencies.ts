@@ -110,7 +110,7 @@ export const installNodeDependencies: PrepDefinition = {
 
     // check if package manager is available, install if needed
     if (!(await isCommandAvailable(packageManager))) {
-      // SECURITY: when bash is disabled, don't install package managers.
+      // SECURITY: when shell is disabled, don't install package managers.
       // installPackageManager runs `npm install -g` or `curl | sh` (for deno),
       // both of which execute code. the package manager must already be available.
       if (options.ignoreScripts) {
@@ -119,7 +119,7 @@ export const installNodeDependencies: PrepDefinition = {
           packageManager,
           dependenciesInstalled: false,
           issues: [
-            `${packageManager} is not available and cannot be installed when bash is disabled (would execute code)`,
+            `${packageManager} is not available and cannot be installed when shell is disabled (would execute code)`,
           ],
         };
       }
@@ -146,11 +146,11 @@ export const installNodeDependencies: PrepDefinition = {
       };
     }
 
-    // SECURITY: when bash is disabled, suppress lifecycle scripts to prevent
+    // SECURITY: when shell is disabled, suppress lifecycle scripts to prevent
     // agents from injecting arbitrary code execution via package.json scripts
     if (options.ignoreScripts) {
       resolved.args.push("--ignore-scripts");
-      log.info("» --ignore-scripts enabled (bash disabled)");
+      log.info("» --ignore-scripts enabled (shell disabled)");
     }
 
     const fullCommand = `${resolved.command} ${resolved.args.join(" ")}`;

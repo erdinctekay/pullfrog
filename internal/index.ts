@@ -7,10 +7,10 @@ export type {
   AgentApiKeyName,
   AgentManifest,
   AuthorPermission,
-  BashPermission,
   Payload,
   PayloadEvent,
   PushPermission,
+  ShellPermission,
   ToolPermission,
   WriteablePayload,
 } from "../external.ts";

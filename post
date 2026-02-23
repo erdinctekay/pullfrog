@@ -41235,7 +41235,7 @@ var Effort = type.enumerated("mini", "auto", "max");
 // package.json
 var package_default = {
   name: "@pullfrog/pullfrog",
-  version: "0.0.168",
+  version: "0.0.169",
   type: "module",
   files: [
     "index.js",
@@ -41343,7 +41343,7 @@ function validateCompatibility(payloadVersion, actionVersion) {
 
 // utils/payload.ts
 var ToolPermissionInput = type.enumerated("disabled", "enabled");
-var BashPermissionInput = type.enumerated("disabled", "restricted", "enabled");
+var ShellPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 var PushPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 var JsonPayload = type({
   "~pullfrog": "true",
@@ -41367,7 +41367,7 @@ var Inputs = type({
   "web?": ToolPermissionInput.or("undefined"),
   "search?": ToolPermissionInput.or("undefined"),
   "push?": PushPermissionInput.or("undefined"),
-  "bash?": BashPermissionInput.or("undefined"),
+  "shell?": ShellPermissionInput.or("undefined"),
   "cwd?": type.string.or("undefined")
 });
 function resolvePromptInput() {

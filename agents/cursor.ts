@@ -189,7 +189,7 @@ export const cursor = agent({
       },
       tool_call: (event: CursorToolCallEvent) => {
         if (event.subtype === "started") {
-          // handle both MCP tools and built-in tools (bash, WebFetch, etc)
+          // handle both MCP tools and built-in tools (shell, WebFetch, etc)
           const mcpToolCall = event.tool_call?.mcpToolCall;
           const builtinToolCall = (event.tool_call as any)?.builtinToolCall;
 
@@ -414,11 +414,11 @@ function configureCursorTools(ctx: AgentRunContext): void {
   mkdirSync(cursorConfigDir, { recursive: true });
 
   // build deny list based on tool permissions
-  const bash = ctx.payload.bash;
+  const shell = ctx.payload.shell;
   const deny: string[] = [];
   if (ctx.payload.search === "disabled") deny.push("WebSearch");
   // both "disabled" and "restricted" block native shell
-  if (bash !== "enabled") deny.push("Shell(*)");
+  if (shell !== "enabled") deny.push("Shell(*)");
   // always block native file tools (use MCP file_read/file_write instead)
   deny.push("Read(*)", "Write(*)", "StrReplace(*)", "EditNotebook(*)", "Delete(*)");
   // block built-in subagent spawning — delegation is handled by gh_pullfrog/delegate

@@ -14,7 +14,7 @@ function formatPrepResults(results: PrepResult[]): string {
   if (results.length === 0) {
     return `No supported language detected in this repository (checked for package.json, requirements.txt, pyproject.toml, etc.).
 
-Inspect the repository structure to determine how dependencies should be installed, then use bash to install them.`;
+Inspect the repository structure to determine how dependencies should be installed, then use shell to install them.`;
   }
 
   const lines: string[] = [];
@@ -45,14 +45,14 @@ Inspect the repository structure to determine how dependencies should be install
 Error:
 ${errorMsg}
 
-Use bash or other tools at your disposal to diagnose and resolve the issue, then install dependencies manually.`);
+Use shell or other tools at your disposal to diagnose and resolve the issue, then install dependencies manually.`);
       } else if (result.language === "python") {
         lines.push(`${langDisplay} dependency installation failed via ${result.packageManager} (from ${result.configFile}).
 
 Error:
 ${errorMsg}
 
-Use bash or other tools at your disposal to diagnose and resolve the issue, then install dependencies manually.`);
+Use shell or other tools at your disposal to diagnose and resolve the issue, then install dependencies manually.`);
       }
     }
   }
@@ -60,7 +60,7 @@ Use bash or other tools at your disposal to diagnose and resolve the issue, then
   if (lines.length === 0) {
     return `No supported language detected in this repository (checked for package.json, requirements.txt, pyproject.toml, etc.).
 
-Inspect the repository structure to determine how dependencies should be installed, then use bash to install them.`;
+Inspect the repository structure to determine how dependencies should be installed, then use shell to install them.`;
   }
 
   return lines.join("\n\n");
@@ -75,10 +75,10 @@ function startInstallation(ctx: ToolContext): void {
     return;
   }
 
-  // SECURITY: when bash is disabled, suppress lifecycle scripts to prevent
+  // SECURITY: when shell is disabled, suppress lifecycle scripts to prevent
   // agents from using package.json scripts as a backdoor for code execution
   const prepOptions: PrepOptions = {
-    ignoreScripts: ctx.payload.bash === "disabled",
+    ignoreScripts: ctx.payload.shell === "disabled",
   };
 
   // initialize state and start installation

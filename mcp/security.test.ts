@@ -10,9 +10,9 @@ const AUTH_REQUIRED_REDIRECT: Record<string, string> = {
   clone: "Repository already cloned. Use checkout_pr for PR branches.",
 };
 
-// only blocked when bash is disabled — in restricted mode the agent has bash
+// only blocked when shell is disabled — in restricted mode the agent has shell
 // in a stripped sandbox so blocking these is redundant
-const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
+const NOSHELL_BLOCKED_SUBCOMMANDS: Record<string, string> = {
   config: "Blocked: git config can set up filter drivers or hooks that execute arbitrary code.",
   submodule:
     "Blocked: git submodule can reference malicious repositories and execute code on update.",
@@ -24,14 +24,14 @@ const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
   bisect: "Blocked: git bisect run can execute arbitrary shell commands.",
 };
 
-const NOBASH_BLOCKED_ARGS = ["--exec", "--extcmd", "--upload-pack", "--receive-pack"];
+const NOSHELL_BLOCKED_ARGS = ["--exec", "--extcmd", "--upload-pack", "--receive-pack"];
 
-type BashPermission = "disabled" | "restricted" | "enabled";
+type ShellPermission = "disabled" | "restricted" | "enabled";
 
 type ValidateGitParams = {
   subcommand: string;
   args: string[];
-  bashPermission: BashPermission;
+  shellPermission: ShellPermission;
 };
 
 // matches the arkregex pattern used in the Git schema
@@ -49,15 +49,15 @@ function validateGitCommand(params: ValidateGitParams): string | null {
     return `git ${params.subcommand} requires authentication. ${redirect}`;
   }
 
-  // subcommand and arg blocking only applies when bash is disabled
-  if (params.bashPermission === "disabled") {
-    const blocked = NOBASH_BLOCKED_SUBCOMMANDS[params.subcommand];
+  // subcommand and arg blocking only applies when shell is disabled
+  if (params.shellPermission === "disabled") {
+    const blocked = NOSHELL_BLOCKED_SUBCOMMANDS[params.subcommand];
     if (blocked) {
       return blocked;
     }
 
     for (const arg of params.args) {
-      const isBlocked = NOBASH_BLOCKED_ARGS.some(
+      const isBlocked = NOSHELL_BLOCKED_ARGS.some(
         (flag) => arg === flag || arg.startsWith(flag + "=")
       );
       if (isBlocked) {
@@ -71,12 +71,12 @@ function validateGitCommand(params: ValidateGitParams): string | null {
 
 describe("git tool security - subcommand regex validation", () => {
   it("blocks -c flag as subcommand in ALL modes (alias injection)", () => {
-    const modes: BashPermission[] = ["disabled", "restricted", "enabled"];
+    const modes: ShellPermission[] = ["disabled", "restricted", "enabled"];
     for (const mode of modes) {
       const error = validateGitCommand({
         subcommand: "-c",
         args: ["alias.x=!evil-command", "x"],
-        bashPermission: mode,
+        shellPermission: mode,
       });
       expect(error).toContain("Git subcommand");
     }
@@ -86,7 +86,7 @@ describe("git tool security - subcommand regex validation", () => {
     const error = validateGitCommand({
       subcommand: "--exec-path=/malicious",
       args: ["status"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("Git subcommand");
   });
@@ -95,7 +95,7 @@ describe("git tool security - subcommand regex validation", () => {
     const error = validateGitCommand({
       subcommand: "-C",
       args: ["/tmp", "init"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("Git subcommand");
   });
@@ -104,7 +104,7 @@ describe("git tool security - subcommand regex validation", () => {
     const error = validateGitCommand({
       subcommand: "--config-env",
       args: ["core.pager=PATH", "log"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("Git subcommand");
   });
@@ -115,7 +115,7 @@ describe("git tool security - subcommand regex validation", () => {
       const error = validateGitCommand({
         subcommand: flag,
         args: [],
-        bashPermission: "disabled",
+        shellPermission: "disabled",
       });
       expect(error).toContain("Git subcommand");
     }
@@ -125,7 +125,7 @@ describe("git tool security - subcommand regex validation", () => {
     const error = validateGitCommand({
       subcommand: "STATUS",
       args: [],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("Git subcommand");
   });
@@ -136,7 +136,7 @@ describe("git tool security - subcommand regex validation", () => {
       const error = validateGitCommand({
         subcommand: sub,
         args: [],
-        bashPermission: "disabled",
+        shellPermission: "disabled",
       });
       expect(error).toContain("Git subcommand");
     }
@@ -148,7 +148,7 @@ describe("git tool security - subcommand regex validation", () => {
       const error = validateGitCommand({
         subcommand: sub,
         args: [],
-        bashPermission: "disabled",
+        shellPermission: "disabled",
       });
       expect(error).toBeNull();
     }
@@ -160,7 +160,7 @@ describe("git tool security - subcommand regex validation", () => {
       const error = validateGitCommand({
         subcommand: sub,
         args: [],
-        bashPermission: "enabled",
+        shellPermission: "enabled",
       });
       expect(error).toBeNull();
     }
@@ -172,16 +172,16 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "config",
       args: ["core.hooksPath", "./hooks"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("git config");
   });
 
-  it("allows config in restricted mode (agent has bash)", () => {
+  it("allows config in restricted mode (agent has shell)", () => {
     const error = validateGitCommand({
       subcommand: "config",
       args: ["filter.evil.clean", "bash -c 'evil'"],
-      bashPermission: "restricted",
+      shellPermission: "restricted",
     });
     expect(error).toBeNull();
   });
@@ -190,7 +190,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "submodule",
       args: ["add", "https://evil.com/repo.git"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("submodule");
   });
@@ -199,7 +199,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "submodule",
       args: ["add", "https://example.com/repo.git"],
-      bashPermission: "restricted",
+      shellPermission: "restricted",
     });
     expect(error).toBeNull();
   });
@@ -208,7 +208,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "rebase",
       args: ["--exec", "evil-command", "HEAD~1"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("rebase");
   });
@@ -217,7 +217,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "rebase",
       args: ["main"],
-      bashPermission: "restricted",
+      shellPermission: "restricted",
     });
     expect(error).toBeNull();
   });
@@ -226,7 +226,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "bisect",
       args: ["run", "evil-command"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("bisect");
   });
@@ -235,7 +235,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "filter-branch",
       args: ["--tree-filter", "evil-command", "HEAD"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("filter-branch");
   });
@@ -246,7 +246,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
       const error = validateGitCommand({
         subcommand: sub,
         args: [],
-        bashPermission: "enabled",
+        shellPermission: "enabled",
       });
       expect(error).toBeNull();
     }
@@ -258,7 +258,7 @@ describe("git tool security - blocked subcommands (disabled mode only)", () => {
       const error = validateGitCommand({
         subcommand: sub,
         args: [],
-        bashPermission: "restricted",
+        shellPermission: "restricted",
       });
       expect(error).toBeNull();
     }
@@ -270,7 +270,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "log",
       args: ["--exec", "evil-command"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("arbitrary code");
   });
@@ -279,7 +279,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "log",
       args: ["--exec=evil-command"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("arbitrary code");
   });
@@ -288,7 +288,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "difftool",
       args: ["--extcmd=evil-command", "HEAD~1"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("arbitrary code");
   });
@@ -297,16 +297,16 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "ls-remote",
       args: ["--upload-pack=evil"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toContain("arbitrary code");
   });
 
-  it("allows --exec in restricted mode (agent has bash)", () => {
+  it("allows --exec in restricted mode (agent has shell)", () => {
     const error = validateGitCommand({
       subcommand: "rebase",
       args: ["--exec", "npm test", "HEAD~1"],
-      bashPermission: "restricted",
+      shellPermission: "restricted",
     });
     expect(error).toBeNull();
   });
@@ -315,7 +315,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "difftool",
       args: ["--extcmd=less"],
-      bashPermission: "restricted",
+      shellPermission: "restricted",
     });
     expect(error).toBeNull();
   });
@@ -324,7 +324,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "difftool",
       args: ["--extcmd=less"],
-      bashPermission: "enabled",
+      shellPermission: "enabled",
     });
     expect(error).toBeNull();
   });
@@ -333,7 +333,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "log",
       args: ["--oneline", "-10", "--format=%H %s"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toBeNull();
   });
@@ -342,7 +342,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "ls-files",
       args: ["--exclude-standard"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toBeNull();
   });
@@ -351,7 +351,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "log",
       args: ["--execute-something"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toBeNull();
   });
@@ -360,7 +360,7 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
     const error = validateGitCommand({
       subcommand: "log",
       args: ["-c", "--oneline"],
-      bashPermission: "disabled",
+      shellPermission: "disabled",
     });
     expect(error).toBeNull();
   });
@@ -368,12 +368,12 @@ describe("git tool security - blocked arg flags (disabled mode only)", () => {
 
 describe("git tool security - auth redirect", () => {
   it("redirects push in all modes", () => {
-    const modes: BashPermission[] = ["disabled", "restricted", "enabled"];
+    const modes: ShellPermission[] = ["disabled", "restricted", "enabled"];
     for (const mode of modes) {
       const error = validateGitCommand({
         subcommand: "push",
         args: [],
-        bashPermission: mode,
+        shellPermission: mode,
       });
       expect(error).toContain("authentication");
     }
@@ -383,7 +383,7 @@ describe("git tool security - auth redirect", () => {
     const error = validateGitCommand({
       subcommand: "fetch",
       args: [],
-      bashPermission: "enabled",
+      shellPermission: "enabled",
     });
     expect(error).toContain("authentication");
   });
@@ -392,7 +392,7 @@ describe("git tool security - auth redirect", () => {
     const error = validateGitCommand({
       subcommand: "pull",
       args: [],
-      bashPermission: "enabled",
+      shellPermission: "enabled",
     });
     expect(error).toContain("authentication");
   });
@@ -401,7 +401,7 @@ describe("git tool security - auth redirect", () => {
     const error = validateGitCommand({
       subcommand: "clone",
       args: [],
-      bashPermission: "enabled",
+      shellPermission: "enabled",
     });
     expect(error).toContain("authentication");
   });
@@ -420,19 +420,19 @@ type ValidateWritePathResult = {
 // without requiring real filesystem operations (for unit testing)
 function validateWritePathSecurity(
   relative: string,
-  bashPermission: BashPermission
+  shellPermission: ShellPermission
 ): ValidateWritePathResult {
   if (relative === ".git" || relative.startsWith(".git/")) {
     return { allowed: false, error: `writing to .git is not allowed: ${relative}` };
   }
 
-  // only blocked when bash is disabled
-  if (bashPermission === "disabled") {
+  // only blocked when shell is disabled
+  if (shellPermission === "disabled") {
     const basename = relative.split("/").pop() || "";
     if (GIT_INTERPRETED_FILES.includes(basename)) {
       return {
         allowed: false,
-        error: `writing to ${basename} is not allowed when bash is ${bashPermission}`,
+        error: `writing to ${basename} is not allowed when shell is ${shellPermission}`,
       };
     }
   }
@@ -442,7 +442,7 @@ function validateWritePathSecurity(
 
 describe("file tool security - .git protection", () => {
   it("blocks .git directory in all modes", () => {
-    const modes: BashPermission[] = ["disabled", "restricted", "enabled"];
+    const modes: ShellPermission[] = ["disabled", "restricted", "enabled"];
     for (const mode of modes) {
       const result = validateWritePathSecurity(".git", mode);
       expect(result.allowed).toBe(false);
@@ -472,7 +472,7 @@ describe("file tool security - git-interpreted files (disabled mode only)", () =
     expect(result.error).toContain(".gitattributes");
   });
 
-  it("allows .gitattributes in restricted mode (agent has bash)", () => {
+  it("allows .gitattributes in restricted mode (agent has shell)", () => {
     const result = validateWritePathSecurity(".gitattributes", "restricted");
     expect(result.allowed).toBe(true);
   });
@@ -514,7 +514,7 @@ describe("file tool security - git-interpreted files (disabled mode only)", () =
 
   it("allows normal files in all modes", () => {
     const files = ["README.md", "src/index.ts", "package.json", ".env", ".gitignore"];
-    const modes: BashPermission[] = ["disabled", "restricted", "enabled"];
+    const modes: ShellPermission[] = ["disabled", "restricted", "enabled"];
     for (const file of files) {
       for (const mode of modes) {
         const result = validateWritePathSecurity(file, mode);
@@ -537,20 +537,20 @@ describe("file tool security - git-interpreted files (disabled mode only)", () =
 // ─── dependency install security tests ──────────────────────────────────
 
 // mirrors the logic in dependencies.ts startInstallation()
-function shouldIgnoreScripts(bashPermission: BashPermission): boolean {
-  return bashPermission === "disabled";
+function shouldIgnoreScripts(shellPermission: ShellPermission): boolean {
+  return shellPermission === "disabled";
 }
 
 describe("dependency install - ignore-scripts logic", () => {
-  it("ignoreScripts is true when bash is disabled", () => {
+  it("ignoreScripts is true when shell is disabled", () => {
     expect(shouldIgnoreScripts("disabled")).toBe(true);
   });
 
-  it("ignoreScripts is false when bash is restricted (scripts run in stripped env)", () => {
+  it("ignoreScripts is false when shell is restricted (scripts run in stripped env)", () => {
     expect(shouldIgnoreScripts("restricted")).toBe(false);
   });
 
-  it("ignoreScripts is false when bash is enabled", () => {
+  it("ignoreScripts is false when shell is enabled", () => {
     expect(shouldIgnoreScripts("enabled")).toBe(false);
   });
 });

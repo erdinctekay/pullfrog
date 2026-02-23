@@ -1,4 +1,4 @@
-import type { AgentName, BashPermission, PushPermission, ToolPermission } from "../external.ts";
+import type { AgentName, PushPermission, ShellPermission, ToolPermission } from "../external.ts";
 import { apiFetch } from "./apiFetch.ts";
 import type { RepoContext } from "./github.ts";
 
@@ -18,7 +18,7 @@ export interface RepoSettings {
   web: ToolPermission;
   search: ToolPermission;
   push: PushPermission;
-  bash: BashPermission;
+  shell: ShellPermission;
 }
 
 export interface RunContext {
@@ -35,7 +35,7 @@ const defaultSettings: RepoSettings = {
   web: "enabled",
   search: "enabled",
   push: "restricted",
-  bash: "restricted",
+  shell: "restricted",
 };
 
 const defaultRunContext: RunContext = {

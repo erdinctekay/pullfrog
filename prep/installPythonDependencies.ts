@@ -120,7 +120,7 @@ export const installPythonDependencies: PrepDefinition = {
 
     log.info(`» detected python config: ${config.file} (using ${config.tool})`);
 
-    // SECURITY: when bash is disabled, skip ALL python dependency installation.
+    // SECURITY: when shell is disabled, skip ALL python dependency installation.
     // every python install path can potentially execute arbitrary code:
     //   - setup.py / pyproject.toml: directly execute build backends
     //   - requirements.txt: can contain "-e ." or local path references that
@@ -131,7 +131,7 @@ export const installPythonDependencies: PrepDefinition = {
     // there is no equivalent of npm's --ignore-scripts for pip.
     if (options.ignoreScripts) {
       log.info(
-        `» skipping python install (bash disabled, python packages can execute arbitrary code)`
+        `» skipping python install (shell disabled, python packages can execute arbitrary code)`
       );
       return {
         language: "python",
@@ -139,7 +139,7 @@ export const installPythonDependencies: PrepDefinition = {
         configFile: config.file,
         dependenciesInstalled: false,
         issues: [
-          `skipped: python dependency installation can execute arbitrary code (setup.py, build backends, local path references), which is blocked when bash is disabled`,
+          `skipped: python dependency installation can execute arbitrary code (setup.py, build backends, local path references), which is blocked when shell is disabled`,
         ],
       };
     }

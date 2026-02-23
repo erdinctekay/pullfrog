@@ -8,7 +8,7 @@ import { validateCompatibility } from "./versioning.ts";
 
 // tool permission enum types for inputs
 const ToolPermissionInput = type.enumerated("disabled", "enabled");
-const BashPermissionInput = type.enumerated("disabled", "restricted", "enabled");
+const ShellPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 const PushPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 
 // schema for JSON payload passed via prompt (internal dispatch invocation)
@@ -51,7 +51,7 @@ export const Inputs = type({
   "web?": ToolPermissionInput.or("undefined"),
   "search?": ToolPermissionInput.or("undefined"),
   "push?": PushPermissionInput.or("undefined"),
-  "bash?": BashPermissionInput.or("undefined"),
+  "shell?": ShellPermissionInput.or("undefined"),
   "cwd?": type.string.or("undefined"),
 });
 
@@ -105,7 +105,7 @@ function resolveNonPromptInputs() {
     web: core.getInput("web") || undefined,
     search: core.getInput("search") || undefined,
     push: core.getInput("push") || undefined,
-    bash: core.getInput("bash") || undefined,
+    shell: core.getInput("shell") || undefined,
   });
 }
 
@@ -138,26 +138,26 @@ export function resolvePayload(
   const resolvedAgent: AgentName | undefined =
     agent ?? (jsonAgent !== undefined && isAgentName(jsonAgent) ? jsonAgent : undefined);
 
-  // determine bash permission - strictest setting wins
+  // determine shell permission - strictest setting wins
   // precedence: disabled > restricted > enabled
   // non-collaborators always get at least "restricted"
   const isNonCollaborator = !isCollaborator(event);
-  const repoBash = repoSettings.bash ?? "restricted";
-  const inputBash = inputs.bash;
+  const repoShell = repoSettings.shell ?? "restricted";
+  const inputShell = inputs.shell;
 
-  // resolve bash: start with repo setting, then apply restrictions
-  let resolvedBash = repoBash;
+  // resolve shell: start with repo setting, then apply restrictions
+  let resolvedShell = repoShell;
 
   // input can only make it stricter (disabled > restricted > enabled)
-  if (inputBash === "disabled") {
-    resolvedBash = "disabled";
-  } else if (inputBash === "restricted" && resolvedBash === "enabled") {
-    resolvedBash = "restricted";
+  if (inputShell === "disabled") {
+    resolvedShell = "disabled";
+  } else if (inputShell === "restricted" && resolvedShell === "enabled") {
+    resolvedShell = "restricted";
   }
 
   // non-collaborators get at least "restricted" (can't have "enabled")
-  if (isNonCollaborator && resolvedBash === "enabled") {
-    resolvedBash = "restricted";
+  if (isNonCollaborator && resolvedShell === "enabled") {
+    resolvedShell = "restricted";
   }
 
   // build payload - precedence: inputs > repoSettings > fallbacks
@@ -183,7 +183,7 @@ export function resolvePayload(
     web: inputs.web ?? repoSettings.web ?? "enabled",
     search: inputs.search ?? repoSettings.search ?? "enabled",
     push: inputs.push ?? repoSettings.push ?? "restricted",
-    bash: resolvedBash,
+    shell: resolvedShell,
   };
 }
 

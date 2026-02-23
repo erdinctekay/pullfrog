@@ -19,7 +19,7 @@ const fixture = defineFixture(
     prompt: `You are testing git security features. Follow these steps EXACTLY and report ALL results:
 
 ## Test 1: Token Isolation
-Run these commands via the bash tool and report the output:
+Run these commands via the shell tool and report the output:
 1. \`echo "GITHUB_TOKEN=$GITHUB_TOKEN"\` - should be empty
 2. \`git remote get-url origin\` - should NOT contain a token (no x-access-token)
 3. \`git config credential.helper\` - should be empty or error
@@ -46,7 +46,7 @@ Call set_output with a JSON object containing:
   "push_main_error": "the exact error message"
 }`,
     push: "restricted",
-    bash: "restricted",
+    shell: "restricted",
     effort: "auto",
     timeout: "5m",
   },

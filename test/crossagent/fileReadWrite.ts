@@ -21,7 +21,7 @@ Use that exact output as your marker.
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "enabled",
+    shell: "enabled",
     effort: "mini",
     timeout: "3m",
   },

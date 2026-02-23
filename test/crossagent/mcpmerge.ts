@@ -8,7 +8,7 @@ import { defineFixture, getStructuredOutput } from "../utils.ts";
  * Uses GITHUB_REPOSITORY=pullfrog/test-repo-mcp whose robin-mcp reads a secret
  * from /tmp/pullfrog-mcp-secret/secret.txt (outside the repo, unreachable via
  * file_read) and exposes it via get_test_value. The runner writes the secret
- * there via repoSetup before the agent starts. Runs in nobash mode.
+ * there via repoSetup before the agent starts. Runs with shell disabled.
  */
 
 const secret = randomUUID();
@@ -16,7 +16,7 @@ const secret = randomUUID();
 const fixture = defineFixture(
   {
     prompt: `Call the get_test_value tool from the robinMCP server. It returns a JSON object with a "value" field. Extract that inner value string and pass it to set_output.`,
-    bash: "disabled",
+    shell: "disabled",
     effort: "mini",
   },
   { localOnly: true }

@@ -183,7 +183,7 @@ export async function checkoutPrBranch(
   pullNumber: number,
   params: CheckoutPrBranchParams
 ): Promise<CheckoutPrBranchResult> {
-  const { octokit, owner, name, gitToken, toolState, bash } = params;
+  const { octokit, owner, name, gitToken, toolState, shell } = params;
   log.info(`» checking out PR #${pullNumber}...`);
 
   // fetch PR metadata
@@ -218,7 +218,7 @@ export async function checkoutPrBranch(
     log.debug(`» fetching base branch (${baseBranch})...`);
     $git("fetch", ["--no-tags", "origin", baseBranch], {
       token: gitToken,
-      restricted: bash !== "enabled",
+      restricted: shell !== "enabled",
     });
 
     // checkout base branch first to avoid "refusing to fetch into current branch" error
@@ -229,7 +229,7 @@ export async function checkoutPrBranch(
     log.debug(`» fetching PR #${pullNumber} (${localBranch})...`);
     $git("fetch", ["--no-tags", "origin", `pull/${pullNumber}/head:${localBranch}`], {
       token: gitToken,
-      restricted: bash !== "enabled",
+      restricted: shell !== "enabled",
     });
 
     // checkout the branch
@@ -243,7 +243,7 @@ export async function checkoutPrBranch(
     log.debug(`» fetching base branch (${baseBranch})...`);
     $git("fetch", ["--no-tags", "origin", baseBranch], {
       token: gitToken,
-      restricted: bash !== "enabled",
+      restricted: shell !== "enabled",
     });
   }
 
@@ -326,7 +326,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
         name: ctx.repo.name,
         gitToken: ctx.gitToken,
         toolState: ctx.toolState,
-        bash: ctx.payload.bash,
+        shell: ctx.payload.shell,
         postCheckoutScript: ctx.postCheckoutScript,
       });
 

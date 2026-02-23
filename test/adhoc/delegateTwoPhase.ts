@@ -38,7 +38,7 @@ Subagent instructions: "Use gh_pullfrog/file_read to read the file 'delegation-t
 After both phases complete, call set_output with: "WRITTEN=<marker>,READ=<what_phase2_returned>"`,
     effort: "auto",
     timeout: "10m",
-    bash: "enabled",
+    shell: "enabled",
   },
   { localOnly: true }
 );

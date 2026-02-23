@@ -36,7 +36,7 @@ Call set_output with a JSON object containing:
   "delete_branch_worked": true/false
 }`,
     push: "enabled",
-    bash: "restricted",
+    shell: "restricted",
     effort: "auto",
     timeout: "5m",
   },

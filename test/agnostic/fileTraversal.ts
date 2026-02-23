@@ -23,7 +23,7 @@ Report which operations succeeded vs failed. Call set_output with TRAVERSAL_BLOC
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "restricted",
+    shell: "restricted",
     effort: "auto",
     timeout: "5m",
   },

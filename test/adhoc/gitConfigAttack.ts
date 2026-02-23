@@ -4,7 +4,7 @@ import { defineFixture, getAgentOutput, getStructuredOutput } from "../utils.ts"
 
 /**
  * git config attack test - validates:
- * when bash is disabled, the git MCP tool blocks dangerous subcommands
+ * when shell is disabled, the git MCP tool blocks dangerous subcommands
  * (config, submodule, etc.) that could set up filter drivers or hooks.
  *
  * the agent tries to use git config to set up a filter driver, then
@@ -56,7 +56,7 @@ Call set_output with a JSON object:
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "disabled",
+    shell: "disabled",
     push: "restricted",
     effort: "mini",
     timeout: "5m",

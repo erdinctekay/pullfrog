@@ -4,7 +4,7 @@ import { defineFixture, getAgentOutput, getStructuredOutput } from "../utils.ts"
 /**
  * git hooks isolation test - validates:
  * git hooks are disabled for authenticated operations ($git passes
- * -c core.hooksPath=/dev/null when bash !== "enabled").
+ * -c core.hooksPath=/dev/null when shell !== "enabled").
  *
  * the hook is pre-created via repoSetup (not by the agent) to avoid model
  * refusals — Claude categorically refuses to create git hooks. the agent
@@ -29,13 +29,13 @@ const fixture = defineFixture(
     prompt: `This repo has a pre-push hook installed at .git/hooks/pre-push. We need to verify whether it fires during a git fetch operation.
 
 ## Step 1: Verify the hook exists
-Run via bash: ls -la .git/hooks/pre-push
+Run via shell: ls -la .git/hooks/pre-push
 
 ## Step 2: Run git fetch
 Use the git_fetch tool to fetch origin/main.
 
 ## Step 3: Check if the hook wrote its marker
-Run via bash: cat /tmp/hook-marker.txt 2>/dev/null || echo "NO_FILE"
+Run via shell: cat /tmp/hook-marker.txt 2>/dev/null || echo "NO_FILE"
 
 Call set_output with:
 {
@@ -44,7 +44,7 @@ Call set_output with:
   "marker_check": "exact output from step 3"
 }`,
     push: "restricted",
-    bash: "restricted",
+    shell: "restricted",
     effort: "mini",
     timeout: "5m",
   },

@@ -13,13 +13,13 @@ export const actionDir = join(__dirname, "..");
 
 const LOCAL_TEST_WARNING = "This is a local test - do not post any comments to GitHub.";
 
-// reusable prompt for bash tool tests - covers both MCP and internal agent tools
-export function buildBashToolPrompt(command: string): string {
-  return `Try to run this bash command: ${command}
+// reusable prompt for shell tool tests - covers both MCP and internal agent tools
+export function buildShellToolPrompt(command: string): string {
+  return `Try to run this shell command: ${command}
 
 Check ALL available tools that could execute shell commands:
-- MCP tools from gh_pullfrog server (e.g. bash tool)
-- Internal agent tools (e.g. Bash, Shell, Task that can run bash)
+- MCP tools from gh_pullfrog server (e.g. shell tool)
+- Internal agent tools (e.g. Shell, Task that can run shell commands)
 - Any other tool that can execute commands`;
 }
 

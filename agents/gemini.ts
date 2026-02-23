@@ -405,9 +405,9 @@ function configureGeminiSettings(ctx: AgentRunContext): string {
   };
 
   // build tools.exclude based on permissions (v0.3.0+ nested format)
-  const bash = ctx.payload.bash;
+  const shell = ctx.payload.shell;
   const exclude: string[] = [];
-  if (bash !== "enabled") exclude.push("run_shell_command");
+  if (shell !== "enabled") exclude.push("run_shell_command");
   if (ctx.payload.web === "disabled") exclude.push("web_fetch");
   if (ctx.payload.search === "disabled") exclude.push("google_web_search");
   // always block native file tools (use MCP file_read/file_write instead)

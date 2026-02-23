@@ -58,7 +58,7 @@ export type Effort = typeof Effort.infer;
 
 // tool permission types shared with server dispatch
 export type ToolPermission = "disabled" | "enabled";
-export type BashPermission = "disabled" | "restricted" | "enabled";
+export type ShellPermission = "disabled" | "restricted" | "enabled";
 export type PushPermission = "disabled" | "restricted" | "enabled";
 
 // workflow yml permissions for GITHUB_TOKEN

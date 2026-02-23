@@ -140,7 +140,7 @@ export function PushBranchTool(ctx: ToolContext) {
       }
       $git("push", pushArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash !== "enabled",
+        restricted: ctx.payload.shell !== "enabled",
       });
 
       return {
@@ -163,11 +163,11 @@ const AUTH_REQUIRED_REDIRECT: Record<string, string> = {
   clone: "Repository already cloned. Use checkout_pr for PR branches.",
 };
 
-// SECURITY: subcommands blocked when bash is disabled.
-// in disabled mode the agent has NO shell access, so these subcommands are the
+// SECURITY: subcommands blocked when shell is disabled.
+// in disabled mode the agent has no shell access, so these subcommands are the
 // primary escape vectors for arbitrary code execution. in restricted mode the
-// agent already has bash in a stripped sandbox, so blocking these is redundant.
-const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
+// agent already has shell in a stripped sandbox, so blocking these is redundant.
+const NOSHELL_BLOCKED_SUBCOMMANDS: Record<string, string> = {
   config: "Blocked: git config can set up filter drivers or hooks that execute arbitrary code.",
   submodule:
     "Blocked: git submodule can reference malicious repositories and execute code on update.",
@@ -181,7 +181,7 @@ const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
 };
 
 // SECURITY: subcommand-specific arg flags that execute code.
-// only blocked when bash is disabled — in restricted mode the agent already
+// only blocked when shell is disabled — in restricted mode the agent already
 // has shell access in a stripped sandbox, so these provide no additional security.
 //
 // NOTE: global git flags like -c and --config-env are NOT included here
@@ -192,14 +192,14 @@ const NOBASH_BLOCKED_SUBCOMMANDS: Record<string, string> = {
 //
 // matched as: arg === flag OR arg starts with flag + "="
 // (avoids false positives like --exclude matching --exec)
-const NOBASH_BLOCKED_ARGS = ["--exec", "--extcmd", "--upload-pack", "--receive-pack"];
+const NOSHELL_BLOCKED_ARGS = ["--exec", "--extcmd", "--upload-pack", "--receive-pack"];
 
 // SECURITY: subcommand must match [a-z][a-z0-9-]* to reject flags passed as the subcommand.
 // this blocks injection of global git options like -c, -C, --exec-path, --config-env, etc.
 //
 // critical attack: git -c "alias.x=!evil-command" x
 //   -> sets alias "x" to a shell command via -c config injection, then runs it
-//   -> achieves arbitrary code execution even with bash=disabled
+//   -> achieves arbitrary code execution even with shell=disabled
 const subcommandPattern = regex("^[a-z][a-z0-9-]*$");
 
 const Git = type({
@@ -222,18 +222,18 @@ export function GitTool(ctx: ToolContext) {
         throw new Error(`git ${subcommand} requires authentication. ${redirect}`);
       }
 
-      // SECURITY: block dangerous subcommands when bash is disabled.
-      // in restricted mode the agent has bash in a stripped sandbox, so blocking
-      // these through the MCP tool is redundant (agent can do it via bash).
-      if (ctx.payload.bash === "disabled") {
-        const blocked = NOBASH_BLOCKED_SUBCOMMANDS[subcommand];
+      // SECURITY: block dangerous subcommands when shell is disabled.
+      // in restricted mode the agent has shell in a stripped sandbox, so blocking
+      // these through the MCP tool is redundant (agent can do it via shell).
+      if (ctx.payload.shell === "disabled") {
+        const blocked = NOSHELL_BLOCKED_SUBCOMMANDS[subcommand];
         if (blocked) {
           throw new Error(blocked);
         }
 
         // block subcommand-specific flags that execute arbitrary code
         for (const arg of args) {
-          const isBlocked = NOBASH_BLOCKED_ARGS.some(
+          const isBlocked = NOSHELL_BLOCKED_ARGS.some(
             (flag) => arg === flag || arg.startsWith(flag + "=")
           );
           if (isBlocked) {
@@ -267,7 +267,7 @@ export function GitFetchTool(ctx: ToolContext) {
       }
       $git("fetch", fetchArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash !== "enabled",
+        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, ref: params.ref };
     }),
@@ -295,7 +295,7 @@ export function DeleteBranchTool(ctx: ToolContext) {
 
       $git("push", ["origin", "--delete", params.branchName], {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash !== "enabled",
+        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, deleted: params.branchName };
     }),
@@ -325,7 +325,7 @@ export function PushTagsTool(ctx: ToolContext) {
       const pushArgs = [...(params.force ? ["-f"] : []), "origin", `refs/tags/${params.tag}`];
       $git("push", pushArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.bash !== "enabled",
+        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, tag: params.tag };
     }),

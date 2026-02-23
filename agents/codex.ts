@@ -77,11 +77,11 @@ function writeCodexConfig(ctx: AgentRunContext): string {
   const mcpServerSections = [`[mcp_servers.${ghPullfrogMcpName}]\nurl = "${ctx.mcpServerUrl}"`];
 
   // build features section for tool control
-  // disable native shell if bash is "disabled" or "restricted"
-  // when "restricted", agent uses MCP bash tool which filters secrets
-  const bash = ctx.payload.bash;
+  // disable native shell if shell is "disabled" or "restricted"
+  // when "restricted", agent uses MCP shell tool which filters secrets
+  const shell = ctx.payload.shell;
   const features: string[] = [];
-  if (bash !== "enabled") {
+  if (shell !== "enabled") {
     features.push("shell_tool = false");
     features.push("unified_exec = false");
   }
@@ -114,7 +114,7 @@ ${mcpServerSections.join("\n\n")}
   );
 
   log.info(
-    `» Codex config written to ${configPath} (shell: ${bash === "enabled" ? "enabled" : "disabled"}, project trusted: ${cwd})`
+    `» Codex config written to ${configPath} (shell: ${shell === "enabled" ? "enabled" : "disabled"}, project trusted: ${cwd})`
   );
 
   return codexDir;
@@ -210,13 +210,13 @@ export const codex = agent({
     const commandExecutionIds = new Set<string>();
     const thinkingTimer = new ThinkingTimer();
 
-    // when bash is restricted/disabled, filter sensitive env vars from the codex process.
+    // when shell is restricted/disabled, filter sensitive env vars from the codex process.
     // defense-in-depth: codex 0.99.0's shell_command_tool feature flag is unreliable,
     // so native shell commands may still run. filtering the process env ensures secrets
     // (matching *_TOKEN, *_KEY, *_SECRET, etc.) are not accessible even if native shell
-    // bypasses the MCP bash tool's filterEnv.
+    // bypasses the MCP shell tool's filterEnv.
     // API key is explicitly re-added since codex needs it for API calls.
-    const baseEnv = ctx.payload.bash === "enabled" ? process.env : filterEnv();
+    const baseEnv = ctx.payload.shell === "enabled" ? process.env : filterEnv();
     const env: NodeJS.ProcessEnv = {
       ...baseEnv,
       CODEX_HOME: codexDir,
@@ -386,7 +386,7 @@ function createMessageHandlers(): {
         const isTracked = commandExecutionIds.has(item.id);
         if (isTracked) {
           thinkingTimer.markToolResult();
-          log.startGroup(`bash output`);
+          log.startGroup(`shell output`);
           if (item.status === "failed" || (item.exit_code !== undefined && item.exit_code !== 0)) {
             log.info(item.aggregated_output || "Command failed");
           } else {

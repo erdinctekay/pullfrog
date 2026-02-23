@@ -126,7 +126,6 @@ export const ORCHESTRATOR_ONLY_TOOLS = [
 import { log } from "../utils/cli.ts";
 import type { RunContextData } from "../utils/runContextData.ts";
 import { AskQuestionTool } from "./askQuestion.ts";
-import { BashTool, KillBackgroundTool } from "./bash.ts";
 import { CheckoutPrTool } from "./checkout.ts";
 import { GetCheckSuiteLogsTool } from "./checkSuite.ts";
 import {
@@ -165,6 +164,7 @@ import {
 } from "./reviewComments.ts";
 import { SelectModeTool } from "./selectMode.ts";
 import { addTools } from "./shared.ts";
+import { KillBackgroundTool, ShellTool } from "./shell.ts";
 import { UploadFileTool } from "./upload.ts";
 
 const mcpPortStart = 3764;
@@ -237,12 +237,12 @@ function buildCommonTools(ctx: ToolContext): Tool<any, any>[] {
     ReportProgressTool(ctx),
   ];
 
-  // only add BashTool when bash is "restricted"
-  // - "enabled": native bash only (no MCP bash needed)
-  // - "restricted": MCP bash only (native blocked, env filtered)
-  // - "disabled": no bash at all
-  if (ctx.payload.bash === "restricted") {
-    tools.push(BashTool(ctx));
+  // only add ShellTool when shell is "restricted"
+  // - "enabled": native shell only (no MCP shell needed)
+  // - "restricted": MCP shell only (native blocked, env filtered)
+  // - "disabled": no shell at all
+  if (ctx.payload.shell === "restricted") {
+    tools.push(ShellTool(ctx));
     tools.push(KillBackgroundTool(ctx));
   }
 

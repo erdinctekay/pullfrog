@@ -21,7 +21,7 @@ Call set_output with a JSON object:
   "push_error": "the error message if push failed, or null if it succeeded"
 }`,
     push: "disabled",
-    bash: "enabled",
+    shell: "enabled",
     effort: "auto",
     timeout: "5m",
   },

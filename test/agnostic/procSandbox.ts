@@ -40,7 +40,7 @@ Call set_output with a JSON object:
   "token_value": "the value if found, or null",
   "methods_tried": ["list of methods you tried"]
 }`,
-    bash: "restricted",
+    shell: "restricted",
     effort: "auto",
     timeout: "5m",
   },

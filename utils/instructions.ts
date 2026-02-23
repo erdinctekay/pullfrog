@@ -83,10 +83,10 @@ function buildEventMetadata(event: PayloadEvent): string {
   return toonEncode(restWithTrigger);
 }
 
-function getShellInstructions(bash: ResolvedPayload["bash"]): string {
-  const backgroundInstructions = `For long-running processes (dev servers, watchers), use \`bash({ command, background: true })\` which returns a handle. Use \`${ghPullfrogMcpName}/kill_background\` to stop background processes by handle.`;
+function getShellInstructions(shell: ResolvedPayload["shell"]): string {
+  const backgroundInstructions = `For long-running processes (dev servers, watchers), use \`shell({ command, background: true })\` which returns a handle. Use \`${ghPullfrogMcpName}/kill_background\` to stop background processes by handle.`;
 
-  switch (bash) {
+  switch (shell) {
     case "disabled":
       return `### Shell commands
 
@@ -94,13 +94,13 @@ Shell command execution is DISABLED. Do not attempt to run shell commands.`;
     case "restricted":
       return `### Shell commands
 
-Use the \`${ghPullfrogMcpName}/bash\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell/bash tool - it is disabled for security. ${backgroundInstructions}`;
+Use the \`${ghPullfrogMcpName}/shell\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell tool - it is disabled for security. ${backgroundInstructions}`;
     case "enabled":
       return `### Shell commands
 
-Use your native bash/shell tool for shell command execution. ${backgroundInstructions}`;
+Use your native shell tool for shell command execution. ${backgroundInstructions}`;
     default: {
-      const _exhaustive: never = bash;
+      const _exhaustive: never = shell;
       return _exhaustive satisfies never;
     }
   }
@@ -130,7 +130,7 @@ You are running as a step in a user-defined CI workflow. When you complete your 
 // shared system prompt body used by both orchestrator and subagent instructions.
 // the priority order and YOUR TASK section differ — callers compose those separately.
 interface SystemPromptContext {
-  bash: ResolvedPayload["bash"];
+  shell: ResolvedPayload["shell"];
   trigger: string;
   priorityOrder: string;
   taskSection: string;
@@ -188,7 +188,7 @@ Rules:
 
 Use MCP tools from ${ghPullfrogMcpName} for all GitHub operations. Never use the \`gh\` CLI — it is not authenticated and will fail. The MCP tools handle authentication, enforce permissions, and integrate with the delegation system.
 
-${getShellInstructions(ctx.bash)}
+${getShellInstructions(ctx.shell)}
 
 ${getFileInstructions()}
 
@@ -202,7 +202,7 @@ Trust the tools — do not repeatedly verify file contents or git status after o
 
 ### Command execution
 
-Never use \`sleep\` to wait for commands to complete. Commands run synchronously — when the bash tool returns, the command has finished.
+Never use \`sleep\` to wait for commands to complete. Commands run synchronously — when the shell tool returns, the command has finished.
 
 ### Commenting style
 
@@ -399,7 +399,7 @@ When all delegations are complete, call \`${ghPullfrogMcpName}/set_output\` with
 If the task clearly requires no work (e.g., irrelevant event, duplicate request), skip delegation entirely. Call \`${ghPullfrogMcpName}/report_progress\` directly to explain why no action is needed.`;
 
   const system = buildSystemPrompt({
-    bash: ctx.payload.bash,
+    shell: ctx.payload.shell,
     trigger: ctx.payload.event.trigger,
     priorityOrder: orchestratorPriorityOrder,
     taskSection: orchestratorTaskSection,

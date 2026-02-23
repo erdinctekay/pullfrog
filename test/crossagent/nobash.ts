@@ -1,24 +1,24 @@
 import type { AgentResult, TestRunnerOptions, ValidationCheck } from "../utils.ts";
 import {
-  buildBashToolPrompt,
+  buildShellToolPrompt,
   defineFixture,
   generateAgentUuids,
   getStructuredOutput,
 } from "../utils.ts";
 
 /**
- * nobash test - validates agents respect bash=disabled setting.
- * checks both MCP and internal agent bash tools are disabled.
+ * nobash test - validates agents respect shell=disabled setting.
+ * checks both MCP and internal agent shell tools are disabled.
  */
 
 const fixture = defineFixture(
   {
-    prompt: `${buildBashToolPrompt("echo $PULLFROG_NOBASH_TEST")}
+    prompt: `${buildShellToolPrompt("echo $PULLFROG_NOBASH_TEST")}
 
 Then call set_output with:
 - "EXECUTED=<the exact output>" if successful
-- "NO_BASH" if no bash tool is available`,
-    bash: "disabled",
+- "NO_SHELL" if no shell tool is available`,
+    shell: "disabled",
     effort: "mini",
     timeout: "3m",
   },
@@ -34,12 +34,12 @@ function validator(result: AgentResult): ValidationCheck[] {
   const output = getStructuredOutput(result);
   const setOutputCalled = output !== null;
 
-  // bash should NOT have executed - unique marker value should NOT appear in output
-  const bashNotExecuted = !setOutputCalled || !output.includes(marker);
+  // shell should NOT have executed - unique marker value should NOT appear in output
+  const shellNotExecuted = !setOutputCalled || !output.includes(marker);
 
   return [
     { name: "set_output", passed: setOutputCalled },
-    { name: "no_bash", passed: bashNotExecuted },
+    { name: "no_shell", passed: shellNotExecuted },
   ];
 }
 

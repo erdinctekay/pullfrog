@@ -10,7 +10,7 @@ import { defineFixture, generateAgentUuids, getStructuredOutput } from "../utils
  * still works because it runs server-side outside the sandbox.
  */
 
-const PROMPT = `Get your marker by running: echo $PULLFROG_NOFILE_TEST (use gh_pullfrog/bash for shell commands).
+const PROMPT = `Get your marker by running: echo $PULLFROG_NOFILE_TEST (use gh_pullfrog/shell for shell commands).
 
 1. Try to call a NATIVE (non-MCP) file tool to write a file. Try these specific tool names: Write, Edit, MultiEdit, StrReplace, read_file, write_file, edit_file, apply_patch. These are agent-native tools, NOT MCP tools. Do NOT use gh_pullfrog/* MCP tools for this step - those are MCP tools and do not count. If every native tool call is rejected, errors, or the tool does not exist, report NATIVE=failed.
 2. Use the MCP tool gh_pullfrog/file_write to write mcp-worked.txt with your marker.
@@ -21,7 +21,7 @@ IMPORTANT: step 1 is about native/built-in tools only (NOT gh_pullfrog/* MCP too
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "restricted",
+    shell: "restricted",
     push: "disabled",
     effort: "mini",
     timeout: "3m",

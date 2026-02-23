@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BashPermission, PayloadEvent } from "../external.ts";
+import type { PayloadEvent, ShellPermission } from "../external.ts";
 import { checkoutPrBranch } from "../mcp/checkout.ts";
 import type { ToolState } from "../mcp/server.ts";
 import { log } from "./cli.ts";
@@ -51,11 +51,11 @@ export interface GitContext {
   name: string;
   octokit: OctokitWithPlugins;
   toolState: ToolState;
-  // bash permission level — controls hook and security behavior:
-  //   enabled: full bash, hooks run, no restrictions
-  //   restricted: MCP bash in stripped env, hooks run, token protection on auth ops
-  //   disabled: no bash, hooks disabled globally, all code execution paths blocked
-  bash: BashPermission;
+  // shell permission level — controls hook and security behavior:
+  //   enabled: full shell, hooks run, no restrictions
+  //   restricted: MCP shell in stripped env, hooks run, token protection on auth ops
+  //   disabled: no shell, hooks disabled globally, all code execution paths blocked
+  shell: ShellPermission;
   postCheckoutScript: string | null;
 }
 
@@ -107,16 +107,16 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
       log.debug(`» git user already configured (${currentEmail}), skipping`);
     }
 
-    // SECURITY: disable git hooks when bash is disabled to prevent code execution.
+    // SECURITY: disable git hooks when shell is disabled to prevent code execution.
     // in restricted mode, hooks run in the stripped sandbox — that's fine.
-    // in enabled mode, the agent has full bash anyway.
+    // in enabled mode, the agent has full shell anyway.
     // in disabled mode, hooks are the primary code-execution escape vector.
-    if (params.bash === "disabled") {
+    if (params.shell === "disabled") {
       execSync("git config --local core.hooksPath /dev/null", {
         cwd: repoDir,
         stdio: "pipe",
       });
-      log.debug("» git hooks disabled (bash=disabled)");
+      log.debug("» git hooks disabled (shell=disabled)");
     }
   } catch (error) {
     // If git config fails, log warning but don't fail the action

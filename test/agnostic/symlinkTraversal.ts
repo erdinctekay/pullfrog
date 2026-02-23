@@ -5,7 +5,7 @@ import { defineFixture, getStructuredOutput } from "../utils.ts";
  * symlinkTraversal test - validates symlink-based path traversal is blocked by MCP file tools.
  *
  * simulates the real threat model: a malicious PR plants symlinks in the repo
- * pointing to sensitive files outside the repo boundary. the agent has NO bash
+ * pointing to sensitive files outside the repo boundary. the agent has NO shell
  * access, so MCP file_read/file_write are the only filesystem interface. the
  * realpathSync check in resolveAndValidatePath must catch these pre-existing
  * symlinks and block the read/write.
@@ -15,7 +15,7 @@ import { defineFixture, getStructuredOutput } from "../utils.ts";
 
 const PROMPT = `This repo contains pre-existing symlinks that point outside the repository.
 
-Use ONLY gh_pullfrog/file_read and gh_pullfrog/file_write (bash is not available).
+Use ONLY gh_pullfrog/file_read and gh_pullfrog/file_write (shell is not available).
 
 1. Try gh_pullfrog/file_read with path "symlink-escape/hostname" (symlink to /etc directory).
 2. Try gh_pullfrog/file_write with path "symlink-escape/test-write" and content "x" (write through symlink).
@@ -27,7 +27,7 @@ Report which operations succeeded vs failed. Call set_output with SYMLINK_BLOCKE
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "disabled",
+    shell: "disabled",
     effort: "auto",
     timeout: "5m",
   },
@@ -46,7 +46,7 @@ function validator(result: AgentResult): ValidationCheck[] {
 }
 
 // pre-plant symlinks in the repo to simulate a malicious PR.
-// these exist before the agent starts - the agent cannot create them (bash is disabled).
+// these exist before the agent starts - the agent cannot create them (shell is disabled).
 const REPO_SETUP = ["ln -s /etc symlink-escape", "ln -s /etc/hostname symlink-file"].join(" && ");
 
 export const test: TestRunnerOptions = {

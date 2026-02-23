@@ -32,7 +32,7 @@ Call set_output with a JSON object:
   "feature_push_succeeded": true/false
 }`,
     push: "restricted",
-    bash: "enabled",
+    shell: "enabled",
     effort: "auto",
     timeout: "5m",
   },

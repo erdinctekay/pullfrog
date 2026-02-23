@@ -47,7 +47,7 @@ export const agent = <const input extends AgentInput>(input: input): defineAgent
       log.info(`» web:     ${ctx.payload.web}`);
       log.info(`» search:  ${ctx.payload.search}`);
       log.info(`» push:    ${ctx.payload.push}`);
-      log.info(`» bash:    ${ctx.payload.bash}`);
+      log.info(`» shell:   ${ctx.payload.shell}`);
       log.debug(`» payload: ${JSON.stringify(ctx.payload, null, 2)}`);
 
       return input.run(ctx);

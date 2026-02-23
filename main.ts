@@ -68,7 +68,7 @@ export async function main(): Promise<MainResult> {
   const runContext = await resolveRunContextData({ octokit: initialOctokit, token: jobToken });
   timer.checkpoint("runContextData");
 
-  // resolve payload to determine bash permission
+  // resolve payload to determine shell permission
   const payload = resolvePayload(resolvedPromptInput, runContext.repoSettings);
 
   // resolve tokens:
@@ -77,7 +77,7 @@ export async function main(): Promise<MainResult> {
   await using tokenRef = await resolveTokens({ push: payload.push });
 
   // clear OIDC env vars in restricted mode to prevent agent from minting tokens
-  if (payload.bash !== "enabled") {
+  if (payload.shell !== "enabled") {
     delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
     delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   }
@@ -131,7 +131,7 @@ export async function main(): Promise<MainResult> {
       event: payload.event,
       octokit,
       toolState,
-      bash: payload.bash,
+      shell: payload.shell,
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
     });
     timer.checkpoint("git");

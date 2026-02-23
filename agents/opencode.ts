@@ -150,7 +150,7 @@ export const opencode = agent({
               const event = JSON.parse(trimmed) as OpenCodeEvent;
               eventCount++;
 
-              // debug log all events to diagnose ordering and missing MCP/bash tool calls
+              // debug log all events to diagnose ordering and missing MCP/shell tool calls
               log.debug(JSON.stringify(event, null, 2));
 
               const timeSinceLastActivity = getIdleMs();
@@ -309,11 +309,11 @@ function configureOpenCode(ctx: AgentRunContext): void {
 
   // build permission object based on tool permissions
   // note: OpenCode has no built-in web search tool
-  const bash = ctx.payload.bash;
+  const shell = ctx.payload.shell;
   const permission = {
     edit: "deny",
     read: "deny",
-    bash: bash !== "enabled" ? "deny" : "allow",
+    bash: shell !== "enabled" ? "deny" : "allow",
     webfetch: ctx.payload.web === "disabled" ? "deny" : "allow",
     external_directory: "deny",
   };

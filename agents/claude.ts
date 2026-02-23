@@ -37,10 +37,10 @@ function buildDisallowedTools(ctx: AgentRunContext): string[] {
   const disallowed: string[] = [];
   if (ctx.payload.web === "disabled") disallowed.push("WebFetch");
   if (ctx.payload.search === "disabled") disallowed.push("WebSearch");
-  // both "disabled" and "restricted" block native bash
-  // "restricted" means use MCP bash tool instead
-  const bash = ctx.payload.bash;
-  if (bash !== "enabled") disallowed.push("Bash");
+  // both "disabled" and "restricted" block native shell
+  // "restricted" means use MCP shell tool instead
+  const shell = ctx.payload.shell;
+  if (shell !== "enabled") disallowed.push("Bash");
   // always block native file tools (use MCP file_read/file_write instead)
   disallowed.push("Read", "Write", "Edit", "MultiEdit");
   // block built-in subagent spawning — delegation is handled by gh_pullfrog/delegate
@@ -131,8 +131,8 @@ export const claude = agent({
     let finalOutput = "";
     const usageContainer: UsageContainer = { value: null };
 
-    // Track bash tool IDs to identify when bash tool results come back
-    const bashToolIds = new Set<string>();
+    // track shell tool IDs to identify when shell tool results come back
+    const shellToolIds = new Set<string>();
     const thinkingTimer = new ThinkingTimer();
 
     const result = await spawn({
@@ -164,7 +164,7 @@ export const claude = agent({
 
             const handler = messageHandlers[message.type];
             if (handler) {
-              await handler(message as never, bashToolIds, thinkingTimer, usageContainer);
+              await handler(message as never, shellToolIds, thinkingTimer, usageContainer);
             }
           } catch {
             // ignore parse errors - might be non-JSON output
@@ -213,7 +213,7 @@ type SDKMessageType = SDKMessage["type"];
 
 type SDKMessageHandler<type extends SDKMessageType = SDKMessageType> = (
   data: Extract<SDKMessage, { type: type }>,
-  bashToolIds: Set<string>,
+  shellToolIds: Set<string>,
   thinkingTimer: ThinkingTimer,
   usageContainer: UsageContainer
 ) => void | Promise<void>;
@@ -223,15 +223,15 @@ type SDKMessageHandlers = {
 };
 
 const messageHandlers: SDKMessageHandlers = {
-  assistant: (data, bashToolIds, thinkingTimer, _usageContainer) => {
+  assistant: (data, shellToolIds, thinkingTimer, _usageContainer) => {
     if (data.message?.content) {
       for (const content of data.message.content) {
         if (content.type === "text" && content.text?.trim()) {
           log.box(content.text.trim(), { title: "Claude" });
         } else if (content.type === "tool_use") {
-          // Track bash tool IDs
+          // track shell tool IDs (Claude's native tool is named "bash")
           if (content.name === "bash" && content.id) {
-            bashToolIds.add(content.id);
+            shellToolIds.add(content.id);
           }
 
           thinkingTimer.markToolCall();
@@ -243,7 +243,7 @@ const messageHandlers: SDKMessageHandlers = {
       }
     }
   },
-  user: (data, bashToolIds, thinkingTimer, _usageContainer) => {
+  user: (data, shellToolIds, thinkingTimer, _usageContainer) => {
     if (data.message?.content) {
       for (const content of data.message.content) {
         if (typeof content === "string") {
@@ -253,7 +253,7 @@ const messageHandlers: SDKMessageHandlers = {
           thinkingTimer.markToolResult();
 
           const toolUseId = content.tool_use_id;
-          const isBashTool = toolUseId && bashToolIds.has(toolUseId);
+          const isShellTool = toolUseId && shellToolIds.has(toolUseId);
 
           const outputContent =
             typeof content.content === "string"
@@ -270,9 +270,9 @@ const messageHandlers: SDKMessageHandlers = {
                     .join("\n")
                 : String(content.content);
 
-          if (isBashTool) {
-            // Log bash output in a collapsed group
-            log.startGroup(`bash output`);
+          if (isShellTool) {
+            // Log shell output in a collapsed group
+            log.startGroup(`shell output`);
             if (content.is_error) {
               log.info(outputContent);
             } else {
@@ -280,18 +280,18 @@ const messageHandlers: SDKMessageHandlers = {
             }
             log.endGroup();
             // Clean up the tracked ID
-            bashToolIds.delete(toolUseId);
+            shellToolIds.delete(toolUseId);
           } else if (content.is_error) {
             log.info(`Tool error: ${outputContent}`);
           } else {
-            // log successful non-bash tool result at debug level
+            // log successful non-shell tool result at debug level
             log.debug(`tool output: ${outputContent}`);
           }
         }
       }
     }
   },
-  result: async (data, _bashToolIds, _thinkingTimer, usageContainer) => {
+  result: async (data, _shellToolIds, _thinkingTimer, usageContainer) => {
     if (data.subtype === "success") {
       const usage = data.usage;
       const inputTokens = usage?.input_tokens || 0;
@@ -333,9 +333,9 @@ const messageHandlers: SDKMessageHandlers = {
       log.info(`Failed: ${JSON.stringify(data)}`);
     }
   },
-  system: (_data, _bashToolIds, _thinkingTimer, _usageContainer) => {},
-  stream_event: (_data, _bashToolIds, _thinkingTimer, _usageContainer) => {},
-  tool_progress: (_data, _bashToolIds, _thinkingTimer, _usageContainer) => {},
-  tool_use_summary: (_data, _bashToolIds, _thinkingTimer, _usageContainer) => {},
-  auth_status: (_data, _bashToolIds, _thinkingTimer, _usageContainer) => {},
+  system: (_data, _shellToolIds, _thinkingTimer, _usageContainer) => {},
+  stream_event: (_data, _shellToolIds, _thinkingTimer, _usageContainer) => {},
+  tool_progress: (_data, _shellToolIds, _thinkingTimer, _usageContainer) => {},
+  tool_use_summary: (_data, _shellToolIds, _thinkingTimer, _usageContainer) => {},
+  auth_status: (_data, _shellToolIds, _thinkingTimer, _usageContainer) => {},
 };

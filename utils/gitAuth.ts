@@ -42,7 +42,7 @@ type GitAuthOptions = {
   cwd?: string;
   // when true, disables hooks during authenticated git operations to prevent
   // token exfiltration via malicious hooks reading GIT_CONFIG_PARAMETERS.
-  // should be true whenever bash is not "enabled" (both restricted and disabled).
+  // should be true whenever shell is not "enabled" (both restricted and disabled).
   restricted?: boolean;
 };
 
@@ -126,7 +126,7 @@ export function $git(
   const cwd = options.cwd ?? process.cwd();
 
   // SECURITY: disable hooks during authenticated operations to prevent token exfiltration.
-  // in restricted mode, agents can write .git/hooks/ via bash; in disabled mode, defense-in-depth.
+  // in restricted mode, agents can write .git/hooks/ via shell; in disabled mode, defense-in-depth.
   if (options.restricted) {
     const hasHooksOverride = args.some(
       (arg) => arg.toLowerCase().includes("hookspath") || arg.toLowerCase().includes("hooks")

@@ -1,4 +1,4 @@
-// changes to bash security (filterEnv, spawnBash) should be reflected in wiki/security.md and docs/security.mdx
+// changes to shell security (filterEnv, spawnShell) should be reflected in wiki/security.md and docs/security.mdx
 import { type ChildProcess, type StdioOptions, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { resolveEnv } from "../utils/secrets.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
-export const BashParams = type({
+export const ShellParams = type({
   command: "string",
   description: "string",
   "timeout?": "number",
@@ -82,7 +82,7 @@ function detectSandboxMethod(): SandboxMethod {
   return "none";
 }
 
-function spawnBash(params: SpawnParams): ChildProcess {
+function spawnShell(params: SpawnParams): ChildProcess {
   const spawnOpts = { env: params.env, cwd: params.cwd, stdio: params.stdio, detached: true };
   const sandboxMethod = detectSandboxMethod();
 
@@ -153,9 +153,9 @@ function getTempDir(): string {
   return tempDir;
 }
 
-export function BashTool(ctx: ToolContext) {
+export function ShellTool(ctx: ToolContext) {
   return tool({
-    name: "bash",
+    name: "shell",
     description: `Execute shell commands securely. Environment is filtered to remove API keys and secrets.
 
 Use this tool to:
@@ -163,11 +163,11 @@ Use this tool to:
 - Execute build tools (npm, pnpm, cargo, make, etc.)
 - Run tests and linters
 - Perform git operations`,
-    parameters: BashParams,
+    parameters: ShellParams,
     execute: execute(async (params) => {
       const timeout = Math.min(params.timeout ?? 30000, 120000);
       const cwd = params.working_directory ?? process.cwd();
-      const env = resolveEnv(ctx.payload.bash === "enabled" ? "inherit" : "restricted");
+      const env = resolveEnv(ctx.payload.shell === "enabled" ? "inherit" : "restricted");
 
       if (params.background) {
         const tempDir = getTempDir();
@@ -177,7 +177,7 @@ Use this tool to:
         const logFd = openSync(outputPath, "a");
         let proc: ChildProcess;
         try {
-          proc = spawnBash({
+          proc = spawnShell({
             command: params.command,
             env,
             cwd,
@@ -200,7 +200,7 @@ Use this tool to:
         };
       }
 
-      const proc = spawnBash({
+      const proc = spawnShell({
         command: params.command,
         env,
         cwd,
@@ -243,7 +243,7 @@ Use this tool to:
 
       const finalExitCode = exitCode ?? (timedOut ? 124 : -1);
       if (finalExitCode !== 0) {
-        log.info(`bash command failed with exit code ${finalExitCode}: ${params.command}`);
+        log.info(`shell command failed with exit code ${finalExitCode}: ${params.command}`);
         if (output) log.info(`output: ${output.trim()}`);
       }
 
@@ -263,7 +263,7 @@ export const KillBackgroundParams = type({
 export function KillBackgroundTool(ctx: ToolContext) {
   return tool({
     name: "kill_background",
-    description: `Kill a background process by its handle. Use this to stop dev servers or other long-running processes started with bash({ background: true }).`,
+    description: `Kill a background process by its handle. Use this to stop dev servers or other long-running processes started with shell({ background: true }).`,
     parameters: KillBackgroundParams,
     execute: execute(async (params) => {
       const proc = ctx.toolState.backgroundProcesses.get(params.handle);

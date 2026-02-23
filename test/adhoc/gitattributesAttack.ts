@@ -3,10 +3,10 @@ import { defineFixture, getStructuredOutput } from "../utils.ts";
 
 /**
  * .gitattributes write blocking test - validates:
- * when bash is disabled, the MCP file tools block writes to git-interpreted
+ * when shell is disabled, the MCP file tools block writes to git-interpreted
  * files (.gitattributes, .gitmodules) that could trigger code execution via
  * filter drivers or submodule hooks. in restricted mode these writes are
- * allowed since the agent already has bash in a stripped sandbox.
+ * allowed since the agent already has shell in a stripped sandbox.
  *
  * the agent tries to write/edit/delete .gitattributes and .gitmodules
  * at various paths. all write operations should fail.
@@ -51,7 +51,7 @@ Call set_output with a JSON object:
 const fixture = defineFixture(
   {
     prompt: PROMPT,
-    bash: "disabled",
+    shell: "disabled",
     effort: "mini",
     timeout: "5m",
   },
