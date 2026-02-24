@@ -162,13 +162,20 @@ export const installPythonDependencies: PrepDefinition = {
 
     // run the install command
     const [cmd, ...args] = config.installCmd;
-    log.info(`» running: ${cmd} ${args.join(" ")}`);
+    const fullCommand = `${cmd} ${args.join(" ")}`;
+    log.info(`» running: ${fullCommand}`);
     const result = await spawn({
       cmd,
       args,
       env: { PATH: process.env.PATH || "", HOME: process.env.HOME || "" },
-      onStderr: (chunk) => process.stderr.write(chunk),
     });
+
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    if (output) {
+      log.startGroup(`${fullCommand} output`);
+      log.info(output);
+      log.endGroup();
+    }
 
     if (result.exitCode !== 0) {
       return {
@@ -176,7 +183,7 @@ export const installPythonDependencies: PrepDefinition = {
         packageManager: config.tool,
         configFile: config.file,
         dependenciesInstalled: false,
-        issues: [result.stderr || `${cmd} exited with code ${result.exitCode}`],
+        issues: [output || `${cmd} exited with code ${result.exitCode}`],
       };
     }
 

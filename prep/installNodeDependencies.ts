@@ -159,13 +159,16 @@ export const installNodeDependencies: PrepDefinition = {
       cmd: resolved.command,
       args: resolved.args,
       env: { PATH: process.env.PATH || "", HOME: process.env.HOME || "" },
-      onStdout: (chunk) => process.stdout.write(chunk),
-      onStderr: (chunk) => process.stderr.write(chunk),
     });
 
+    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    if (output) {
+      log.startGroup(`${fullCommand} output`);
+      log.info(output);
+      log.endGroup();
+    }
+
     if (result.exitCode !== 0) {
-      // combine stdout and stderr for better error context (pnpm often outputs errors to stdout)
-      const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
       const errorMessage = output || `exited with code ${result.exitCode}`;
       return {
         language: "node",

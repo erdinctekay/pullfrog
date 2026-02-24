@@ -77,7 +77,10 @@ export function DelegateTool(ctx: ToolContext) {
       }
 
       // matched by delegate test validators — update tests if changed
-      log.info(`» delegating ${params.tasks.length} task(s) in parallel (mode=${mode})`);
+      const n = params.tasks.length;
+      log.info(
+        `» delegating ${n} task${n === 1 ? "" : "s"}${n > 1 ? " in parallel" : ""} (mode=${mode})`
+      );
 
       const taskEntries = params.tasks.map((task) => {
         const effort = task.effort ?? "auto";
@@ -100,10 +103,11 @@ export function DelegateTool(ctx: ToolContext) {
       const results: DelegateTaskResult[] = taskEntries.map((entry, i) => {
         const outcome = settled[i];
         const error = outcome.status === "rejected" ? String(outcome.reason) : outcome.value.error;
-        log.debug(
-          `» task "${entry.task.label}" result: output=${entry.subagent.output !== undefined}, status=${entry.subagent.status}`
+        const result = buildTaskResult(entry.task.label, entry.effort, entry.subagent, error);
+        log.info(
+          `» task "${entry.task.label}" ${result.success ? "succeeded" : "failed"}:\n${result.summary}`
         );
-        return buildTaskResult(entry.task.label, entry.effort, entry.subagent, error);
+        return result;
       });
 
       const succeeded = results.filter((r) => r.success).length;
