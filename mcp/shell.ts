@@ -88,7 +88,8 @@ function detectSandboxMethod(): SandboxMethod {
 // double-umount removes both layers, then a clean mount gives only sandbox PIDs.
 // on unprivileged systems where umount fails, --mount-proc still provides isolation
 // (the agent also can't umount in that case).
-const PROC_CLEANUP = "umount /proc 2>/dev/null; umount /proc 2>/dev/null; mount -t proc proc /proc 2>/dev/null;";
+const PROC_CLEANUP =
+  "umount /proc 2>/dev/null; umount /proc 2>/dev/null; mount -t proc proc /proc 2>/dev/null;";
 
 function spawnShell(params: SpawnParams): ChildProcess {
   const spawnOpts = { env: params.env, cwd: params.cwd, stdio: params.stdio, detached: true };
