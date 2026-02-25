@@ -2,6 +2,7 @@
 import { type ChildProcess, type StdioOptions, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { type } from "arktype";
 import { log } from "../utils/log.ts";
@@ -110,6 +111,11 @@ function spawnShell(params: SpawnParams): ChildProcess {
         envArgs.push(`${k}=${v}`);
       }
     }
+    // drop back to original user after PROC_CLEANUP so files aren't owned by root.
+    // sudo is only needed for unshare; the actual command should run as the normal user
+    // to avoid ownership mismatches with file_write/file_edit (which run in the Node.js parent).
+    const username = userInfo().username;
+    const escaped = params.command.replace(/'/g, "'\\''");
     return spawn(
       "sudo",
       [
@@ -121,7 +127,7 @@ function spawnShell(params: SpawnParams): ChildProcess {
         "--mount-proc",
         "bash",
         "-c",
-        `${PROC_CLEANUP} ${params.command}`,
+        `${PROC_CLEANUP} exec su -p -s /bin/bash ${username} -c '${escaped}'`,
       ],
       { ...spawnOpts, env: {} }
     );
