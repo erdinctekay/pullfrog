@@ -138,10 +138,26 @@ export function PushBranchTool(ctx: ToolContext) {
       if (force) {
         log.warning(`force pushing - this will overwrite remote history`);
       }
-      $git("push", pushArgs, {
-        token: ctx.gitToken,
-        restricted: ctx.payload.shell !== "enabled",
-      });
+
+      try {
+        $git("push", pushArgs, {
+          token: ctx.gitToken,
+          restricted: ctx.payload.shell !== "enabled",
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("fetch first") || msg.includes("non-fast-forward")) {
+          throw new Error(
+            `push rejected: the remote branch '${pushDest.remoteBranch}' has new commits you don't have locally.\n\n` +
+              `to resolve this:\n` +
+              `1. use git_fetch to fetch the remote branch: git_fetch({ ref: "${pushDest.remoteBranch}" })\n` +
+              `2. use the git tool to rebase your changes: git({ subcommand: "rebase", args: ["origin/${pushDest.remoteBranch}"] })\n` +
+              `3. resolve any merge conflicts if needed\n` +
+              `4. retry push_branch`
+          );
+        }
+        throw err;
+      }
 
       return {
         success: true,
@@ -157,10 +173,10 @@ export function PushBranchTool(ctx: ToolContext) {
 
 // commands that require authentication - redirect to dedicated tools
 const AUTH_REQUIRED_REDIRECT: Record<string, string> = {
-  push: "Use push_branch tool instead.",
-  fetch: "Use git_fetch tool instead.",
-  pull: "Use git_fetch + git merge instead.",
-  clone: "Repository already cloned. Use checkout_pr for PR branches.",
+  push: "use the push_branch tool instead — it handles authentication and permission checks.",
+  fetch: "use the git_fetch tool instead — it handles authentication.",
+  pull: "use git_fetch to fetch the remote ref, then use this git tool with subcommand 'merge' or 'rebase' locally.",
+  clone: "the repository is already cloned. use checkout_pr for PR branches.",
 };
 
 // SECURITY: subcommands blocked when shell is disabled.
@@ -219,7 +235,7 @@ export function GitTool(ctx: ToolContext) {
 
       const redirect = AUTH_REQUIRED_REDIRECT[subcommand];
       if (redirect) {
-        throw new Error(`git ${subcommand} requires authentication. ${redirect}`);
+        throw new Error(`git ${subcommand} is not available through this tool — ${redirect}`);
       }
 
       // SECURITY: block dangerous subcommands when shell is disabled.

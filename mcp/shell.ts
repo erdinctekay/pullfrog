@@ -160,6 +160,14 @@ function getTempDir(): string {
   return tempDir;
 }
 
+/** detect git as a command invocation (not as part of another word like .gitignore) */
+function isGitCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (trimmed === "git" || trimmed.startsWith("git ")) return true;
+  if (trimmed.startsWith("sudo git")) return true;
+  return /[;&|]\s*(?:sudo\s+)?git(?:\s|$)/.test(trimmed);
+}
+
 export function ShellTool(ctx: ToolContext) {
   return tool({
     name: "shell",
@@ -169,9 +177,20 @@ Use this tool to:
 - Run shell commands (ls, cat, grep, find, etc.)
 - Execute build tools (npm, pnpm, cargo, make, etc.)
 - Run tests and linters
-- Perform git operations`,
+
+Do NOT use this tool for git commands — use the dedicated git tools instead.`,
     parameters: ShellParams,
     execute: execute(async (params) => {
+      if (isGitCommand(params.command)) {
+        throw new Error(
+          "git commands are not allowed in the shell tool. use the dedicated git tools instead:\n" +
+            "- git: local operations (status, log, diff, add, commit, checkout, merge, rebase, etc.)\n" +
+            "- push_branch: push to remote (handles authentication)\n" +
+            "- git_fetch: fetch from remote (handles authentication)\n" +
+            "- checkout_pr: check out PR branches"
+        );
+      }
+
       const timeout = Math.min(params.timeout ?? 30000, 120000);
       const cwd = params.working_directory ?? process.cwd();
       const env = resolveEnv(ctx.payload.shell === "enabled" ? "inherit" : "restricted");
