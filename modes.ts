@@ -51,6 +51,7 @@ export function computeModes(): Mode[] {
 
 9. **PR** - Determine whether to create a PR (if not already on a PR branch):
    - **Default behavior**: Create a PR using ${ghPullfrogMcpName}/create_pull_request with an informative title and body. If you are working in the context of an issue (check EVENT DATA for \`issue_number\` where \`is_pr\` is not true), include "Closes #<issue_number>" in the PR body to auto-close the issue when merged.
+   - **Draft PR request**: If the user explicitly asks for a draft PR (e.g. "draft PR", "create as draft", "WIP"), create a PR with \`draft: true\`.
    - **Branch-only request**: If the user explicitly asks for a branch without a PR (e.g. "don't create a PR", "branch only", "just create a branch"), do NOT create a PR. Simply push the branch and report the branch link.
 
 10. **FINAL REPORT** - Call report_progress one final time ONLY if you haven't already included all the important information (PR links, branch links, summary) in a previous report_progress call. If you already called report_progress with complete information including PR links after creating the PR, you do NOT need to call it again. Only make a final call if you need to add missing information. When making the final call, ensure it includes:
@@ -233,6 +234,7 @@ Your job is to fix issues THIS PR introduced, not to fix all CI failures. If in 
    - Commit your changes with \`${ghPullfrogMcpName}/git\` (\`git add .\` then \`git commit -m "message"\`), then push with \`${ghPullfrogMcpName}/push_branch\`. Do NOT use \`git push\` directly - it requires credentials that only the MCP tool provides.
    - Determine whether to create a PR:
      - **Default behavior**: Create a PR using ${ghPullfrogMcpName}/create_pull_request with an informative title and body. If you are working in the context of an issue (check EVENT DATA for \`issue_number\` where \`is_pr\` is not true), include "Closes #<issue_number>" in the PR body to auto-close the issue when merged.
+     - **Draft PR request**: If the user explicitly asks for a draft PR (e.g. "draft PR", "create as draft", "WIP"), create a PR with \`draft: true\`.
      - **Branch-only request**: If the user explicitly asks for a branch without a PR (e.g. "don't create a PR", "branch only", "just create a branch"), do NOT create a PR. Simply push the branch and report the branch link.
 
 5. **PROGRESS** - ${reportProgressInstruction}

@@ -9,6 +9,9 @@ export const PullRequest = type({
   title: type.string.describe("the title of the pull request"),
   body: type.string.describe("the body content of the pull request"),
   base: type.string.describe("the base branch to merge into (e.g., 'main')"),
+  "draft?": type.boolean.describe(
+    "if true, create the pull request as a draft. use when the user explicitly asks for a draft PR."
+  ),
 });
 
 function buildPrBodyWithFooter(ctx: ToolContext, body: string): string {
@@ -71,11 +74,13 @@ export function CreatePullRequestTool(ctx: ToolContext) {
         body: bodyWithFooter,
         head: currentBranch,
         base: params.base,
+        draft: params.draft ?? false,
       });
 
       // best-effort: request review from the user who triggered the workflow
+      // skip for draft PRs since they're not ready for review
       const reviewer = ctx.payload.triggeringUser;
-      if (reviewer) {
+      if (reviewer && !params.draft) {
         try {
           log.debug(`requesting review from ${reviewer} on PR #${result.data.number}`);
           await ctx.octokit.rest.pulls.requestReviewers({
