@@ -291,11 +291,6 @@ function extractFromFilePatches(
 export const GetReviewComments = type({
   pull_number: type.number.describe("The pull request number"),
   review_id: type.number.describe("The review ID to get comments for"),
-  approved_by: type.string
-    .describe(
-      "Optional GitHub username - only return threads where this user gave a 👍 to at least one comment"
-    )
-    .optional(),
 });
 
 function hasThumbsUpFrom(comment: ReviewThreadComment, username: string): boolean {
@@ -545,17 +540,23 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
     name: "get_review_comments",
     description:
       "Get review comments for a pull request review with full thread context. " +
-      "When approved_by is provided, only returns threads where that user gave a 👍 to at least one comment. " +
+      "Automatically filters to approved comments when applicable. " +
       "Returns a TOC and commentsPath pointing to a markdown file with full comment details.",
     parameters: GetReviewComments,
     execute: execute(async (params) => {
+      // auto-filter to approved comments when the event has approved_only set
+      const approvedBy =
+        ctx.payload.event.trigger === "fix_review" && ctx.payload.event.approved_only
+          ? ctx.payload.triggerer
+          : undefined;
+
       const result = await getReviewData({
         octokit: ctx.octokit,
         owner: ctx.repo.owner,
         name: ctx.repo.name,
         pullNumber: params.pull_number,
         reviewId: params.review_id,
-        approvedBy: params.approved_by,
+        approvedBy,
       });
 
       if (!result) {
@@ -566,8 +567,8 @@ export function GetReviewCommentsTool(ctx: ToolContext) {
           threadCount: 0,
           commentsPath: null,
           toc: null,
-          instructions: params.approved_by
-            ? `no threads with 👍 from ${params.approved_by}`
+          instructions: approvedBy
+            ? `no threads with 👍 from ${approvedBy}`
             : "no threads found for this review",
         };
       }

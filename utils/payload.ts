@@ -19,7 +19,8 @@ export const JsonPayload = type({
   version: "string",
   "agent?": AgentName.or("undefined"),
   prompt: "string",
-  "triggeringUser?": "string | undefined",
+  "triggerer?": "string | undefined",
+
   "eventInstructions?": "string",
   "repoInstructions?": "string",
   "event?": "object",
@@ -167,8 +168,8 @@ export function resolvePayload(
     version: jsonPayload?.version ?? packageJson.version,
     agent: resolvedAgent,
     prompt,
-    triggeringUser:
-      jsonPayload?.triggeringUser ??
+    triggerer:
+      jsonPayload?.triggerer ??
       // it's not a common use case but GITHUB_ACTOR can be a user when the workflow is manually triggered by a user through GitHub Actions UI
       (!isPullfrog(process.env.GITHUB_ACTOR) ? process.env.GITHUB_ACTOR : undefined),
     eventInstructions: jsonPayload?.eventInstructions,

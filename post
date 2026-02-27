@@ -41382,7 +41382,7 @@ var JsonPayload = type({
   version: "string",
   "agent?": AgentName.or("undefined"),
   prompt: "string",
-  "triggeringUser?": "string | undefined",
+  "triggerer?": "string | undefined",
   "eventInstructions?": "string",
   "repoInstructions?": "string",
   "event?": "object",

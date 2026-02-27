@@ -78,9 +78,8 @@ export function CreatePullRequestTool(ctx: ToolContext) {
       });
 
       // best-effort: request review from the user who triggered the workflow
-      // skip for draft PRs since they're not ready for review
-      const reviewer = ctx.payload.triggeringUser;
-      if (reviewer && !params.draft) {
+      const reviewer = ctx.payload.triggerer;
+      if (reviewer) {
         try {
           log.debug(`requesting review from ${reviewer} on PR #${result.data.number}`);
           await ctx.octokit.rest.pulls.requestReviewers({

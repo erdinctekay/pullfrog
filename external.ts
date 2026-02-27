@@ -229,8 +229,8 @@ interface FixReviewEvent extends BasePayloadEvent {
   issue_number: number;
   is_pr: true;
   review_id: number;
-  /** username of the person who triggered this action - use with get_review_comments approved_by */
-  triggerer: string;
+  /** when true, only address comments the triggerer approved with 👍 (vs all comments) */
+  approved_only?: boolean | undefined;
 }
 
 interface ImplementPlanEvent extends BasePayloadEvent {
@@ -273,7 +273,7 @@ export interface WriteablePayload {
   /** the user's actual request (body if @pullfrog tagged) */
   prompt: string;
   /** github username of the human who triggered this workflow run */
-  triggeringUser?: string | undefined;
+  triggerer?: string | undefined;
   /** event-level instructions for this trigger type (flag-expanded server-side) */
   eventInstructions?: string | undefined;
   /** repo-level instructions (flag-expanded server-side) */
