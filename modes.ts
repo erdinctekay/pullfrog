@@ -79,7 +79,7 @@ export function computeModes(): Mode[] {
 
 2. **DEPENDENCIES** - ${dependencyInstallationStep}
 
-3. **FETCH COMMENTS** - Fetch review comments using ${ghPullfrogMcpName}/get_review_comments with \`pull_number\` and \`review_id\` from EVENT DATA. This returns \`commentsPath\` - read that file for full comment details with diff context. If EVENT DATA contains a \`triggerer\` field (indicating who requested fixes), you can pass \`approved_by\` to filter to only comments they approved with 👍.
+3. **FETCH COMMENTS** - Fetch review comments using ${ghPullfrogMcpName}/get_review_comments with \`pull_number\` and \`review_id\` from EVENT DATA. This returns \`commentsPath\` - read that file for full comment details with diff context. When \`approved_only\` is set in EVENT DATA, only approved comments are returned automatically.
 
 4. **UNDERSTAND** - Review the feedback provided. Understand each review comment and what changes are being requested.
 
