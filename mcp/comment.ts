@@ -178,7 +178,11 @@ export async function reportProgress(
   }
 
   const existingCommentId = ctx.toolState.progressCommentId;
-  const issueNumber = ctx.toolState.issueNumber ?? ctx.payload.event.issue_number;
+  // Explicit issue_number from the payload wins here
+  // This is especially important for manually triggered workflows from trigger links.
+  // Without this, the created "Implement plan" would be created for the wrong issue
+  // if the run happens to research other issues (and thus overwrite the toolState.issueNumber).
+  const issueNumber = ctx.payload.event.issue_number ?? ctx.toolState.issueNumber;
   const isPlanMode = ctx.toolState.selectedMode === "Plan";
 
   // if we already have a progress comment, update it
