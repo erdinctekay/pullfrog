@@ -11,7 +11,7 @@ export function SetOutputTool(ctx: ToolContext) {
   return tool({
     name: "set_output",
     description:
-      "Set the action output. When called by a subagent, returns a summary result to the orchestrator. When called in standalone mode, exposes the value as the 'result' GitHub Action output.",
+      "Set the action output. When called by a subagent, returns a summary result to the orchestrator — this is the ONLY way to pass results back. When called by the orchestrator in standalone mode (trigger: unknown), exposes the value as the 'result' GitHub Action output for downstream workflow steps. Do NOT use this for progress reporting — use report_progress instead.",
     parameters: SetOutputParams,
     execute: execute(async (params) => {
       const selfId = ctx.toolState.selfSubagentId;

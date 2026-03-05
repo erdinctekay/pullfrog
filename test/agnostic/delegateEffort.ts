@@ -16,7 +16,9 @@ const fixture = defineFixture(
   {
     prompt: `This is a simple task. Select the Plan mode via select_mode, then delegate with MINI effort (this is a trivial task).
 Your subagent instructions should be:
-"Call set_output with the value 'EFFORT_TEST_PASSED'. Do not create plans or PRs. Just call set_output."`,
+"Call set_output with the value 'EFFORT_TEST_PASSED'. Do not create plans or PRs. Just call set_output."
+
+When all delegations are complete, call set_output with the final result. This makes it available as the GitHub Action output.`,
     effort: "auto",
     timeout: "5m",
   },

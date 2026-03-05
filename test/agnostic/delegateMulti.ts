@@ -19,7 +19,9 @@ Phase 1: Select Plan mode via select_mode, then delegate with tasks: [{ label: "
 
 Phase 2: After Phase 1 completes, select Plan mode again and delegate with tasks: [{ label: "phase-2", instructions: "Your task is to call set_output with the value 'MULTI_DELEGATE_PASSED'. Do not create plans or PRs.", effort: "mini" }]. Include the result from Phase 1 in the instructions if you want.
 
-Both delegations must complete successfully.`,
+Both delegations must complete successfully.
+
+When all delegations are complete, call set_output with the final result. This makes it available as the GitHub Action output.`,
     effort: "mini",
     timeout: "8m",
   },

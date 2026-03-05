@@ -12,7 +12,9 @@ import { defineFixture, getAgentOutput, getStructuredOutput } from "../utils.ts"
 const fixture = defineFixture(
   {
     prompt: `Select the Plan mode via select_mode, then delegate with mini effort. Your subagent instructions should be:
-"This is a delegation test. Your only task is to call set_output with the value 'DELEGATE_BASIC_PASSED'. Do not create plans, branches, or PRs. Just call set_output."`,
+"This is a delegation test. Your only task is to call set_output with the value 'DELEGATE_BASIC_PASSED'. Do not create plans, branches, or PRs. Just call set_output."
+
+When all delegations are complete, call set_output with the final result. This makes it available as the GitHub Action output.`,
     effort: "mini",
     timeout: "5m",
   },

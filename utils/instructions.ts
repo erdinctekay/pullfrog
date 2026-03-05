@@ -384,8 +384,6 @@ To investigate questions, prefer \`${ghPullfrogMcpName}/ask_question\` over \`${
 
 After each \`delegate\` call, you receive a \`results\` array — one entry per task with \`label\`, \`success\`, \`summary\` (from set_output), and \`stdoutFile\` (inspectable via \`${ghPullfrogMcpName}/file_read\`). Follow the post-delegation steps from the select_mode guidance.
 
-When all delegations are complete, call \`${ghPullfrogMcpName}/set_output\` with the final result. This makes it available as the GitHub Action output.
-
 ### Subagent capabilities
 
 Subagents have: file operations, shell (for local git, tests, builds), read-only GitHub queries, and upload_file. They do NOT have: \`git\`, \`checkout_pr\`, \`push_branch\`, \`create_pull_request\`, \`create_pull_request_review\`, \`report_progress\`, \`create_issue_comment\`, \`reply_to_review_comment\`, \`resolve_review_thread\`, \`delegate\`, \`ask_question\`, or any dependency/remote-mutating tools. All GitHub-write and state-mutating operations are your responsibility.

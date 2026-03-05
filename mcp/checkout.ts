@@ -214,9 +214,17 @@ export async function checkoutPrBranch(
   if (alreadyOnBranch) {
     log.debug(`already on PR branch ${localBranch}, skipping checkout`);
   } else {
-    // fetch base branch so origin/<base> exists for diff operations
+    // fetch base branch so origin/<base> exists for diff operations.
+    // deepen if shallow — actions/checkout uses depth=1 by default, which
+    // breaks rebase/log operations because git can't find the merge base
+    // between the shallow base and the fully-fetched PR branch.
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", ["--no-tags", "origin", baseBranch], {
+    const isShallow = $("git", ["rev-parse", "--is-shallow-repository"], { log: false }).trim();
+    const baseFetchArgs =
+      isShallow === "true"
+        ? ["--deepen=1000", "--no-tags", "origin", baseBranch]
+        : ["--no-tags", "origin", baseBranch];
+    $git("fetch", baseFetchArgs, {
       token: gitToken,
       restricted: shell !== "enabled",
     });
@@ -241,7 +249,12 @@ export async function checkoutPrBranch(
   // fetch if we skipped checkout (already on branch) - otherwise already fetched above
   if (alreadyOnBranch) {
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", ["--no-tags", "origin", baseBranch], {
+    const isShallow = $("git", ["rev-parse", "--is-shallow-repository"], { log: false }).trim();
+    const baseFetchArgs =
+      isShallow === "true"
+        ? ["--deepen=1000", "--no-tags", "origin", baseBranch]
+        : ["--no-tags", "origin", baseBranch];
+    $git("fetch", baseFetchArgs, {
       token: gitToken,
       restricted: shell !== "enabled",
     });
