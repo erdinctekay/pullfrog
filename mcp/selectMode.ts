@@ -130,8 +130,8 @@ Use max effort for thorough reviews.`,
    - the task to plan for
    - relevant codebase context (file paths, architecture notes from AGENTS.md)
    - instruct it to produce a structured, actionable plan with clear milestones
-   - call \`${ghPullfrogMcpName}/set_output\` with the plan (this is how results get back to you — you'll need the plan to craft the next subagent's prompt)
-2. After the subagent completes, call \`${ghPullfrogMcpName}/report_progress\` with the plan.
+   - IMPORTANT: instruct it to return the full plan text via \`${ghPullfrogMcpName}/set_output\` as well-structured markdown — do NOT create plan files, do NOT save to disk
+2. After the subagent completes, call \`${ghPullfrogMcpName}/report_progress\` with the full plan text from the subagent's output. The progress comment must contain the complete plan — not a file path or summary.
 
 ### Effort
 
