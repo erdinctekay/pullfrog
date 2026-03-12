@@ -216,10 +216,6 @@ export async function runAgentStreaming(options: RunStreamingOptions): Promise<A
       GITHUB_OUTPUT: githubOutputFile,
     };
 
-    // clear CI runner's GITHUB_TOKEN so ensureGitHubToken() mints a
-    // properly scoped token for the target GITHUB_REPOSITORY via OIDC
-    delete subEnv.GITHUB_TOKEN;
-
     const child = spawn("node", ["play.ts", "--raw", JSON.stringify(fixture)], {
       cwd: actionDir,
       env: subEnv as Record<string, string>,

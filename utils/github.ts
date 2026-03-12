@@ -277,11 +277,17 @@ const findInstallationId = async (
 
 // for local development only
 async function acquireTokenViaGitHubApp(opts?: AcquireTokenOptions): Promise<string> {
+  if (!process.env.GITHUB_APP_ID || !process.env.GITHUB_PRIVATE_KEY) {
+    throw new Error(
+      "cannot acquire token via GitHub App: GITHUB_APP_ID and GITHUB_PRIVATE_KEY must be set"
+    );
+  }
+
   const repoContext = parseRepoContext();
 
   const config: GitHubAppConfig = {
-    appId: process.env.GITHUB_APP_ID!,
-    privateKey: process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, "\n")!,
+    appId: process.env.GITHUB_APP_ID,
+    privateKey: process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, "\n"),
     repoOwner: repoContext.owner,
     repoName: repoContext.name,
   };
@@ -292,20 +298,31 @@ async function acquireTokenViaGitHubApp(opts?: AcquireTokenOptions): Promise<str
 }
 
 /**
- * Ensure a GitHub token is available in the environment.
+ * ensure a GitHub token is available in the environment.
  *
- * If neither `GITHUB_TOKEN` nor `GH_TOKEN` is set, attempts to acquire an
- * installation token using `GITHUB_APP_ID` / `GITHUB_PRIVATE_KEY`.
+ * when OIDC is available (CI), always mints a fresh token scoped to
+ * GITHUB_REPOSITORY — overriding any inherited GITHUB_TOKEN that may
+ * be scoped to the wrong repo.
  *
- * **Not intended for production use** — this is a convenience for local
- * development and test harnesses where tokens aren't pre-provisioned.
+ * otherwise falls back to GitHub App credentials for local development.
+ *
+ * only called from play.ts (test/dev path) — the live action calls
+ * main() directly and never calls this.
  */
 export async function ensureGitHubToken(): Promise<void> {
+  // when OIDC is available, always mint a fresh token scoped to
+  // GITHUB_REPOSITORY. the inherited GITHUB_TOKEN may be scoped to a
+  // different repo (e.g., runner token for pullfrog/app when tests
+  // target pullfrog/test-repo).
+  if (isOIDCAvailable()) {
+    const token = await acquireNewToken();
+    process.env.GITHUB_TOKEN = token;
+    return;
+  }
+
   if (!process.env.GITHUB_TOKEN && !process.env.GH_TOKEN) {
-    if (isOIDCAvailable() || (process.env.GITHUB_APP_ID && process.env.GITHUB_PRIVATE_KEY)) {
-      const token = await acquireNewToken();
-      process.env.GITHUB_TOKEN = token;
-    }
+    const token = await acquireNewToken();
+    process.env.GITHUB_TOKEN = token;
   }
 }
 
