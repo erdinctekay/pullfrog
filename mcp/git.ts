@@ -149,9 +149,8 @@ export function PushBranchTool(ctx: ToolContext) {
       }
 
       try {
-        $git("push", pushArgs, {
+        await $git("push", pushArgs, {
           token: ctx.gitToken,
-          restricted: ctx.payload.shell !== "enabled",
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -269,7 +268,7 @@ export function GitTool(ctx: ToolContext) {
         }
       }
 
-      const output = $("git", [subcommand, ...args]);
+      const output = $("git", [subcommand, ...args], { log: false });
       return { success: true, output };
     }),
   });
@@ -290,9 +289,8 @@ export function GitFetchTool(ctx: ToolContext) {
       if (params.depth !== undefined) {
         fetchArgs.push(`--depth=${params.depth}`);
       }
-      $git("fetch", fetchArgs, {
+      await $git("fetch", fetchArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, ref: params.ref };
     }),
@@ -318,9 +316,8 @@ export function DeleteBranchTool(ctx: ToolContext) {
         );
       }
 
-      $git("push", ["origin", "--delete", params.branchName], {
+      await $git("push", ["origin", "--delete", params.branchName], {
         token: ctx.gitToken,
-        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, deleted: params.branchName };
     }),
@@ -348,9 +345,8 @@ export function PushTagsTool(ctx: ToolContext) {
       }
 
       const pushArgs = [...(params.force ? ["-f"] : []), "origin", `refs/tags/${params.tag}`];
-      $git("push", pushArgs, {
+      await $git("push", pushArgs, {
         token: ctx.gitToken,
-        restricted: ctx.payload.shell !== "enabled",
       });
       return { success: true, tag: params.tag };
     }),

@@ -302,7 +302,7 @@ async function acquireTokenViaGitHubApp(opts?: AcquireTokenOptions): Promise<str
  */
 export async function ensureGitHubToken(): Promise<void> {
   if (!process.env.GITHUB_TOKEN && !process.env.GH_TOKEN) {
-    if (process.env.GITHUB_APP_ID && process.env.GITHUB_PRIVATE_KEY) {
+    if (isOIDCAvailable() || (process.env.GITHUB_APP_ID && process.env.GITHUB_PRIVATE_KEY)) {
       const token = await acquireNewToken();
       process.env.GITHUB_TOKEN = token;
     }

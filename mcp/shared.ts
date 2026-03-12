@@ -1,4 +1,4 @@
-import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { encode as toonEncode } from "@toon-format/toon";
 import type { FastMCP, Tool } from "fastmcp";
 import { formatJsonValue, log } from "../utils/cli.ts";
@@ -61,141 +61,9 @@ export const execute = <T, R extends Record<string, any> | string>(
   return _fn;
 };
 
-/**
- * Sanitize JSON schema to remove problematic fields that Gemini CLI/API can't handle
- * - Removes $schema field (causes "no schema with key or ref" errors)
- * - Converts $defs to definitions (draft-07 compatibility)
- * - Removes any draft-2020-12 specific features
- * - Converts any_of with enum values to direct STRING enum (Google API requirement)
- */
-function sanitizeSchema(schema: any): any {
-  if (!schema || typeof schema !== "object") {
-    return schema;
-  }
-
-  if (Array.isArray(schema)) {
-    return schema.map(sanitizeSchema);
-  }
-
-  // handle any_of with enum values - convert to direct STRING enum for Google API
-  // Google API requires: {type: "string", enum: [...]} not {anyOf: [{enum: [...]}, {enum: [...]}]}
-  if (schema.anyOf && Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
-    const enumValues: string[] = [];
-    let allAreEnumObjects = true;
-
-    for (const item of schema.anyOf) {
-      if (item && typeof item === "object" && Array.isArray(item.enum)) {
-        // collect enum values (only strings)
-        const stringEnums = item.enum.filter((v: any) => typeof v === "string");
-        if (stringEnums.length > 0) {
-          enumValues.push(...stringEnums);
-        } else {
-          allAreEnumObjects = false;
-          break;
-        }
-      } else {
-        allAreEnumObjects = false;
-        break;
-      }
-    }
-
-    // if all any_of items are enum objects with string values, convert to direct STRING enum
-    if (allAreEnumObjects && enumValues.length > 0) {
-      const uniqueEnums = [...new Set(enumValues)];
-      // preserve other properties from the original schema (like description)
-      const result: any = {
-        type: "string",
-        enum: uniqueEnums,
-      };
-      if (schema.description) {
-        result.description = schema.description;
-      }
-      return result;
-    }
-  }
-
-  const sanitized: any = {};
-
-  for (const [key, value] of Object.entries(schema)) {
-    // skip $schema field entirely
-    if (key === "$schema") {
-      continue;
-    }
-
-    // skip any_of if we already converted it above
-    if (key === "anyOf" && schema.anyOf) {
-      continue;
-    }
-
-    // convert $defs to definitions for draft-07 compatibility
-    if (key === "$defs") {
-      sanitized.definitions = sanitizeSchema(value);
-      continue;
-    }
-
-    // recursively sanitize nested objects
-    sanitized[key] = sanitizeSchema(value);
-  }
-
-  return sanitized;
-}
-
-/**
- * Wrap a schema to sanitize its JSON Schema output for Gemini/OpenCode compatibility.
- * xsschema calls ~standard.jsonSchema.input() for schemas that implement StandardJSONSchemaV1
- * (i.e. have ~standard.jsonSchema), which includes arktype and our AJV-backed JSON schema wrapper.
- * Schemas without ~standard.jsonSchema are returned unchanged (sanitization skipped).
- */
-function wrapSchema(
-  schema: StandardSchemaV1<any> & {
-    "~standard": Partial<StandardJSONSchemaV1<any>["~standard"]>;
-  }
-): StandardSchemaV1<any> {
-  const standardProps = schema["~standard"];
-
-  if (!("jsonSchema" in standardProps)) {
-    return schema;
-  }
-
-  const jsonSchema = standardProps.jsonSchema;
-  const wrapped: StandardSchemaV1<any> & StandardJSONSchemaV1<any> = {
-    ...schema,
-    "~standard": {
-      ...standardProps,
-      jsonSchema: {
-        input: (options) => sanitizeSchema(jsonSchema.input(options)),
-        output: (options) => sanitizeSchema(jsonSchema.output(options)),
-      },
-    },
-  };
-  return wrapped;
-}
-
-/**
- * Transform tool to sanitize its parameter schema for Gemini CLI compatibility
- */
-function sanitizeTool<T extends Tool<any, any>>(tool: T): T {
-  if (!tool.parameters) {
-    return tool;
-  }
-
-  const wrappedSchema = wrapSchema(tool.parameters);
-
-  // create a new tool with wrapped schema
-  return {
-    ...tool,
-    parameters: wrappedSchema,
-  } as T;
-}
-
-export const addTools = (ctx: ToolContext, server: FastMCP<any>, tools: Tool<any, any>[]) => {
-  // sanitize schemas for gemini agent and opencode (when using Google API)
-  // both have issues with draft-2020-12 schemas and any_of enum constructs
-  const shouldSanitize = ctx.agent.name === "gemini" || ctx.agent.name === "opencode";
-
+export const addTools = (_ctx: ToolContext, server: FastMCP<any>, tools: Tool<any, any>[]) => {
   for (const tool of tools) {
-    const processedTool = shouldSanitize ? sanitizeTool(tool) : tool;
-    server.addTool(processedTool);
+    server.addTool(tool);
   }
   return server;
 };

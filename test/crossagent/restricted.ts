@@ -18,7 +18,6 @@ Then call set_output with the exact output of each command, one per line:
 DIAGNOSTIC_ID=<value or "empty">
 FILTER_TOKEN=<value or "empty">`,
     shell: "restricted",
-    effort: "mini",
     timeout: "3m",
   },
   { localOnly: true }
@@ -52,5 +51,4 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   agentEnv,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
 };

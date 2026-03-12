@@ -1,7 +1,6 @@
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec";
 import { Ajv } from "ajv";
 import { type } from "arktype";
-import { log } from "../utils/cli.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -42,20 +41,8 @@ function jsonSchemaToStandardSchema({
 }
 
 function storeOutput(ctx: ToolContext, value: string) {
-  const selfId = ctx.toolState.selfSubagentId;
-  if (selfId) {
-    const subagent = ctx.toolState.subagents.get(selfId);
-    if (subagent) {
-      subagent.output = value;
-      log.debug(`set_output: routed to subagent ${selfId} (value=${value.slice(0, 80)})`);
-      return { success: true, routed: "subagent" as const };
-    }
-    log.warning(
-      `set_output: selfSubagentId=${selfId} but subagent not found in map — routing to action output`
-    );
-  }
   ctx.toolState.output = value;
-  return { success: true, routed: "action_output" as const };
+  return { success: true };
 }
 
 export function SetOutputTool(ctx: ToolContext, outputSchema?: JsonSchema) {
@@ -74,7 +61,7 @@ export function SetOutputTool(ctx: ToolContext, outputSchema?: JsonSchema) {
   return tool({
     name: "set_output",
     description:
-      "Set the action output. When called by a subagent, returns a summary result to the orchestrator — this is the ONLY way to pass results back. When called by the orchestrator in standalone mode (trigger: unknown), exposes the value as the 'result' GitHub Action output for downstream workflow steps. Do NOT use this for progress reporting — use report_progress instead.",
+      "Set the action output. Exposes the value as the 'result' GitHub Action output for downstream workflow steps. Do NOT use this for progress reporting — use report_progress instead.",
     parameters: SetOutputParams,
     execute: execute(async (params) => {
       return storeOutput(ctx, params.value);

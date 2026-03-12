@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
+import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { $ } from "../utils/shell.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -17,13 +18,12 @@ export const PullRequest = type({
 function buildPrBodyWithFooter(ctx: ToolContext, body: string): string {
   const footer = buildPullfrogFooter({
     triggeredBy: true,
-    agent: { displayName: ctx.agent.displayName, url: ctx.agent.url },
     workflowRun: ctx.runId
       ? { owner: ctx.repo.owner, repo: ctx.repo.name, runId: ctx.runId, jobId: ctx.jobId }
       : undefined,
   });
 
-  const bodyWithoutFooter = stripExistingFooter(body);
+  const bodyWithoutFooter = stripExistingFooter(fixDoubleEscapedString(body));
   return `${bodyWithoutFooter}${footer}`;
 }
 

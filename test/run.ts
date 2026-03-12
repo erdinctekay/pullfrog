@@ -27,14 +27,14 @@ import {
  * filters can be test names, tags, or agent names:
  *   node test/run.ts               # run all tests (excludes adhoc-tagged tests)
  *   node test/run.ts smoke         # run tests named "smoke" or tagged "smoke"
- *   node test/run.ts claude        # run all tests for claude only
- *   node test/run.ts fs            # run all tests tagged "fs"
- *   node test/run.ts agnostic      # run all agnostic-tagged tests (with claude)
+ *   node test/run.ts opentoad      # run all tests for opentoad only
+ *   node test/run.ts security      # run all tests tagged "security"
+ *   node test/run.ts agnostic      # run all agnostic-tagged tests (with opentoad)
  *   node test/run.ts adhoc         # run all adhoc-tagged tests
- *   node test/run.ts smoke claude  # run smoke tests for claude only
+ *   node test/run.ts smoke opentoad # run smoke tests for opentoad only
  *
  * special tags:
- *   - "agnostic": runs with claude only, excluded when filtering by agent
+ *   - "agnostic": runs with opentoad only, excluded when filtering by agent
  *   - "adhoc": excluded from default runs, must be explicitly requested
  *
  * by default, runs in a Docker container for isolation.
@@ -249,11 +249,11 @@ function shouldRetry(result: AgentResult, validation: ValidationResult): RetryDe
   // security-relevant checks (like no_leak_filtered, native_blocked) are designed
   // to PASS when set_output wasn't called (defensive coding). so cascade failures
   // are never genuine security findings — they're transient instruction-following
-  // issues (MCP connection drop, agent confusion, low effort level, etc.).
+  // issues (MCP connection drop, agent confusion, etc.).
   const setOutputCheck = validation.checks.find((c) => c.name === "set_output");
   if (setOutputCheck && !setOutputCheck.passed) {
     // if the output contains rate limit indicators, use the longer backoff
-    // (the agent process may have succeeded but the subagent hit quota limits)
+    // (the agent process may have succeeded but hit quota limits mid-run)
     const rateLimited = isRateLimited(result.output);
     return {
       retry: true,
@@ -305,14 +305,9 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
     env.PULLFROG_TEST_REPO_SETUP = testConfig.repoSetup;
   }
 
-  // opencode: use anthropic sonnet to avoid google quota issues and gemini doom-looping
-  if (ctx.agent === "opencode") {
+  // use anthropic sonnet to avoid google quota issues and gemini doom-looping
+  if (ctx.agent === "opentoad") {
     env.OPENCODE_MODEL ??= "anthropic/claude-sonnet-4-5";
-  }
-
-  // gemini: use 2.5 pro for testing
-  if (ctx.agent === "gemini") {
-    env.GEMINI_MODEL ??= "gemini-2.5-pro";
   }
 
   // build file-based env vars for MCP servers that don't inherit parent env
@@ -409,11 +404,11 @@ async function main(): Promise<void> {
     const isAgnostic = hasTag(testInfo, "agnostic");
 
     if (isAgnostic) {
-      // agnostic tests: skip if only filtering by agent, otherwise run with claude
+      // agnostic tests: skip if only filtering by agent, otherwise run with opentoad
       if (parsed.filters.length === 0 && parsed.agentFilters.length > 0) {
         continue;
       }
-      runs.push({ testInfo, agent: "claude" });
+      runs.push({ testInfo, agent: "opentoad" });
     } else {
       // determine which agents to run for this test
       const testAgents = testInfo.config.agents ?? agents;

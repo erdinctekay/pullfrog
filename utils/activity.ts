@@ -110,7 +110,6 @@ export function createProcessOutputActivityTimeout(ctx: ActivityTimeoutContext):
       if (monitor) {
         monitor.stop();
       }
-      // matched by delegateTimeout test validator — update tests if changed
       rejectFn(new Error(`activity timeout: no output for ${idleSec}s`));
     },
   });

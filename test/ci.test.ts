@@ -4,7 +4,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { agentsManifest, type WorkflowPermissions } from "../external.ts";
+import { agents } from "../agents/index.ts";
+import type { WorkflowPermissions } from "../external.ts";
+import { providers } from "../models.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const actionDir = join(__dirname, "..");
@@ -31,9 +33,6 @@ const actionWorkflow = parse(
   readFileSync(join(actionDir, ".github/workflows/test.yml"), "utf-8")
 ) as Workflow;
 
-// read test names from .ts files in a test directory.
-// matches `name: "xxx"` at the start of a line (with indentation) to skip
-// inline validator check names like `{ name: "set_output", ... }`.
 function getTestNamesFromDir(dir: string): string[] {
   const dirPath = join(__dirname, dir);
   const files = readdirSync(dirPath).filter((f) => f.endsWith(".ts"));
@@ -54,23 +53,19 @@ function getEnvVarNames(job: WorkflowJob): string[] {
   return Object.keys(job.env ?? {}).sort();
 }
 
-const expectedAgents = Object.keys(agentsManifest).sort();
+const expectedAgents = Object.keys(agents).sort();
 const crossagentTests = getTestNamesFromDir("crossagent");
 const agnosticTests = getTestNamesFromDir("agnostic");
 const adhocTests = getTestNamesFromDir("adhoc");
 const dynamicAgentsExpression = "$" + "{{ fromJSON(needs.changes.outputs.agents) }}";
 
-// all API key names from all agents + GITHUB_TOKEN + model overrides
+// all provider API key names + GITHUB_TOKEN + model overrides
 const expectedAgentEnvVars = [
   "GITHUB_TOKEN",
-  ...new Set(Object.values(agentsManifest).flatMap((a) => a.apiKeyNames)),
-  "GEMINI_MODEL",
-  "OPENCODE_MODEL_MAX",
-  "OPENCODE_MODEL_MINI",
+  ...new Set(Object.values(providers).flatMap((p) => [...p.envVars])),
   "OPENCODE_MODEL",
 ].sort();
 
-// agnostic tests only run with claude
 const expectedAgnosticEnvVars = ["ANTHROPIC_API_KEY", "GITHUB_TOKEN"].sort();
 
 describe("ci workflow consistency", () => {
@@ -92,32 +87,40 @@ describe("ci workflow consistency", () => {
       expect(rootJob.strategy!.matrix.agent).toBe(dynamicAgentsExpression);
     });
 
-    it("changed-agents.sh falls back to claude when shared agent code changed", () => {
+    it("changed-agents.sh falls back to opentoad when shared agent code changed", () => {
       const input = JSON.stringify(["action/agents/shared.ts"]);
       const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
         input,
         encoding: "utf-8",
       });
-      expect(JSON.parse(output)).toEqual(["claude"]);
+      expect(JSON.parse(output)).toEqual(["opentoad"]);
     });
 
-    it("changed-agents.sh falls back to claude for non-agent action changes", () => {
+    it("changed-agents.sh falls back to opentoad for non-agent action changes", () => {
       const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/mcp/delegate.ts"]),
+        input: JSON.stringify(["action/mcp/server.ts"]),
         encoding: "utf-8",
       });
-      expect(JSON.parse(output)).toEqual(["claude"]);
+      expect(JSON.parse(output)).toEqual(["opentoad"]);
     });
 
-    it("changed-agents.sh includes claude canary alongside changed agents", () => {
+    it("changed-agents.sh includes opentoad canary alongside changed agents", () => {
       const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/agents/gemini.ts", "action/mcp/server.ts"]),
+        input: JSON.stringify(["action/agents/opentoad.ts", "action/mcp/server.ts"]),
         encoding: "utf-8",
       });
-      expect(JSON.parse(output)).toEqual(["claude", "gemini"]);
+      expect(JSON.parse(output)).toEqual(["opentoad"]);
     });
 
-    it("action agent matrix matches agentsManifest", () => {
+    it("changed-agents.sh treats legacy agent files as non-agent changes", () => {
+      const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
+        input: JSON.stringify(["action/agents/claude.ts", "action/agents/gemini.ts"]),
+        encoding: "utf-8",
+      });
+      expect(JSON.parse(output)).toEqual(["opentoad"]);
+    });
+
+    it("action agent matrix matches agents map", () => {
       expect([...actionJob.strategy!.matrix.agent].sort()).toEqual(expectedAgents);
     });
 
@@ -141,7 +144,7 @@ describe("ci workflow consistency", () => {
       expect(getEnvVarNames(rootJob)).toEqual(getEnvVarNames(actionJob));
     });
 
-    it("env vars cover all agent API keys", () => {
+    it("env vars cover all provider API keys", () => {
       expect(getEnvVarNames(rootJob)).toEqual(expectedAgentEnvVars);
     });
 
@@ -175,7 +178,7 @@ describe("ci workflow consistency", () => {
       expect(getEnvVarNames(rootJob)).toEqual(getEnvVarNames(actionJob));
     });
 
-    it("env vars are correct for claude-only tests", () => {
+    it("env vars are correct for agnostic tests", () => {
       expect(getEnvVarNames(rootJob)).toEqual(expectedAgnosticEnvVars);
     });
 

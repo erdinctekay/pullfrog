@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -25,7 +26,7 @@ export function IssueTool(ctx: ToolContext) {
         owner: ctx.repo.owner,
         repo: ctx.repo.name,
         title: title,
-        body: body,
+        body: fixDoubleEscapedString(body),
         labels: labels ?? [],
         assignees: assignees ?? [],
       });

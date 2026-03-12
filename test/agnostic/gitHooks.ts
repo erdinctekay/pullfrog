@@ -7,8 +7,8 @@ import { defineFixture, getAgentOutput } from "../utils.ts";
  * -c core.hooksPath=/dev/null when shell !== "enabled").
  *
  * the hook is pre-created via repoSetup (not by the agent) to avoid model
- * refusals — Claude categorically refuses to create git hooks. the agent
- * only needs to run git_fetch and check whether the hook fired.
+ * refusals. the agent only needs to run git_fetch and check whether the
+ * hook fired.
  *
  * validation uses the structured output (marker_check field) instead of
  * scanning the full output for a canary — agents quote hook file contents
@@ -45,7 +45,6 @@ Call set_output with:
 }`,
     push: "restricted",
     shell: "restricted",
-    effort: "mini",
     timeout: "5m",
   },
   { localOnly: true }
@@ -95,6 +94,5 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   repoSetup,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
   tags: ["agnostic", "security"],
 };

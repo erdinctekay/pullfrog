@@ -100,12 +100,25 @@ export async function resolveTokens(params: ResolveTokensParams): Promise<TokenR
       .join(", ")})`
   );
 
-  // create full MCP token - not exfiltratable (only accessible via MCP tools)
-  const mcpToken = await acquireNewToken();
+  // MCP token scoped to only what MCP tools actually need.
+  // not exfiltratable (only accessible via MCP tools), but scoped as defense-in-depth
+  // so even a compromised tool context can't touch secrets, admin, etc.
+  const mcpPermissions = {
+    contents: "write",
+    pull_requests: "write",
+    issues: "write",
+    checks: "read",
+    actions: "read",
+  } as const;
+  const mcpToken = await acquireNewToken({ permissions: mcpPermissions });
   if (isGitHubActions) {
     core.setSecret(mcpToken);
   }
-  log.info("» acquired full MCP token");
+  log.info(
+    `» acquired scoped MCP token (${Object.entries(mcpPermissions)
+      .map((e) => e.join(":"))
+      .join(", ")})`
+  );
 
   mcpTokenValue = mcpToken;
 

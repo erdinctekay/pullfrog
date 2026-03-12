@@ -1,13 +1,12 @@
 import { isAbsolute, resolve } from "node:path";
 import * as core from "@actions/core";
 import { type } from "arktype";
-import { AgentName, type AuthorPermission, Effort, type PayloadEvent } from "../external.ts";
+import type { AuthorPermission, PayloadEvent } from "../external.ts";
 import packageJson from "../package.json" with { type: "json" };
 import type { RepoSettings } from "./runContext.ts";
 import { validateCompatibility } from "./versioning.ts";
 
 // tool permission enum types for inputs
-const ToolPermissionInput = type.enumerated("disabled", "enabled");
 const ShellPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 const PushPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 
@@ -17,16 +16,14 @@ const PushPermissionInput = type.enumerated("disabled", "restricted", "enabled")
 export const JsonPayload = type({
   "~pullfrog": "true",
   version: "string",
-  "agent?": AgentName.or("undefined"),
+  "model?": "string | undefined",
   prompt: "string",
   "triggerer?": "string | undefined",
 
   "eventInstructions?": "string",
   "event?": "object",
-  "effort?": Effort.or("undefined"),
   "timeout?": "string | undefined",
   "progressCommentId?": "string | undefined",
-  "debug?": "boolean | undefined",
 });
 
 // permission levels that indicate collaborator status (have push access)
@@ -45,11 +42,8 @@ function isCollaborator(event: PayloadEvent): boolean {
 // if included, must match the type - so we need to explicitly allow undefined.
 export const Inputs = type({
   prompt: "string",
-  "effort?": Effort.or("undefined"),
+  "model?": type.string.or("undefined"),
   "timeout?": type.string.or("undefined"),
-  "agent?": AgentName.or("undefined"),
-  "web?": ToolPermissionInput.or("undefined"),
-  "search?": ToolPermissionInput.or("undefined"),
   "push?": PushPermissionInput.or("undefined"),
   "shell?": ShellPermissionInput.or("undefined"),
   "cwd?": type.string.or("undefined"),
@@ -57,10 +51,6 @@ export const Inputs = type({
 });
 
 export type Inputs = typeof Inputs.infer;
-
-function isAgentName(value: unknown): value is AgentName {
-  return typeof value === "string" && AgentName(value) instanceof type.errors === false;
-}
 
 function isPayloadEvent(value: unknown): value is PayloadEvent {
   return typeof value === "object" && value !== null && "trigger" in value;
@@ -99,12 +89,9 @@ export function resolvePromptInput(): ResolvedPromptInput {
 
 function resolveNonPromptInputs() {
   return Inputs.omit("prompt").assert({
-    effort: core.getInput("effort") || undefined,
+    model: core.getInput("model") || undefined,
     timeout: core.getInput("timeout") || undefined,
-    agent: core.getInput("agent") || undefined,
     cwd: core.getInput("cwd") || undefined,
-    web: core.getInput("web") || undefined,
-    search: core.getInput("search") || undefined,
     push: core.getInput("push") || undefined,
     shell: core.getInput("shell") || undefined,
   });
@@ -126,18 +113,11 @@ export function resolvePayload(
 
   const inputs = resolveNonPromptInputs();
 
-  // validate agent name
-  const agent: AgentName | undefined =
-    inputs.agent !== undefined && isAgentName(inputs.agent) ? inputs.agent : undefined;
-
   // resolve event - use type guard for jsonPayload.event, fallback to unknown trigger
   const rawEvent = jsonPayload?.event;
   const event: PayloadEvent = isPayloadEvent(rawEvent) ? rawEvent : { trigger: "unknown" };
 
-  // resolve agent from jsonPayload with type guard
-  const jsonAgent = jsonPayload?.agent;
-  const resolvedAgent: AgentName | undefined =
-    agent ?? (jsonAgent !== undefined && isAgentName(jsonAgent) ? jsonAgent : undefined);
+  const model = jsonPayload?.model ?? inputs.model ?? repoSettings.model ?? undefined;
 
   // determine shell permission - strictest setting wins
   // precedence: disabled > restricted > enabled
@@ -166,7 +146,7 @@ export function resolvePayload(
   return {
     "~pullfrog": true as const,
     version: jsonPayload?.version ?? packageJson.version,
-    agent: resolvedAgent,
+    model,
     prompt,
     triggerer:
       jsonPayload?.triggerer ??
@@ -174,15 +154,11 @@ export function resolvePayload(
       (!isPullfrog(process.env.GITHUB_ACTOR) ? process.env.GITHUB_ACTOR : undefined),
     eventInstructions: jsonPayload?.eventInstructions,
     event,
-    effort: inputs.effort ?? jsonPayload?.effort ?? "auto",
     timeout: inputs.timeout ?? jsonPayload?.timeout,
     cwd: resolveCwd(inputs.cwd),
     progressCommentId: jsonPayload?.progressCommentId,
-    debug: jsonPayload?.debug,
 
     // permissions: inputs > repoSettings > fallbacks
-    web: inputs.web ?? repoSettings.web ?? "enabled",
-    search: inputs.search ?? repoSettings.search ?? "enabled",
     push: inputs.push ?? repoSettings.push ?? "restricted",
     shell: resolvedShell,
   };

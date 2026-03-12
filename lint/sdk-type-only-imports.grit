@@ -4,11 +4,7 @@
 // Note: This rule only catches single-specifier imports; for multi-specifier imports,
 // the noUnusedImports rule will flag unused runtime imports
 
-or {
-  `import { $specifiers } from "@anthropic-ai/claude-agent-sdk"`,
-  `import { $specifiers } from "@openai/codex-sdk"`,
-  `import { $specifiers } from "@opencode-ai/sdk"`
-} as $import where {
+`import { $specifiers } from "@opencode-ai/sdk"` as $import where {
   register_diagnostic(
     span = $import,
     message = "SDK packages must use `import type` only. Use CLI invocation instead of runtime SDK usage."

@@ -7,7 +7,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -27,22 +27,23 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        agent: [claude, codex, cursor, gemini, opencode]
+        agent: [opentoad]
         test:
-          [file-read-write, mcpmerge, no-native-file, nobash, restricted, smoke]
+          [mcpmerge, nobash, restricted, smoke]
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
       OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
-      OPENCODE_MODEL_MINI: ${{ vars.OPENCODE_MODEL_MINI }}
-      OPENCODE_MODEL_MAX: ${{ vars.OPENCODE_MODEL_MAX }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -63,18 +64,12 @@ jobs:
       matrix:
         test:
           [
-            delegate,
-            delegate-effort,
-            delegate-multi,
-            file-traversal,
             git-permissions,
             githooks,
             pkg-json-scripts,
-            proc-sandbox,
             push-disabled,
             push-enabled,
             push-restricted,
-            symlink-traversal,
             timeout,
             token-exfil,
           ]
@@ -82,7 +77,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

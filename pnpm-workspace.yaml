@@ -1,6 +1,1 @@
 packages: [] # prevent looking upwards for the workspace root
-
-packageExtensions:
-  "@anthropic-ai/claude-agent-sdk":
-    dependencies:
-      "@anthropic-ai/sdk": "*"

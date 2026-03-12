@@ -5,30 +5,6 @@ import { type } from "arktype";
 import { FastMCP } from "fastmcp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execute, tool } from "./shared.ts";
-import { buildSubagentInstructions } from "./subagent.ts";
-
-describe("buildSubagentInstructions", () => {
-  it("includes system preamble, resolved context, and orchestrator prompt", () => {
-    const prompt = "Read file.ts and fix the type error.";
-    const ctx = {
-      repo: { owner: "test-owner", name: "test-repo" },
-    } as any;
-    const instructions = buildSubagentInstructions({
-      ctx,
-      label: "test-task",
-      instructions: prompt,
-    });
-    expect(instructions.user).toBe(prompt);
-    expect(instructions.full).toContain("[CONTEXT]");
-    expect(instructions.full).toContain("test-owner/test-repo");
-    expect(instructions.full).toContain("subagent_label: test-task");
-    expect(instructions.full).toContain("set_output");
-    expect(instructions.full).toContain(prompt);
-  });
-});
-
-// ─── per-server tool isolation integration test ─────────────────────────
-// demonstrates the architecture: orchestrator and subagent get separate servers
 
 function getRandomPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -59,44 +35,27 @@ function mockTool(name: string, description: string) {
   });
 }
 
-describe("per-server tool isolation - integration", () => {
-  let orchestratorServer: FastMCP;
-  let subagentServer: FastMCP;
-  let orchestratorUrl: string;
-  let subagentUrl: string;
+describe("MCP server tool registration - integration", () => {
+  let server: FastMCP;
+  let serverUrl: string;
   const clients: Client[] = [];
 
   beforeAll(async () => {
-    const [orchestratorPort, subagentPort] = await Promise.all([getRandomPort(), getRandomPort()]);
-    orchestratorUrl = `http://127.0.0.1:${orchestratorPort}/mcp`;
-    subagentUrl = `http://127.0.0.1:${subagentPort}/mcp`;
+    const port = await getRandomPort();
+    serverUrl = `http://127.0.0.1:${port}/mcp`;
 
-    // orchestrator gets ALL tools (common + delegation + remote mutation)
-    orchestratorServer = new FastMCP({ name: "orchestrator", version: "0.0.1" });
-    orchestratorServer.addTool(mockTool("file_read", "read a file"));
-    orchestratorServer.addTool(mockTool("git", "run git commands"));
-    orchestratorServer.addTool(mockTool("set_output", "set output"));
-    orchestratorServer.addTool(mockTool("select_mode", "select a mode"));
-    orchestratorServer.addTool(mockTool("delegate", "delegate a task"));
-    orchestratorServer.addTool(mockTool("ask_question", "ask a question"));
-    orchestratorServer.addTool(mockTool("push_branch", "push branch"));
-    orchestratorServer.addTool(mockTool("create_pull_request", "create PR"));
+    server = new FastMCP({ name: "test-server", version: "0.0.1" });
+    server.addTool(mockTool("shell", "run shell commands"));
+    server.addTool(mockTool("git", "run git commands"));
+    server.addTool(mockTool("set_output", "set output"));
+    server.addTool(mockTool("select_mode", "select a mode"));
+    server.addTool(mockTool("push_branch", "push branch"));
+    server.addTool(mockTool("create_pull_request", "create PR"));
 
-    // subagent gets ONLY file ops, shell, read-only GitHub, upload, set_output
-    subagentServer = new FastMCP({ name: "subagent", version: "0.0.1" });
-    subagentServer.addTool(mockTool("file_read", "read a file"));
-    subagentServer.addTool(mockTool("set_output", "set output"));
-
-    await Promise.all([
-      orchestratorServer.start({
-        transportType: "httpStream",
-        httpStream: { port: orchestratorPort, host: "127.0.0.1", endpoint: "/mcp" },
-      }),
-      subagentServer.start({
-        transportType: "httpStream",
-        httpStream: { port: subagentPort, host: "127.0.0.1", endpoint: "/mcp" },
-      }),
-    ]);
+    await server.start({
+      transportType: "httpStream",
+      httpStream: { port, host: "127.0.0.1", endpoint: "/mcp" },
+    });
   });
 
   afterAll(async () => {
@@ -107,45 +66,20 @@ describe("per-server tool isolation - integration", () => {
         // best-effort cleanup
       }
     }
-    await Promise.all([orchestratorServer.stop(), subagentServer.stop()]);
+    await server.stop();
   });
 
-  it("orchestrator sees all tools including delegation and mutation", async () => {
-    const client = await connectMcpClient(orchestratorUrl);
+  it("server exposes all registered tools", async () => {
+    const client = await connectMcpClient(serverUrl);
     clients.push(client);
     const result = await client.listTools();
     const names = result.tools.map((t) => t.name);
     expect(names).toContain("select_mode");
-    expect(names).toContain("delegate");
-    expect(names).toContain("ask_question");
     expect(names).toContain("push_branch");
     expect(names).toContain("create_pull_request");
-    expect(names).toContain("file_read");
+    expect(names).toContain("shell");
     expect(names).toContain("git");
     expect(names).toContain("set_output");
-    expect(names.length).toBe(8);
-  });
-
-  it("subagent cannot see orchestrator-only tools", async () => {
-    const client = await connectMcpClient(subagentUrl);
-    clients.push(client);
-    const result = await client.listTools();
-    const names = result.tools.map((t) => t.name);
-    expect(names).not.toContain("select_mode");
-    expect(names).not.toContain("delegate");
-    expect(names).not.toContain("ask_question");
-    expect(names).not.toContain("push_branch");
-    expect(names).not.toContain("create_pull_request");
-    expect(names).not.toContain("git");
-  });
-
-  it("subagent sees only file ops, read-only tools, and set_output", async () => {
-    const client = await connectMcpClient(subagentUrl);
-    clients.push(client);
-    const result = await client.listTools();
-    const names = result.tools.map((t) => t.name);
-    expect(names).toContain("file_read");
-    expect(names).toContain("set_output");
-    expect(names.length).toBe(2);
+    expect(names.length).toBe(6);
   });
 });

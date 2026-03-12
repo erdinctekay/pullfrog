@@ -6,8 +6,8 @@ import { defineFixture } from "../utils.ts";
  * MCP merge test - validates repo-level MCP servers merge correctly with gh_pullfrog.
  *
  * Uses GITHUB_REPOSITORY=pullfrog/test-repo-mcp whose robin-mcp reads a secret
- * from /tmp/pullfrog-mcp-secret/secret.txt (outside the repo, unreachable via
- * file_read) and exposes it via get_test_value. The runner writes the secret
+ * from /tmp/pullfrog-mcp-secret/secret.txt (outside the repo) and exposes it
+ * via get_test_value. The runner writes the secret
  * there via repoSetup before the agent starts. Runs with shell disabled.
  */
 
@@ -17,7 +17,6 @@ const fixture = defineFixture(
   {
     prompt: `Call the get_test_value tool from the robinMCP server. It returns a JSON object with a "value" field. Extract that inner value string and pass it to set_output.`,
     shell: "disabled",
-    effort: "mini",
   },
   { localOnly: true }
 );

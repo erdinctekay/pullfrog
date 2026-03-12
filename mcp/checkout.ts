@@ -183,7 +183,7 @@ export async function checkoutPrBranch(
   pullNumber: number,
   params: CheckoutPrBranchParams
 ): Promise<CheckoutPrBranchResult> {
-  const { octokit, owner, name, gitToken, toolState, shell } = params;
+  const { octokit, owner, name, gitToken, toolState } = params;
   log.info(`» checking out PR #${pullNumber}...`);
 
   // fetch PR metadata
@@ -241,24 +241,22 @@ export async function checkoutPrBranch(
   } else {
     // fetch base branch so origin/<base> exists for diff operations
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", [...deepenArgs, "--no-tags", "origin", baseBranch], {
+    await $git("fetch", [...deepenArgs, "--no-tags", "origin", baseBranch], {
       token: gitToken,
-      restricted: shell !== "enabled",
     });
 
     // checkout base branch first to avoid "refusing to fetch into current branch" error
     // -B creates or resets the branch to match origin/baseBranch
-    $("git", ["checkout", "-B", baseBranch, `origin/${baseBranch}`]);
+    $("git", ["checkout", "-B", baseBranch, `origin/${baseBranch}`], { log: false });
 
     // fetch PR branch using pull/{n}/head refspec (works for both fork and same-repo PRs)
     log.debug(`» fetching PR #${pullNumber} (${localBranch})...`);
-    $git("fetch", ["--no-tags", "origin", `pull/${pullNumber}/head:${localBranch}`], {
+    await $git("fetch", ["--no-tags", "origin", `pull/${pullNumber}/head:${localBranch}`], {
       token: gitToken,
-      restricted: shell !== "enabled",
     });
 
     // checkout the branch
-    $("git", ["checkout", localBranch]);
+    $("git", ["checkout", localBranch], { log: false });
     log.debug(`» checked out PR #${pullNumber}`);
   }
 
@@ -266,9 +264,8 @@ export async function checkoutPrBranch(
   // fetch if we skipped checkout (already on branch) - otherwise already fetched above
   if (alreadyOnBranch) {
     log.debug(`» fetching base branch (${baseBranch})...`);
-    $git("fetch", [...deepenArgs, "--no-tags", "origin", baseBranch], {
+    await $git("fetch", [...deepenArgs, "--no-tags", "origin", baseBranch], {
       token: gitToken,
-      restricted: shell !== "enabled",
     });
   }
 
@@ -277,7 +274,7 @@ export async function checkoutPrBranch(
   // fork remotes. This ensures fork PRs can push even when checkout_pr is called after setupGit.
   if (isFork) {
     const remoteName = `pr-${pullNumber}`;
-    // SECURITY: fork URL without token - auth is injected via GIT_CONFIG_PARAMETERS in $git()
+    // SECURITY: fork URL without token - auth is injected via GIT_ASKPASS in $git()
     const forkUrl = `https://github.com/${headRepo.full_name}.git`;
 
     // add fork as a named remote (suppress logging to avoid "error: remote already exists" spam)
@@ -291,9 +288,9 @@ export async function checkoutPrBranch(
     }
 
     // set branch push config so `git push` knows where to push
-    $("git", ["config", `branch.${localBranch}.pushRemote`, remoteName]);
+    $("git", ["config", `branch.${localBranch}.pushRemote`, remoteName], { log: false });
     // set merge ref so git knows the remote branch name (may differ from local)
-    $("git", ["config", `branch.${localBranch}.merge`, `refs/heads/${headBranch}`]);
+    $("git", ["config", `branch.${localBranch}.merge`, `refs/heads/${headBranch}`], { log: false });
     log.debug(`» configured branch '${localBranch}' to push to '${remoteName}/${headBranch}'`);
 
     // warn if maintainer can't modify (push will likely fail)
@@ -305,8 +302,8 @@ export async function checkoutPrBranch(
     }
   } else {
     // for same-repo PRs, push to origin
-    $("git", ["config", `branch.${localBranch}.pushRemote`, "origin"]);
-    $("git", ["config", `branch.${localBranch}.merge`, `refs/heads/${headBranch}`]);
+    $("git", ["config", `branch.${localBranch}.pushRemote`, "origin"], { log: false });
+    $("git", ["config", `branch.${localBranch}.merge`, `refs/heads/${headBranch}`], { log: false });
   }
 
   // update toolState

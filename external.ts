@@ -4,57 +4,20 @@
  * Other files in action/ re-export from this file for backward compatibility.
  */
 
-import { type } from "arktype";
-
 // mcp name constant
 export const ghPullfrogMcpName = "gh_pullfrog";
 
-export interface AgentManifest {
-  displayName: string;
-  /** empty array means accepts any *API_KEY* env var */
-  apiKeyNames: string[];
-  url: string;
-}
-
-// agent manifest - static metadata about available agents
-export const agentsManifest = {
-  claude: {
-    displayName: "Claude Code",
-    apiKeyNames: ["ANTHROPIC_API_KEY"],
-    url: "https://claude.com/claude-code",
-  },
-  codex: {
-    displayName: "Codex CLI",
-    apiKeyNames: ["OPENAI_API_KEY"],
-    url: "https://platform.openai.com/docs/guides/codex",
-  },
-  cursor: {
-    displayName: "Cursor CLI",
-    apiKeyNames: ["CURSOR_API_KEY"],
-    url: "https://cursor.com/",
-  },
-  gemini: {
-    displayName: "Gemini CLI",
-    apiKeyNames: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-    url: "https://ai.google.dev/gemini-api/docs",
-  },
-  opencode: {
-    displayName: "OpenCode",
-    apiKeyNames: [],
-    url: "https://opencode.ai",
-  },
-} as const satisfies Record<string, AgentManifest>;
-
-// agent name type - union of agent slugs
-export type AgentName = keyof typeof agentsManifest;
-export const AgentName = type.enumerated(...(Object.keys(agentsManifest) as AgentName[]));
-
-export type AgentApiKeyName = (typeof agentsManifest)[AgentName]["apiKeyNames"][number];
-
-// effort level type - controls model selection and thinking level
-// mini = fast/minimal, auto = balanced/default, max = maximum capability
-export const Effort = type.enumerated("mini", "auto", "max");
-export type Effort = typeof Effort.infer;
+// model alias registry lives in models.ts — re-exported here for shared access
+export type { ModelAlias, ModelProvider, ProviderConfig } from "./models.ts";
+export {
+  getModelEnvVars,
+  getModelProvider,
+  modelAliases,
+  parseModel,
+  providers,
+  resolveCliModel,
+  resolveModelSlug,
+} from "./models.ts";
 
 // tool permission types shared with server dispatch
 export type ToolPermission = "disabled" | "enabled";
@@ -280,8 +243,8 @@ export interface WriteablePayload {
   "~pullfrog": true;
   /** semantic version of the payload to ensure compatibility */
   version: string;
-  /** agent slug identifier (e.g., "claude", "codex", "gemini") */
-  agent?: AgentName | undefined;
+  /** provider/model slug (e.g. "anthropic/claude-opus") */
+  model?: string | undefined;
   /** the user's actual request (body if @pullfrog tagged) */
   prompt: string;
   /** github username of the human who triggered this workflow run */
@@ -290,16 +253,12 @@ export interface WriteablePayload {
   eventInstructions?: string | undefined;
   /** event data from webhook payload - discriminated union based on trigger field */
   event: PayloadEvent;
-  /** effort level for model selection (mini, auto, max) - defaults to "auto" */
-  effort?: Effort | undefined;
   /** timeout for agent run (e.g., "10m", "1h30m") - defaults to "1h" */
   timeout?: string | undefined;
   /** working directory for the agent */
   cwd?: string | undefined;
   /** pre-created progress comment ID for updating status */
   progressCommentId?: string | undefined;
-  /** whether debug mode is enabled (LOG_LEVEL=debug) */
-  debug?: boolean | undefined;
 }
 
 // immutable payload type for agent execution

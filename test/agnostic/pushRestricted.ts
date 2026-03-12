@@ -33,7 +33,6 @@ Call set_output with a JSON object:
 }`,
     push: "restricted",
     shell: "enabled",
-    effort: "auto",
     timeout: "5m",
   },
   { localOnly: true }
@@ -66,6 +65,5 @@ export const test: TestRunnerOptions = {
   name: "push-restricted",
   fixture,
   validator,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
   tags: ["agnostic"],
 };

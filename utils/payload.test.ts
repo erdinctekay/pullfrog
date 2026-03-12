@@ -8,12 +8,6 @@ describe("Inputs schema", () => {
   });
 
   it.each([
-    ["web", "enabled"],
-    ["web", "disabled"],
-    ["web", undefined],
-    ["search", "enabled"],
-    ["search", "disabled"],
-    ["search", undefined],
     ["push", "enabled"],
     ["push", "disabled"],
     ["push", undefined],
@@ -21,31 +15,19 @@ describe("Inputs schema", () => {
     ["shell", "restricted"],
     ["shell", "disabled"],
     ["shell", undefined],
-    ["effort", "mini"],
-    ["effort", "auto"],
-    ["effort", "max"],
     ["timeout", "10m"],
     ["timeout", "1h30m"],
     ["timeout", "30s"],
     ["timeout", undefined],
-    ["agent", "claude"],
-    ["agent", "codex"],
-    ["agent", "cursor"],
-    ["agent", "gemini"],
-    ["agent", "opencode"],
-    // ['agent', null],
   ] as const)("should accept %s for %s", (prop, value) => {
     const input = { prompt: "test", [prop]: value };
     expect(() => Inputs.assert(input)).not.toThrow();
   });
 
-  it.each([["web"], ["search"], ["push"], ["shell"], ["effort"], ["agent"]] as const)(
-    "should reject invalid %s values",
-    (prop) => {
-      const input = { prompt: "test", [prop]: "invalid" as any };
-      expect(() => Inputs.assert(input)).toThrow();
-    }
-  );
+  it.each([["push"], ["shell"]] as const)("should reject invalid %s values", (prop) => {
+    const input = { prompt: "test", [prop]: "invalid" as any };
+    expect(() => Inputs.assert(input)).toThrow();
+  });
 });
 
 describe("JsonPayload schema", () => {
@@ -62,30 +44,13 @@ describe("JsonPayload schema", () => {
   });
 
   it.each([
-    ["agent", "claude"],
-    ["agent", "codex"],
-    ["agent", "cursor"],
-    ["agent", "gemini"],
-    ["agent", "opencode"],
-    ["effort", "mini"],
-    ["effort", "auto"],
-    ["effort", "max"],
     ["timeout", "10m"],
     ["timeout", "1h30m"],
     ["timeout", "30s"],
+    ["model", "anthropic/claude-opus"],
     ["event", { trigger: "unknown" }],
   ] as const)("should accept optional %s with value %s", (prop, value) => {
     const input = { "~pullfrog": true, version: "1.2.3", prompt: "test prompt", [prop]: value };
     expect(() => JsonPayload.assert(input)).not.toThrow();
-  });
-
-  it.each([["agent"], ["effort"]] as const)("should reject invalid %s values", (prop) => {
-    const input = {
-      "~pullfrog": true,
-      version: "1.2.3",
-      prompt: "test prompt",
-      [prop]: "invalid" as any,
-    };
-    expect(() => JsonPayload.assert(input)).toThrow();
   });
 });

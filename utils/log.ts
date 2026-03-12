@@ -8,7 +8,7 @@ import { table } from "table";
 import type { AgentUsage } from "../agents/shared.ts";
 import { isGitHubActions, isInsideDocker } from "./globals.ts";
 
-// --- subagent log prefix via AsyncLocalStorage ---
+// --- log prefix via AsyncLocalStorage ---
 
 type LogContext = { prefix: string };
 

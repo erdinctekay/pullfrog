@@ -21,14 +21,7 @@ import { setupTestRepo } from "./utils/setup.ts";
  */
 export const playFixture = defineFixture(
   {
-    prompt: `Select Plan mode, then delegate a single task:
-
-tasks: [
-  { label: "tool-audit", instructions: "List every MCP tool you have access to. Call set_output with a JSON array of all tool names you can see.", effort: "mini" }
-]
-
-After it completes, call set_output with the subagent's result verbatim.`,
-    effort: "mini",
+    prompt: `List every MCP tool you have access to. Call set_output with a JSON array of all tool names you can see.`,
   },
   { localOnly: true }
 );
@@ -153,9 +146,7 @@ Examples:
       .join(" ");
     const nodeCmd = `node play.ts ${passArgs}`;
 
-    // use agent-specific volume to avoid conflicts when running in parallel
-    const agentOverride = process.env.AGENT_OVERRIDE ?? "default";
-    const volumeName = `pullfrog-action-node-modules-${agentOverride}`;
+    const volumeName = "pullfrog-action-node-modules";
 
     const result = runInDocker({
       actionDir: __dirname,

@@ -64,7 +64,6 @@ const fixture = defineFixture(
   {
     prompt: PROMPT,
     shell: "disabled",
-    effort: "mini",
     timeout: "5m",
   },
   { localOnly: true }
@@ -107,7 +106,6 @@ export const test: TestRunnerOptions = {
   name: "git-flag-injection",
   fixture,
   validator,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
   tags: ["adhoc", "security"],
-  agents: ["claude"],
+  agents: ["opentoad"],
 };

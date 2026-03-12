@@ -4,26 +4,29 @@
  */
 
 export type {
-  AgentApiKeyName,
-  AgentManifest,
   AuthorPermission,
+  ModelAlias,
+  ModelProvider,
   Payload,
   PayloadEvent,
+  ProviderConfig,
   PushPermission,
   ShellPermission,
   ToolPermission,
   WriteablePayload,
 } from "../external.ts";
 export {
-  AgentName,
-  agentsManifest,
-  Effort,
+  getModelEnvVars,
+  getModelProvider,
   ghPullfrogMcpName,
+  modelAliases,
+  parseModel,
+  providers,
+  resolveModelSlug,
 } from "../external.ts";
 export type { Mode } from "../modes.ts";
 export { modes } from "../modes.ts";
 export type {
-  AgentInfo,
   BuildPullfrogFooterParams,
   WorkflowRunFooterInfo,
 } from "../utils/buildPullfrogFooter.ts";

@@ -1,9 +1,9 @@
 import { type } from "arktype";
-import type { Agent } from "../agents/index.ts";
 import { apiFetch } from "../utils/apiFetch.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
+import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { type OctokitWithPlugins, parseRepoContext } from "../utils/github.ts";
 import { retry } from "../utils/retry.ts";
 import type { ToolContext } from "./server.ts";
@@ -46,31 +46,24 @@ async function updatePlanCommentId(ctx: ToolContext, planCommentNodeId: string):
 export const LEAPING_INTO_ACTION_PREFIX = "Leaping into action";
 
 interface BuildCommentFooterParams {
-  agent: Agent | undefined;
   octokit?: OctokitWithPlugins | undefined;
   customParts?: string[] | undefined;
 }
 
-async function buildCommentFooter({
-  agent,
-  octokit,
-  customParts,
-}: BuildCommentFooterParams): Promise<string> {
+async function buildCommentFooter(params: BuildCommentFooterParams): Promise<string> {
   const repoContext = parseRepoContext();
   const runId = process.env.GITHUB_RUN_ID
     ? Number.parseInt(process.env.GITHUB_RUN_ID, 10)
     : undefined;
 
   let jobId: string | undefined;
-  if (runId && octokit) {
+  if (runId && params.octokit) {
     try {
-      // fetch jobs to get the job URL for deep linking
-      const { data: jobs } = await octokit.rest.actions.listJobsForWorkflowRun({
+      const { data: jobs } = await params.octokit.rest.actions.listJobsForWorkflowRun({
         owner: repoContext.owner,
         repo: repoContext.name,
         run_id: runId,
       });
-      // use the first job's ID available
       jobId = jobs.jobs[0]?.id.toString();
     } catch {
       // fall back to computed URL from runId alone
@@ -79,17 +72,13 @@ async function buildCommentFooter({
 
   const footerParams = {
     triggeredBy: true,
-    agent: {
-      displayName: agent?.displayName || "Unknown agent",
-      url: agent?.url || "https://pullfrog.com",
-    },
     workflowRun: runId
       ? { owner: repoContext.owner, repo: repoContext.name, runId, jobId }
       : undefined,
   };
 
-  if (customParts && customParts.length > 0) {
-    return buildPullfrogFooter({ ...footerParams, customParts });
+  if (params.customParts && params.customParts.length > 0) {
+    return buildPullfrogFooter({ ...footerParams, customParts: params.customParts });
   }
   return buildPullfrogFooter(footerParams);
 }
@@ -105,13 +94,12 @@ function buildImplementPlanLink(
 }
 
 export interface AddFooterCtx {
-  agent?: Agent | undefined;
   octokit?: OctokitWithPlugins | undefined;
 }
 
 export async function addFooter(ctx: AddFooterCtx, body: string): Promise<string> {
-  const bodyWithoutFooter = stripExistingFooter(body);
-  const footer = await buildCommentFooter({ agent: ctx.agent, octokit: ctx.octokit });
+  const bodyWithoutFooter = stripExistingFooter(fixDoubleEscapedString(body));
+  const footer = await buildCommentFooter({ octokit: ctx.octokit });
   return `${bodyWithoutFooter}${footer}`;
 }
 
@@ -238,7 +226,6 @@ export async function reportProgress(
         : undefined;
     const bodyWithoutFooter = stripExistingFooter(body);
     const footer = await buildCommentFooter({
-      agent: ctx.agent,
       octokit: ctx.octokit,
       customParts,
     });
@@ -276,7 +263,6 @@ export async function reportProgress(
 
     const bodyWithoutFooter = stripExistingFooter(body);
     const footer = await buildCommentFooter({
-      agent: ctx.agent,
       octokit: ctx.octokit,
       customParts,
     });
@@ -337,7 +323,6 @@ export async function reportProgress(
     ];
     const bodyWithoutFooter = stripExistingFooter(body);
     const footer = await buildCommentFooter({
-      agent: ctx.agent,
       octokit: ctx.octokit,
       customParts,
     });

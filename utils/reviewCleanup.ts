@@ -82,11 +82,10 @@ async function dispatchFollowUpReReview(ctx: ToolContext, reviewedSha: string): 
   const payload: WriteablePayload = {
     "~pullfrog": true,
     version: ctx.payload.version,
-    agent: ctx.payload.agent,
+    model: ctx.payload.model,
     prompt: "",
     eventInstructions: RE_REVIEW_PREAMBLE,
     event,
-    effort: "max",
   };
 
   await ctx.octokit.rest.actions.createWorkflowDispatch({

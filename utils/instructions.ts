@@ -84,8 +84,6 @@ function buildEventMetadata(event: PayloadEvent): string {
 }
 
 function getShellInstructions(shell: ResolvedPayload["shell"]): string {
-  const backgroundInstructions = `For long-running processes (dev servers, watchers), use \`shell({ command, background: true })\` which returns a handle. Use \`${ghPullfrogMcpName}/kill_background\` to stop background processes by handle.`;
-
   switch (shell) {
     case "disabled":
       return `### Shell commands
@@ -94,11 +92,11 @@ Shell command execution is DISABLED. Do not attempt to run shell commands.`;
     case "restricted":
       return `### Shell commands
 
-Use the \`${ghPullfrogMcpName}/shell\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell tool - it is disabled for security. ${backgroundInstructions}`;
+Use the \`${ghPullfrogMcpName}/shell\` MCP tool for all shell command execution. This tool provides a secure environment with filtered credentials. Do NOT use any native shell tool — it is disabled for security. For long-running processes (dev servers, watchers), use \`shell({ command, background: true })\`. Use \`${ghPullfrogMcpName}/kill_background\` to stop background processes.`;
     case "enabled":
       return `### Shell commands
 
-Use your native shell tool for shell command execution. ${backgroundInstructions}`;
+Use your native shell tool for shell command execution.`;
     default: {
       const _exhaustive: never = shell;
       return _exhaustive satisfies never;
@@ -109,13 +107,7 @@ Use your native shell tool for shell command execution. ${backgroundInstructions
 function getFileInstructions(): string {
   return `### File operations
 
-Use the \`${ghPullfrogMcpName}\` MCP file tools for all file operations. Do NOT use any native file read/write/edit tools — they are disabled. Available tools:
-- \`file_read\` / \`file_write\` — read and write files
-- \`file_edit\` — targeted text replacement (prefer over read-then-write for existing files)
-- \`file_delete\` — remove files
-- \`list_directory\` — list directory contents
-
-All file tools enforce repository-scoped access and prevent modifications to .git/.`;
+Use your native file read/write/edit tools for all file operations.`;
 }
 
 function getStandaloneModeInstructions(
@@ -135,7 +127,7 @@ function getStandaloneModeInstructions(
 You are running as a step in a user-defined CI workflow. ${outputRequirement}`;
 }
 
-// shared system prompt body used by both orchestrator and subagent instructions.
+// shared system prompt body.
 // the priority order and YOUR TASK section differ — callers compose those separately.
 interface SystemPromptContext {
   shell: ResolvedPayload["shell"];
@@ -195,7 +187,7 @@ Rules:
 
 ### GitHub
 
-Use MCP tools from ${ghPullfrogMcpName} for all GitHub operations. Never use the \`gh\` CLI — it is not authenticated and will fail. The MCP tools handle authentication, enforce permissions, and integrate with the delegation system.
+Use MCP tools from ${ghPullfrogMcpName} for all GitHub operations. Never use the \`gh\` CLI — it is not authenticated and will fail. The MCP tools handle authentication and enforce permissions.
 
 ${getShellInstructions(ctx.shell)}
 
@@ -352,51 +344,26 @@ ${ctx.contextSections}`;
 export function resolveInstructions(ctx: InstructionsContext): ResolvedInstructions {
   const inputs = buildCommonInputs(ctx);
 
-  const orchestratorTaskSection = `**Required!** You are an orchestrator. You do not perform tasks directly — you delegate to specialized subagents and handle all state-mutating and user-facing GitHub operations yourself.
+  const orchestratorTaskSection = `You execute tasks directly using your native tools and the ${ghPullfrogMcpName} MCP server.
 
 ### Step 1: Select a mode
 
-Call \`${ghPullfrogMcpName}/select_mode\` with the appropriate mode name. This returns **your workflow** — a step-by-step playbook you must follow, including:
-- **Pre-delegation actions** you must perform (checkout, branch creation, setup)
-- **Delegation instructions** (how to craft subagent prompts, what to include)
-- **Post-delegation actions** you must perform (push, PR creation, review submission, progress reporting)
+Call \`${ghPullfrogMcpName}/select_mode\` with the appropriate mode name. This returns **your workflow** — a step-by-step playbook you must follow.
 
-**Follow the returned guidance as your primary instruction set.** Do not improvise — the guidance defines what you do vs. what subagents do.
+**Follow the returned guidance as your primary instruction set.** Do not improvise — the guidance defines the exact steps.
 
 Available modes:
 ${ctx.modes.map((m) => `- "${m.name}": ${m.description}`).join("\n")}
 
-### Step 2: Delegate
+### Step 2: Execute
 
-Call \`${ghPullfrogMcpName}/delegate\` to fan out research, local coding tasks, and codebase investigations to subagents. Pass a \`tasks\` array. Each task has:
-- \`label\`: Short identifier (e.g. "frontend-review", "schema-check"). Returned in results for matching.
-- \`instructions\`: The subagent receives ONLY this text (plus a system preamble with tool documentation and resolved context). Include everything it needs: file paths, constraints, conventions, and any context from the codebase or previous phases.
-- \`effort\` (optional): \`"mini"\`, \`"auto"\` (default), or \`"max"\`.
+Follow the mode guidance to complete the task. Use your native file and shell tools for local operations, and the ${ghPullfrogMcpName} MCP tools for GitHub/git operations.
 
-All tasks in a single \`delegate\` call run as **parallel subagents**. For sequential phases (plan → build → review), use separate \`delegate\` calls.
-
-To investigate questions, prefer \`${ghPullfrogMcpName}/ask_question\` over \`${ghPullfrogMcpName}/delegate\`.
-
-### Step 3: Post-delegation
-
-After each \`delegate\` call, you receive a \`results\` array — one entry per task with \`label\`, \`success\`, \`summary\` (from set_output), and \`stdoutFile\` (inspectable via \`${ghPullfrogMcpName}/file_read\`). Follow the post-delegation steps from the select_mode guidance.
-
-### Subagent capabilities
-
-Subagents have: file operations, shell (for local git, tests, builds), read-only GitHub queries, and upload_file. They do NOT have: \`git\`, \`checkout_pr\`, \`push_branch\`, \`create_pull_request\`, \`create_pull_request_review\`, \`report_progress\`, \`create_issue_comment\`, \`reply_to_review_comment\`, \`resolve_review_thread\`, \`delegate\`, \`ask_question\`, or any dependency/remote-mutating tools. All GitHub-write and state-mutating operations are your responsibility.
-
-### Prompt-crafting rules
-
-- Subagents have NO context beyond what you write. No repo instructions, no event data, no user prompt.
-- Specify exactly what information the subagent should return. The subagent's \`set_output\` call is your only way to get results back — be precise about what you need.
-- Instruct subagents to use shell for local git (\`git add\`, \`git commit\`, \`git diff\`, \`git status\`).
-- Never instruct a subagent to push, create PRs, submit reviews, or post comments.
-- For multi-phase flows, pass results from earlier phases into the next delegate call's prompts.
-- You do NOT need to instruct subagents to call \`set_output\` — the system preamble handles this.
+When done, call \`${ghPullfrogMcpName}/set_output\` with the final result. This makes it available as the GitHub Action output.
 
 ### No-action cases
 
-If the task clearly requires no work, skip delegation. Call \`${ghPullfrogMcpName}/report_progress\` directly to explain why no action is needed.`;
+If the task clearly requires no work, call \`${ghPullfrogMcpName}/report_progress\` directly to explain why no action is needed.`;
 
   const system = buildSystemPrompt({
     shell: ctx.payload.shell,

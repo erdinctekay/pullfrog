@@ -9,10 +9,9 @@ import { defineFixture } from "../utils.ts";
 
 const fixture = defineFixture(
   {
-    prompt: `Select the Build mode via select_mode, then delegate with mini effort. After that completes, select Review mode and delegate again with mini effort.
+    prompt: `Select the Build mode via select_mode. Then select Review mode via select_mode. Then read every file in the repository recursively.
 Finally call set_output with "TIMEOUT TEST COMPLETED".`,
     timeout: "5s",
-    effort: "mini",
   },
   { localOnly: true }
 );
@@ -28,6 +27,5 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   expectFailure: true,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
   tags: ["agnostic"],
 };

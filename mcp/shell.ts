@@ -113,7 +113,7 @@ function spawnShell(params: SpawnParams): ChildProcess {
     }
     // drop back to original user after PROC_CLEANUP so files aren't owned by root.
     // sudo is only needed for unshare; the actual command should run as the normal user
-    // to avoid ownership mismatches with file_write/file_edit (which run in the Node.js parent).
+    // to avoid ownership mismatches with files created by the Node.js parent process.
     const username = userInfo().username;
     const escaped = params.command.replace(/'/g, "'\\''");
     return spawn(

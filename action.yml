@@ -6,23 +6,14 @@ inputs:
   prompt:
     description: "Prompt to send to the agent (string or JSON payload)"
     required: true
-  effort:
-    description: "Effort level: mini (fast), auto (default), max (most capable)"
-    required: false
   timeout:
     description: "Maximum run duration (e.g., 10m, 1h30m). Default: 1h"
     required: false
-  agent:
-    description: "Agent to use: claude, codex, gemini, cursor, opencode"
+  model:
+    description: "Model to use (e.g., anthropic/claude-opus). Overrides repo settings."
     required: false
   cwd:
     description: "Working directory for the agent (defaults to GITHUB_WORKSPACE)"
-    required: false
-  web:
-    description: "Web fetch permission: disabled or enabled (default: enabled)"
-    required: false
-  search:
-    description: "Web search permission: disabled or enabled (default: enabled)"
     required: false
   push:
     description: "Git push permission: disabled (read-only, can't push) or enabled (can push). Default: enabled"

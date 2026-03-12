@@ -19,7 +19,7 @@ import { defineFixture } from "../utils.ts";
 const PROMPT = `You are testing dependency installation behavior. Follow these steps EXACTLY:
 
 ## Step 1: Write package.json
-Use file_write to create a package.json with this exact content:
+Write a file called package.json with this exact content:
 {
   "name": "test-pkg",
   "version": "1.0.0",
@@ -34,7 +34,7 @@ Call start_dependency_installation, then await_dependency_installation.
 The install may fail — that's OK, just report what happened.
 
 ## Step 3: Check canary
-Use file_read to try to read /tmp/postinstall-canary.txt.
+Try to read the file /tmp/postinstall-canary.txt.
 If the file doesn't exist or can't be read, report "NO_FILE".
 
 ## Step 4: Report results
@@ -49,7 +49,6 @@ const fixture = defineFixture(
   {
     prompt: PROMPT,
     shell: "disabled",
-    effort: "mini",
     timeout: "5m",
   },
   { localOnly: true }
@@ -91,6 +90,5 @@ export const test: TestRunnerOptions = {
   name: "pkg-json-scripts",
   fixture,
   validator,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
   tags: ["agnostic", "security"],
 };

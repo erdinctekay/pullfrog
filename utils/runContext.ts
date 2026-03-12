@@ -1,4 +1,4 @@
-import type { AgentName, PushPermission, ShellPermission, ToolPermission } from "../external.ts";
+import type { PushPermission, ShellPermission } from "../external.ts";
 import { apiFetch } from "./apiFetch.ts";
 import type { RepoContext } from "./github.ts";
 
@@ -10,12 +10,10 @@ export interface Mode {
 }
 
 export interface RepoSettings {
-  defaultAgent: AgentName | null;
+  model: string | null;
   modes: Mode[];
   setupScript: string | null;
   postCheckoutScript: string | null;
-  web: ToolPermission;
-  search: ToolPermission;
   push: PushPermission;
   shell: ShellPermission;
   prApproveEnabled: boolean;
@@ -28,12 +26,10 @@ export interface RunContext {
 }
 
 const defaultSettings: RepoSettings = {
-  defaultAgent: null,
+  model: null,
   modes: [],
   setupScript: null,
   postCheckoutScript: null,
-  web: "enabled",
-  search: "enabled",
   push: "restricted",
   shell: "restricted",
   prApproveEnabled: false,
@@ -87,7 +83,6 @@ export async function fetchRunContext(params: {
       settings: {
         ...defaultSettings,
         ...data.settings,
-        // ensure arrays are never undefined (API may omit new fields for existing repos)
         modes: data.settings?.modes ?? [],
         setupScript: data.settings?.setupScript ?? null,
         postCheckoutScript: data.settings?.postCheckoutScript ?? null,

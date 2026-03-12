@@ -15,7 +15,7 @@ export const ModeSchema = type({
   prompt: "string",
 });
 
-const reportProgressInstruction = `Use ${ghPullfrogMcpName}/report_progress to share progress and results. Continue calling it as you make progress - it will update the same comment. Never create additional comments manually.`;
+const reportProgressInstruction = `Use ${ghPullfrogMcpName}/report_progress to share progress and results. Continue calling it as you make progress — it will update the same comment. Never create additional comments manually.`;
 
 const dependencyInstallationStep = `If this task will require running tests, builds, linters, or CLI commands that need installed packages, call \`${ghPullfrogMcpName}/start_dependency_installation\` NOW. This is non-blocking and allows dependencies to install in the background while you continue. Later, call \`${ghPullfrogMcpName}/await_dependency_installation\` before running commands that need them. Skip this step if only reading code or answering questions.`;
 
@@ -117,6 +117,7 @@ Keep the progress comment extremely brief. The summary should be 1-2 sentences m
    - **Consider lifecycle**: Initialization, cleanup, error recovery. Are resources acquired before use? Released after? What happens on cancellation?
    - **Spot performance issues**: Nested loops over large collections, blocking I/O, memory leaks, excessive object creation in hot paths, inefficient array operations (e.g., repeated \`.find()\` in a loop).
    - **Check PR consistency**: Does the PR title/description match the actual code changes? Flag significant discrepancies.
+   - **Impact analysis**: Identify what was removed, renamed, or deprecated in the PR. Use grep to search the broader codebase for remaining references to those things in code, tests, docs, comments, and configs. Report stale references in the review body.
    - Do NOT stop at "this looks reasonable." Dig until you either find a problem or have concrete evidence there isn't one.
 
 4. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable: the author should need to change something in response. 2-3 sentences max. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 5. NO COMPLIMENTS. NO NITPICKING ABOUT CHANGES UNRELATED TO THE MAIN CHANGE. Non-actionable comments (praise, style preferences, minor optimizatfixons, documentation nits) must not be drafted.
@@ -144,7 +145,7 @@ ${permalinkTip}
    This shows the changes introduced by this push. Cross-reference with previous reviews (step 3) to confirm coverage of all unreviewed changes — the full PR diff fills any gaps.
    **If the diff command fails** (e.g., force-push rewrote history), fall back to reviewing the full PR diff from step 1.
 
-3. **FETCH PREVIOUS REVIEWS** - Use ${ghPullfrogMcpName}/list_pull_request_reviews to find previous Pullfrog reviews. For the most recent one, call ${ghPullfrogMcpName}/get_review_comments with the review ID to see specific line-level feedback. This lets you avoid repeating issues and assess whether prior feedback was addressed by the new commits.
+3. **FETCH PREVIOUS REVIEWS** - Use ${ghPullfrogMcpName}/list_pull_request_reviews to find previous Pullfrog reviews. For the most recent one, call ${ghPullfrogMcpName}/get_review_comments with the review ID to see specific line-level feedback. This lets you understand what feedback was already given.
 
 4. **ANALYZE** - Read the incremental diff to understand the new changes. Use the full PR diff for surrounding context and to catch any changes not covered by the incremental diff.
    - **Understand the change**: What is new or modified since the last review?
@@ -153,7 +154,8 @@ ${permalinkTip}
 5. **INVESTIGATE** - Hunt for problems in the new code using the same techniques as a full review:
    - Trace data flow, check boundaries, explore failure modes, verify assumptions, consider lifecycle, spot performance issues.
    - Focus investigation on code that changed in the incremental diff, but trace its effects through the broader codebase.
-   - Do NOT repeat feedback already given in previous reviews unless it was not addressed.
+   - **Impact analysis**: If the new commits remove, rename, or deprecate anything, use grep to search the broader codebase for stale references in code, tests, docs, comments, and configs. Report these in the review body.
+   - **NEVER repeat feedback from previous reviews.** If a prior issue was not addressed, assume it was intentionally declined. Only comment on genuinely new issues introduced by the new commits.
 
 6. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable. 2-3 sentences max. Use the NEW line number from the full PR diff. NO COMPLIMENTS. NO NITPICKING.
 

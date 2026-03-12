@@ -192,7 +192,6 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
 
       if (isActivityTimedOut) {
         const idleSec = Math.round((performance.now() - lastActivityTime) / 1000);
-        // matched by delegateTimeout test validator — update tests if changed
         reject(new Error(`activity timeout: no output for ${idleSec}s`));
         return;
       }

@@ -1,6 +1,6 @@
 {
   "name": "@pullfrog/pullfrog",
-  "version": "0.0.178",
+  "version": "0.0.179",
   "type": "module",
   "files": [
     "index.js",
@@ -26,13 +26,11 @@
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
-    "@anthropic-ai/claude-agent-sdk": "0.2.39",
     "@ark/fs": "0.56.0",
     "@ark/util": "0.56.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@octokit/rest": "^22.0.0",
     "@octokit/webhooks-types": "^7.6.1",
-    "@openai/codex-sdk": "0.98.0",
     "@opencode-ai/sdk": "^1.0.143",
     "@standard-schema/spec": "1.1.0",
     "@toon-format/toon": "^1.0.0",

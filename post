@@ -37524,9 +37524,6 @@ function buildPullfrogFooter(params) {
     const url2 = params.workflowRun.jobId ? `${baseUrl}/job/${params.workflowRun.jobId}` : baseUrl;
     parts.push(`[View workflow run](${url2})`);
   }
-  if (params.agent) {
-    parts.push(`Using [${params.agent.displayName}](${params.agent.url})`);
-  }
   if (params.triggeredBy) {
     parts.push("Triggered by [Pullfrog](https://pullfrog.com)");
   }
@@ -41284,41 +41281,10 @@ var ReplyToReviewComment = type({
 // utils/payload.ts
 var core3 = __toESM(require_core(), 1);
 
-// external.ts
-var agentsManifest = {
-  claude: {
-    displayName: "Claude Code",
-    apiKeyNames: ["ANTHROPIC_API_KEY"],
-    url: "https://claude.com/claude-code"
-  },
-  codex: {
-    displayName: "Codex CLI",
-    apiKeyNames: ["OPENAI_API_KEY"],
-    url: "https://platform.openai.com/docs/guides/codex"
-  },
-  cursor: {
-    displayName: "Cursor CLI",
-    apiKeyNames: ["CURSOR_API_KEY"],
-    url: "https://cursor.com/"
-  },
-  gemini: {
-    displayName: "Gemini CLI",
-    apiKeyNames: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-    url: "https://ai.google.dev/gemini-api/docs"
-  },
-  opencode: {
-    displayName: "OpenCode",
-    apiKeyNames: [],
-    url: "https://opencode.ai"
-  }
-};
-var AgentName = type.enumerated(...Object.keys(agentsManifest));
-var Effort = type.enumerated("mini", "auto", "max");
-
 // package.json
 var package_default = {
   name: "@pullfrog/pullfrog",
-  version: "0.0.178",
+  version: "0.0.179",
   type: "module",
   files: [
     "index.js",
@@ -41344,13 +41310,11 @@ var package_default = {
   },
   dependencies: {
     "@actions/core": "^1.11.1",
-    "@anthropic-ai/claude-agent-sdk": "0.2.39",
     "@ark/fs": "0.56.0",
     "@ark/util": "0.56.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@octokit/rest": "^22.0.0",
     "@octokit/webhooks-types": "^7.6.1",
-    "@openai/codex-sdk": "0.98.0",
     "@opencode-ai/sdk": "^1.0.143",
     "@standard-schema/spec": "1.1.0",
     "@toon-format/toon": "^1.0.0",
@@ -41426,29 +41390,23 @@ function validateCompatibility(payloadVersion, actionVersion) {
 }
 
 // utils/payload.ts
-var ToolPermissionInput = type.enumerated("disabled", "enabled");
 var ShellPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 var PushPermissionInput = type.enumerated("disabled", "restricted", "enabled");
 var JsonPayload = type({
   "~pullfrog": "true",
   version: "string",
-  "agent?": AgentName.or("undefined"),
+  "model?": "string | undefined",
   prompt: "string",
   "triggerer?": "string | undefined",
   "eventInstructions?": "string",
   "event?": "object",
-  "effort?": Effort.or("undefined"),
   "timeout?": "string | undefined",
-  "progressCommentId?": "string | undefined",
-  "debug?": "boolean | undefined"
+  "progressCommentId?": "string | undefined"
 });
 var Inputs = type({
   prompt: "string",
-  "effort?": Effort.or("undefined"),
+  "model?": type.string.or("undefined"),
   "timeout?": type.string.or("undefined"),
-  "agent?": AgentName.or("undefined"),
-  "web?": ToolPermissionInput.or("undefined"),
-  "search?": ToolPermissionInput.or("undefined"),
   "push?": PushPermissionInput.or("undefined"),
   "shell?": ShellPermissionInput.or("undefined"),
   "cwd?": type.string.or("undefined"),

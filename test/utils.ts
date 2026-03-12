@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agentsManifest } from "../external.ts";
+import { agents as agentMap } from "../agents/index.ts";
 import type { Inputs } from "../main.ts";
 import { trackChild, untrackChild } from "../utils/subprocess.ts";
 
@@ -38,7 +38,7 @@ export function defineFixture(inputs: Inputs, options?: FixtureOptions): Inputs 
   return inputs;
 }
 
-export const agents = Object.keys(agentsManifest) as (keyof typeof agentsManifest)[];
+export const agents = Object.keys(agentMap) as (keyof typeof agentMap)[];
 
 export type AgentUuids<T extends string> = {
   // get marker value for a specific agent and env var
@@ -90,11 +90,7 @@ export function generateAgentUuids<T extends string>(envVarNames: T[]): AgentUui
 
 // assign consistent colors to agents (using ANSI codes)
 const AGENT_COLORS: Record<string, string> = {
-  claude: "\x1b[35m", // magenta
-  codex: "\x1b[32m", // green
-  cursor: "\x1b[36m", // cyan
-  gemini: "\x1b[33m", // yellow
-  opencode: "\x1b[34m", // blue
+  opentoad: "\x1b[32m", // green
 };
 const RESET = "\x1b[0m";
 
@@ -122,6 +118,11 @@ export function getAgentOutput(result: AgentResult): string {
     .split("\n")
     .filter((line) => !line.includes("::add-mask::"))
     .join("\n");
+}
+
+// extract structured output from test result.
+export function getStructuredOutput(result: AgentResult): string | null {
+  return result.structuredOutput;
 }
 
 // parse GITHUB_OUTPUT file format to extract a key's value.
@@ -187,7 +188,7 @@ export async function runAgentStreaming(options: RunStreamingOptions): Promise<A
     };
 
     // create unique HOME directory per test to avoid config file conflicts
-    // when multiple tests run in parallel (e.g., cursor writes ~/.cursor/mcp.json)
+    // when multiple tests run in parallel
     const mcpPort = options.env?.PULLFROG_MCP_PORT ?? "default";
     const testHome = `/tmp/home-${mcpPort}-${Date.now()}`;
     mkdirSync(testHome, { recursive: true });
@@ -207,15 +208,21 @@ export async function runAgentStreaming(options: RunStreamingOptions): Promise<A
       }
     }
 
+    const subEnv: Record<string, string | undefined> = {
+      ...process.env,
+      GITHUB_REPOSITORY: "pullfrog/test-repo", // default
+      ...options.env,
+      HOME: testHome,
+      GITHUB_OUTPUT: githubOutputFile,
+    };
+
+    // clear CI runner's GITHUB_TOKEN so ensureGitHubToken() mints a
+    // properly scoped token for the target GITHUB_REPOSITORY via OIDC
+    delete subEnv.GITHUB_TOKEN;
+
     const child = spawn("node", ["play.ts", "--raw", JSON.stringify(fixture)], {
       cwd: actionDir,
-      env: {
-        ...process.env,
-        AGENT_OVERRIDE: options.agent,
-        ...options.env,
-        HOME: testHome,
-        GITHUB_OUTPUT: githubOutputFile,
-      },
+      env: subEnv as Record<string, string>,
       stdio: "pipe",
       detached: true,
     });
@@ -322,12 +329,12 @@ export interface TestRunnerOptions {
   repoSetup?: string;
   // tags for grouping tests (e.g., ["agnostic"], ["fs"])
   // special tags:
-  //   - "agnostic": runs with claude only, excluded when filtering by agent
+  //   - "agnostic": runs with opentoad only, excluded when filtering by agent
   //   - "adhoc": excluded from default runs, must be explicitly requested
   tags?: TestTag[];
 }
 
-export type TestTag = "adhoc" | "agnostic" | "fs" | "security";
+export type TestTag = "adhoc" | "agnostic" | "security";
 
 export function printSingleValidation(validation: ValidationResult): void {
   const checksStr = validation.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");

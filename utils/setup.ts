@@ -135,8 +135,8 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
 
   // remove includeIf entries that actions/checkout@v6 uses for credential persistence.
   // v6 stores credentials in an external file loaded via includeIf.gitdir, which our
-  // --unset-all above doesn't catch. without this, $git() would produce duplicate
-  // Authorization headers (one from includeIf, one from GIT_CONFIG_PARAMETERS).
+  // --unset-all above doesn't catch. without this, stale credentials from actions/checkout
+  // would be sent alongside ASKPASS-provided credentials.
   try {
     const configOutput = execSync("git config --local --get-regexp ^includeif\\.", {
       cwd: repoDir,
@@ -156,7 +156,7 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
     log.debug("» no includeIf credential entries to remove");
   }
 
-  // SECURITY: set origin URL without token - auth is injected via GIT_CONFIG_PARAMETERS
+  // SECURITY: set origin URL without token - auth is injected via GIT_ASKPASS
   // in $git() calls. this prevents token leakage to git hooks and subprocesses.
   const originUrl = `https://github.com/${params.owner}/${params.name}.git`;
   $("git", ["remote", "set-url", "origin", originUrl], { cwd: repoDir });

@@ -9,7 +9,6 @@ import { defineFixture } from "../utils.ts";
 const fixture = defineFixture(
   {
     prompt: `Call set_output with "SMOKE TEST PASSED".`,
-    effort: "mini",
   },
   { localOnly: true }
 );
@@ -29,5 +28,4 @@ export const test: TestRunnerOptions = {
   name: "smoke",
   fixture,
   validator,
-  env: { GITHUB_REPOSITORY: "pullfrog/test-repo" },
 };
