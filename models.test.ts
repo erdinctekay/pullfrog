@@ -47,6 +47,18 @@ describe("getModelEnvVars", () => {
   it("returns empty array for unknown provider", () => {
     expect(getModelEnvVars("unknown/model")).toEqual([]);
   });
+
+  it("returns empty env vars for free opencode models", () => {
+    expect(getModelEnvVars("opencode/big-pickle")).toEqual([]);
+    expect(getModelEnvVars("opencode/gpt-5-nano")).toEqual([]);
+    expect(getModelEnvVars("opencode/mimo-v2-flash-free")).toEqual([]);
+    expect(getModelEnvVars("opencode/minimax-m2.5-free")).toEqual([]);
+    expect(getModelEnvVars("opencode/nemotron-3-super-free")).toEqual([]);
+  });
+
+  it("still requires OPENCODE_API_KEY for non-free opencode models", () => {
+    expect(getModelEnvVars("opencode/claude-opus")).toEqual(["OPENCODE_API_KEY"]);
+  });
 });
 
 describe("resolveModelSlug", () => {

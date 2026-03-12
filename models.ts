@@ -18,6 +18,8 @@ export interface ModelAlias {
   resolve: string;
   /** top-tier pick for this provider — preferred during auto-select */
   recommended: boolean;
+  /** whether this alias is free and requires no API key */
+  isFree: boolean;
 }
 
 interface ModelDef {
@@ -25,6 +27,8 @@ interface ModelDef {
   /** concrete models.dev specifier, e.g. "anthropic/claude-opus-4-6" */
   resolve: string;
   recommended?: boolean;
+  envVars?: readonly string[];
+  isFree?: boolean;
 }
 
 export interface ProviderConfig {
@@ -110,20 +114,41 @@ export const providers = {
         displayName: "Big Pickle",
         resolve: "opencode/big-pickle",
         recommended: true,
+        envVars: [],
+        isFree: true,
       },
       "claude-opus": { displayName: "Claude Opus", resolve: "opencode/claude-opus-4-6" },
       "claude-sonnet": { displayName: "Claude Sonnet", resolve: "opencode/claude-sonnet-4-6" },
       "claude-haiku": { displayName: "Claude Haiku", resolve: "opencode/claude-haiku-4-5" },
       "gpt-codex": { displayName: "GPT Codex", resolve: "opencode/gpt-5.3-codex" },
+      "gpt-codex-mini": { displayName: "GPT Codex Mini", resolve: "opencode/gpt-5.1-codex-mini" },
       "gemini-pro": { displayName: "Gemini Pro", resolve: "opencode/gemini-3.1-pro" },
       "gemini-flash": { displayName: "Gemini Flash", resolve: "opencode/gemini-3-flash" },
       "kimi-k2": { displayName: "Kimi K2", resolve: "opencode/kimi-k2.5" },
-      "gpt-5-nano": { displayName: "GPT-5 Nano", resolve: "opencode/gpt-5-nano" },
+      "gpt-5-nano": {
+        displayName: "GPT Nano",
+        resolve: "opencode/gpt-5-nano",
+        envVars: [],
+        isFree: true,
+      },
       "mimo-v2-flash-free": {
         displayName: "MiMo V2 Flash",
         resolve: "opencode/mimo-v2-flash-free",
+        envVars: [],
+        isFree: true,
       },
-      "minimax-m2.5-free": { displayName: "MiniMax M2.5", resolve: "opencode/minimax-m2.5-free" },
+      "minimax-m2.5-free": {
+        displayName: "MiniMax M2.5",
+        resolve: "opencode/minimax-m2.5-free",
+        envVars: [],
+        isFree: true,
+      },
+      "nemotron-3-super-free": {
+        displayName: "Nemotron 3 Super",
+        resolve: "opencode/nemotron-3-super-free",
+        envVars: [],
+        isFree: true,
+      },
     },
   }),
   openrouter: provider({
@@ -183,8 +208,18 @@ export function getModelProvider(slug: string): string {
 }
 
 export function getModelEnvVars(slug: string): string[] {
-  const p = getModelProvider(slug);
-  return (providers as Record<string, ProviderConfig>)[p]?.envVars.slice() ?? [];
+  const parsed = parseModel(slug);
+  const providerConfig = (providers as Record<string, ProviderConfig>)[parsed.provider];
+  if (!providerConfig) {
+    return [];
+  }
+
+  const modelConfig = providerConfig.models[parsed.model];
+  if (modelConfig?.envVars) {
+    return modelConfig.envVars.slice();
+  }
+
+  return providerConfig.envVars.slice();
 }
 
 // ── derived flat list ──────────────────────────────────────────────────────────
@@ -197,6 +232,7 @@ export const modelAliases: ModelAlias[] = Object.entries(providers).flatMap(
       displayName: def.displayName,
       resolve: def.resolve,
       recommended: def.recommended ?? false,
+      isFree: def.isFree ?? false,
     }))
 );
 
