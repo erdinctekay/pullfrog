@@ -1,4 +1,4 @@
-import { providers } from "../models.ts";
+import { getModelEnvVars, providers } from "../models.ts";
 import { getApiUrl } from "./apiUrl.ts";
 
 const knownApiKeys: Set<string> = new Set(Object.values(providers).flatMap((p) => [...p.envVars]));
@@ -23,15 +23,29 @@ to fix this, add the required secret to your GitHub repository:
 configure your model at ${settingsUrl}`;
 }
 
+function hasEnvVar(name: string): boolean {
+  const value = process.env[name];
+  return typeof value === "string" && value.length > 0;
+}
+
 export function validateAgentApiKey(params: {
   agent: { name: string };
+  model: string | undefined;
   owner: string;
   name: string;
 }): void {
-  const hasAnyKey = Object.entries(process.env).some(
-    ([key, value]) => value && typeof value === "string" && knownApiKeys.has(key)
-  );
+  // if a specific model is configured, only check that model's required env vars
+  if (params.model) {
+    const requiredVars = getModelEnvVars(params.model);
+    // free models have no required env vars — skip validation entirely
+    if (requiredVars.length === 0) return;
+    if (requiredVars.some((v) => hasEnvVar(v))) return;
 
+    throw new Error(buildMissingApiKeyError({ owner: params.owner, name: params.name }));
+  }
+
+  // no model configured — auto-select requires at least one known provider key
+  const hasAnyKey = [...knownApiKeys].some((k) => hasEnvVar(k));
   if (!hasAnyKey) {
     throw new Error(buildMissingApiKeyError({ owner: params.owner, name: params.name }));
   }

@@ -151,6 +151,7 @@ export async function main(): Promise<MainResult> {
 
     validateAgentApiKey({
       agent,
+      model: payload.model,
       owner: runContext.repo.owner,
       name: runContext.repo.name,
     });
