@@ -322,7 +322,7 @@ Do NOT overwrite a good comment with links/details with a generic message like "
 
 2. **ANALYZE** - Read the diff file. Use the TOC to selectively read relevant sections — do not read the entire file unless the PR is small.
 
-3. **SUMMARIZE** - Write a structured summary following the format from EVENT INSTRUCTIONS. If no format instructions are provided, produce a concise summary with a TL;DR, key changes list, and per-change sections with before/after framing.
+3. **SUMMARIZE** - Write a structured summary following the format from EVENT INSTRUCTIONS. If no format instructions are provided, produce a concise summary with a TL;DR, key changes list, and per-change sections with human-readable \`##\` titles and before/after framing.
 
 4. **POST** - Call ${ghPullfrogMcpName}/create_issue_comment with type: 'Summary' and the summary body.
 

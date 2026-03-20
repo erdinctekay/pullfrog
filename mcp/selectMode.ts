@@ -193,7 +193,7 @@ An existing plan comment was found for this issue. Update that comment with the 
 2. Delegate a subagent to analyze the diff and produce a structured summary. Include in its prompt:
    - the diff file path
    - PR metadata (title, file count, commit count, base/head branches)
-   - format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with before/after framing
+   - format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with plain-language \`##\` titles and before/after framing
    - instruct it to use the TOC to selectively read relevant diff sections, not the entire file
    - instruct it to return the full summary markdown via \`${ghPullfrogMcpName}/set_output\`
 3. After the subagent completes, call \`${ghPullfrogMcpName}/create_issue_comment\` with \`type: "Summary"\` and the summary body.
