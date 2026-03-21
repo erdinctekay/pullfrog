@@ -23,11 +23,11 @@ exports[`latest model per provider snapshot > matches snapshot 1`] = `
     "releaseDate": "2026-03-17",
   },
   "opencode": {
-    "modelId": "gpt-5.4-nano",
-    "releaseDate": "2026-03-17",
+    "modelId": "mimo-v2-pro-free",
+    "releaseDate": "2026-03-18",
   },
   "openrouter": {
-    "modelId": "minimax/minimax-m2.7",
+    "modelId": "xiaomi/mimo-v2-pro",
     "releaseDate": "2026-03-18",
   },
   "xai": {

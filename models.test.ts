@@ -51,7 +51,7 @@ describe("getModelEnvVars", () => {
   it("returns empty env vars for free opencode models", () => {
     expect(getModelEnvVars("opencode/big-pickle")).toEqual([]);
     expect(getModelEnvVars("opencode/gpt-5-nano")).toEqual([]);
-    expect(getModelEnvVars("opencode/mimo-v2-flash-free")).toEqual([]);
+    expect(getModelEnvVars("opencode/mimo-v2-pro-free")).toEqual([]);
     expect(getModelEnvVars("opencode/minimax-m2.5-free")).toEqual([]);
     expect(getModelEnvVars("opencode/nemotron-3-super-free")).toEqual([]);
   });

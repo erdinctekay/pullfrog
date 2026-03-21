@@ -131,9 +131,9 @@ export const providers = {
         envVars: [],
         isFree: true,
       },
-      "mimo-v2-flash-free": {
-        displayName: "MiMo V2 Flash",
-        resolve: "opencode/mimo-v2-flash-free",
+      "mimo-v2-pro-free": {
+        displayName: "MiMo V2 Pro",
+        resolve: "opencode/mimo-v2-pro-free",
         envVars: [],
         isFree: true,
       },

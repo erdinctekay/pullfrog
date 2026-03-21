@@ -29,7 +29,7 @@ describe("validateAgentApiKey", () => {
     it("passes for other free opencode models", () => {
       for (const slug of [
         "opencode/gpt-5-nano",
-        "opencode/mimo-v2-flash-free",
+        "opencode/mimo-v2-pro-free",
         "opencode/minimax-m2.5-free",
         "opencode/nemotron-3-super-free",
       ]) {
