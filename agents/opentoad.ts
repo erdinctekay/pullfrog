@@ -117,7 +117,11 @@ function resolveOpenCodeModel(ctx: {
   if (ctx.modelSlug) {
     const resolved = resolveCliModel(ctx.modelSlug);
     if (resolved) {
-      log.info(`» model: ${resolved} (from repo config)`);
+      if (resolved !== ctx.modelSlug) {
+        log.info(`» model: ${ctx.modelSlug} (resolved to ${resolved})`);
+      } else {
+        log.info(`» model: ${resolved}`);
+      }
       return resolved;
     }
     log.warning(`» unknown model slug "${ctx.modelSlug}" — falling through to auto-select`);
