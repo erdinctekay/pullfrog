@@ -275,6 +275,7 @@ export async function main(): Promise<MainResult> {
       apiToken: runContext.apiToken,
       modes,
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
+      prepushScript: runContext.repoSettings.prepushScript,
       prApproveEnabled: runContext.repoSettings.prApproveEnabled,
       modeInstructions: runContext.repoSettings.modeInstructions,
       toolState,

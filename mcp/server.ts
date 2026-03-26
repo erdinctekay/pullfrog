@@ -135,6 +135,7 @@ export interface ToolContext {
   apiToken: string;
   modes: Mode[];
   postCheckoutScript: string | null;
+  prepushScript: string | null;
   prApproveEnabled: boolean;
   modeInstructions: Record<string, string>;
   toolState: ToolState;

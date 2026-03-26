@@ -2,6 +2,7 @@ import { regex } from "arkregex";
 import { type } from "arktype";
 import { log } from "../utils/cli.ts";
 import { $git } from "../utils/gitAuth.ts";
+import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { $ } from "../utils/shell.ts";
 import type { StoredPushDest, ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -142,6 +143,8 @@ export function PushBranchTool(ctx: ToolContext) {
       const pushArgs = force
         ? ["--force", "-u", pushDest.remoteName, refspec]
         : ["-u", pushDest.remoteName, refspec];
+
+      await executeLifecycleHook({ event: "prepush", script: ctx.prepushScript });
 
       log.debug(`pushing ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch}`);
       if (force) {
