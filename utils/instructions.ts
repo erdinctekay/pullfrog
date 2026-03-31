@@ -340,7 +340,7 @@ interface AssembleFullPromptInput {
 
 function assembleFullPrompt(ctx: AssembleFullPromptInput): string {
   const learningsSection = ctx.learnings
-    ? `************* REPO INTELLIGENCE *************\n\n${ctx.learnings}`
+    ? `************* LEARNINGS *************\n\n${ctx.learnings}`
     : "";
 
   const rawFull = `************* RUNTIME CONTEXT *************
