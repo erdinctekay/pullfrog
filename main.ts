@@ -237,7 +237,7 @@ export async function main(): Promise<MainResult> {
     await using gitAuthServer = await startGitAuthServer(tmpdir);
     setGitAuthServer(gitAuthServer);
 
-    const agent = resolveAgent();
+    const agent = resolveAgent({ model: payload.proxyModel ? undefined : payload.model });
 
     validateAgentApiKey({
       agent,

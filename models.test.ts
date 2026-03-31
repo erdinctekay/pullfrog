@@ -35,7 +35,10 @@ describe("getModelProvider", () => {
 
 describe("getModelEnvVars", () => {
   it("returns correct env vars for anthropic", () => {
-    expect(getModelEnvVars("anthropic/claude-opus")).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(getModelEnvVars("anthropic/claude-opus")).toEqual([
+      "ANTHROPIC_API_KEY",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ]);
   });
 
   it("returns correct env vars for google (multiple)", () => {

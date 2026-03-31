@@ -10,7 +10,7 @@
  * the agent process itself gets full env (needs LLM API keys, PATH, etc.).
  * security is enforced at the tool layer, not the process layer.
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -19,6 +19,8 @@ import { modelAliases, resolveCliModel } from "../models.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
+import { detectProviderError } from "../utils/providerErrors.ts";
+import { addSkill } from "../utils/skills.ts";
 import { spawn } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
@@ -151,44 +153,6 @@ function resolveOpenCodeModel(ctx: {
 
   log.warning(`» no model resolved. letting OpenCode auto-select. ${AUTO_SELECT_WARNING}`);
   return undefined;
-}
-
-// ── provider error detection ───────────────────────────────────────────────────
-
-const PROVIDER_ERROR_PATTERNS = [
-  { pattern: "429", label: "rate limited (429)" },
-  { pattern: "RESOURCE_EXHAUSTED", label: "quota exhausted" },
-  { pattern: "quota", label: "quota error" },
-  { pattern: "status: 500", label: "provider 500 error" },
-  { pattern: "INTERNAL", label: "provider internal error" },
-  { pattern: "status: 503", label: "provider unavailable (503)" },
-  { pattern: "UNAVAILABLE", label: "provider unavailable" },
-  { pattern: "rate limit", label: "rate limited" },
-  { pattern: "limit: 0", label: "zero quota" },
-];
-
-function detectProviderError(text: string): string | null {
-  for (const entry of PROVIDER_ERROR_PATTERNS) {
-    if (text.includes(entry.pattern)) return entry.label;
-  }
-  return null;
-}
-
-function addSkill(params: { ref: string; skill: string; env: Record<string, string> }): void {
-  const result = spawnSync(
-    "npx",
-    ["skills", "add", params.ref, "--skill", params.skill, "-g", "-a", "opencode", "-y"],
-    {
-      env: { ...process.env, ...params.env },
-      stdio: "pipe",
-      timeout: 30_000,
-    }
-  );
-  if (result.status === 0) {
-    log.info(`installed ${params.skill} skill`);
-  } else {
-    log.info(`${params.skill} skill install failed: ${(result.stderr?.toString() || "").trim()}`);
-  }
 }
 
 // ── NDJSON event types ─────────────────────────────────────────────────────────
@@ -680,6 +644,7 @@ export const opentoad = agent({
       ref: `vercel-labs/agent-browser@v${agentBrowserVersion}`,
       skill: "agent-browser",
       env: homeEnv,
+      agent: "opencode",
     });
 
     const args = ["run", ctx.instructions.full, "--format", "json", "--print-logs"];

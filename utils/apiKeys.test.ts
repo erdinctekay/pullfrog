@@ -12,7 +12,7 @@ const savedEnv = { ...process.env };
 beforeEach(() => {
   // strip all known provider keys so tests start clean
   for (const key of Object.keys(process.env)) {
-    if (key.endsWith("_API_KEY")) delete process.env[key];
+    if (key.endsWith("_API_KEY") || key === "CLAUDE_CODE_OAUTH_TOKEN") delete process.env[key];
   }
 });
 

@@ -50,7 +50,7 @@ function provider(config: ProviderConfig): ProviderConfig {
 export const providers = {
   anthropic: provider({
     displayName: "Anthropic",
-    envVars: ["ANTHROPIC_API_KEY"],
+    envVars: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
     models: {
       "claude-opus": {
         displayName: "Claude Opus",

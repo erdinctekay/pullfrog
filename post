@@ -37516,7 +37516,7 @@ function provider(config) {
 var providers = {
   anthropic: provider({
     displayName: "Anthropic",
-    envVars: ["ANTHROPIC_API_KEY"],
+    envVars: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
     models: {
       "claude-opus": {
         displayName: "Claude Opus",
@@ -41603,6 +41603,7 @@ var package_default = {
     turndown: "^7.2.0"
   },
   devDependencies: {
+    "@anthropic-ai/claude-code": "2.1.85",
     "agent-browser": "0.21.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/node": "^24.7.2",

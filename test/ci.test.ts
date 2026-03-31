@@ -114,7 +114,7 @@ describe("ci workflow consistency", () => {
 
     it("changed-agents.sh treats legacy agent files as non-agent changes", () => {
       const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/agents/claude.ts", "action/agents/gemini.ts"]),
+        input: JSON.stringify(["action/agents/codex.ts", "action/agents/gemini.ts"]),
         encoding: "utf-8",
       });
       expect(JSON.parse(output)).toEqual(["opentoad"]);
