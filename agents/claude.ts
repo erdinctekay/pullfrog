@@ -189,7 +189,6 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
 
   let finalOutput = "";
   let accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  let costUsd: number | undefined;
   let tokensLogged = false;
 
   function buildUsage(): AgentUsage | undefined {
@@ -202,7 +201,6 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
           outputTokens: accumulatedTokens.output,
           cacheReadTokens: accumulatedTokens.cacheRead || undefined,
           cacheWriteTokens: accumulatedTokens.cacheWrite || undefined,
-          costUsd,
         }
       : undefined;
   }
@@ -291,28 +289,18 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
         const totalInput = inputTokens + cacheRead + cacheWrite;
 
         accumulatedTokens = { input: inputTokens, output: outputTokens, cacheRead, cacheWrite };
-        costUsd = event.total_cost_usd ?? undefined;
 
-        log.info(
-          `» ${params.label} result: subtype=${subtype}, turns=${numTurns}, cost=$${costUsd?.toFixed(4) ?? "?"}`
-        );
+        log.info(`» ${params.label} result: subtype=${subtype}, turns=${numTurns}`);
 
         if (!tokensLogged) {
           log.table([
             [
-              { data: "Cost", header: true },
               { data: "Input", header: true },
               { data: "Cache Read", header: true },
               { data: "Cache Write", header: true },
               { data: "Output", header: true },
             ],
-            [
-              `$${costUsd?.toFixed(4) || "0.0000"}`,
-              String(totalInput),
-              String(cacheRead),
-              String(cacheWrite),
-              String(outputTokens),
-            ],
+            [String(totalInput), String(cacheRead), String(cacheWrite), String(outputTokens)],
           ]);
           tokensLogged = true;
         }
