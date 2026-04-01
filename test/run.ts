@@ -307,7 +307,7 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
 
   // use anthropic sonnet to avoid google quota issues and gemini doom-looping
   if (ctx.agent === "opentoad") {
-    env.PULLFROG_MODEL ??= "anthropic/claude-sonnet-4-5";
+    env.PULLFROG_MODEL ??= "anthropic/claude-sonnet-4-6";
   }
 
   // build file-based env vars for MCP servers that don't inherit parent env
