@@ -296,6 +296,21 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
     }
   }
 
+  env.PULLFROG_AGENT = ctx.agent;
+
+  // override DB model to avoid mismatch when PULLFROG_AGENT forces a specific agent
+  // (DB model may belong to a different provider than the forced agent supports)
+  if (!Object.hasOwn(env, "PULLFROG_MODEL")) {
+    const defaultModels: Record<string, string> = {
+      claude: "anthropic/claude-sonnet-4-6",
+      opentoad: "anthropic/claude-sonnet-4-6",
+    };
+    const model = defaultModels[ctx.agent];
+    if (model) {
+      env.PULLFROG_MODEL = model;
+    }
+  }
+
   if (!Object.hasOwn(env, "PULLFROG_MCP_PORT")) {
     env.PULLFROG_MCP_PORT = String(allocateMcpPort());
   }

@@ -20,7 +20,7 @@ jobs:
 
   agents:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -29,7 +29,7 @@ jobs:
       matrix:
         agent: [claude, opentoad]
         test:
-          [mcpmerge, nobash, restricted, smoke]
+          [mcpmerge, nobash, restricted, smoke, token-exfil]
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -56,7 +56,7 @@ jobs:
 
   agnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -72,7 +72,6 @@ jobs:
             push-enabled,
             push-restricted,
             timeout,
-            token-exfil,
           ]
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,6 +3,7 @@
  *
  * mirrors the opentoad harness's security model:
  * - native Bash blocked via --disallowedTools (agent cannot shell out)
+ * - managed-settings.json: filesystem sandbox — deny /proc, /sys reads
  * - MCP ShellTool provides restricted shell (filtered env, no secrets)
  * - MCP server injected via --mcp-config (not replacing project config)
  * - ASKPASS handles git auth separately (token never in subprocess env)
@@ -10,6 +11,7 @@
  * the agent process itself gets full env (needs LLM API keys, PATH, etc.).
  * security is enforced at the tool layer, not the process layer.
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -473,6 +475,57 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
   }
 }
 
+// ── managed settings ────────────────────────────────────────────────────────────
+
+const MANAGED_SETTINGS_DIR = "/etc/claude-code";
+const MANAGED_SETTINGS_PATH = `${MANAGED_SETTINGS_DIR}/managed-settings.json`;
+
+// managed-settings.json has absolute highest precedence in Claude Code's config hierarchy.
+// it cannot be overridden by user, project, or local settings — safe against malicious PRs.
+//
+// permissions.deny blocks native tools (Read, Grep, Edit, Glob) from accessing /proc and /sys.
+// sandbox.filesystem.denyRead blocks the Bash tool sandbox from reading those paths.
+// allowManagedPermissionRulesOnly prevents malicious PRs from adding allow rules that override
+// our deny rules — safe in CI because --dangerously-skip-permissions makes allow/ask irrelevant.
+// allowManagedHooksOnly prevents malicious project hooks from bypassing deny rules.
+const managedSettings = {
+  allowManagedPermissionRulesOnly: true,
+  allowManagedHooksOnly: true,
+  permissions: {
+    deny: [
+      "Read(//proc/**)",
+      "Read(//sys/**)",
+      "Grep(//proc/**)",
+      "Grep(//sys/**)",
+      "Edit(//proc/**)",
+      "Edit(//sys/**)",
+      "Glob(//proc/**)",
+      "Glob(//sys/**)",
+    ],
+  },
+  sandbox: {
+    filesystem: {
+      denyRead: ["/proc", "/sys"],
+    },
+  },
+};
+
+function installManagedSettings(): void {
+  if (process.env.CI !== "true") return;
+
+  const content = JSON.stringify(managedSettings, null, 2);
+  try {
+    execFileSync("sudo", ["mkdir", "-p", MANAGED_SETTINGS_DIR]);
+    execFileSync("sudo", ["tee", MANAGED_SETTINGS_PATH], {
+      input: content,
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    log.debug(`» wrote managed settings to ${MANAGED_SETTINGS_PATH}`);
+  } catch (err) {
+    log.warning(`» failed to install managed settings: ${err}`);
+  }
+}
+
 // ── agent ───────────────────────────────────────────────────────────────────────
 
 export const claude = agent({
@@ -502,6 +555,8 @@ export const claude = agent({
     const mcpConfigPath = writeMcpConfig(ctx);
     const effort = resolveEffort(model);
 
+    installManagedSettings();
+
     const args = [
       cliPath,
       "-p",
@@ -525,7 +580,7 @@ export const claude = agent({
     }
 
     // agent process gets full env — needs LLM API keys, PATH, locale, etc.
-    // security is enforced via --disallowedTools (Bash + Bash subagent) and MCP tool filtering.
+    // security is enforced via managed-settings.json, --disallowedTools (Bash), and MCP tool filtering.
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...homeEnv,

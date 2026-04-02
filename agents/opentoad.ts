@@ -3,6 +3,8 @@
  *
  * transparently wraps OpenCode with a security layer:
  * - bash: "deny" via OPENCODE_CONFIG_CONTENT (agent cannot shell out)
+ * - OPENCODE_PERMISSION: filesystem sandbox — deny all external paths except /tmp
+ * - untrusted .opencode/plugins/ and .opencode/tools/ deleted before launch
  * - MCP ShellTool provides restricted shell (filtered env, no secrets)
  * - MCP server injected alongside project config (not replacing)
  * - ASKPASS handles git auth separately (token never in subprocess env)
@@ -11,7 +13,7 @@
  * security is enforced at the tool layer, not the process layer.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { ghPullfrogMcpName } from "../external.ts";
@@ -625,14 +627,24 @@ export const opentoad = agent({
       agent: "opencode",
     });
 
+    // remove untrusted project plugins/tools before agent starts (no env var to disable loading)
+    rmSync(join(process.cwd(), ".opencode", "plugins"), { recursive: true, force: true });
+    rmSync(join(process.cwd(), ".opencode", "tools"), { recursive: true, force: true });
+
     const args = ["run", ctx.instructions.full, "--format", "json", "--print-logs"];
 
-    // agent process gets full env — needs LLM API keys, PATH, locale, etc.
-    // security is enforced via OPENCODE_CONFIG_CONTENT (bash: deny) and MCP tool filtering.
+    // OPENCODE_PERMISSION has absolute highest precedence (merged after managed/MDM configs).
+    // external_directory gates ALL native filesystem tools (Read, Write, Edit, Glob, Grep, etc.)
+    // for paths outside the project root. last-match-wins: deny everything, then allow /tmp.
+    const permissionOverride = JSON.stringify({
+      external_directory: { "*": "deny", "/tmp/*": "allow" },
+    });
+
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...homeEnv,
       OPENCODE_CONFIG_CONTENT: buildSecurityConfig(ctx, model),
+      OPENCODE_PERMISSION: permissionOverride,
       GOOGLE_GENERATIVE_AI_API_KEY:
         process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY,
     };
