@@ -3,6 +3,9 @@ import type { ResolvedInstructions } from "../utils/instructions.ts";
 import type { ResolvedPayload } from "../utils/payload.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 
+// maximum number of stderr lines to keep in the rolling buffer during agent execution
+export const MAX_STDERR_LINES = 20;
+
 /**
  * token/cost usage data from a single agent run
  */

@@ -24,7 +24,13 @@ import { spawn } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
-import { type AgentResult, type AgentRunContext, type AgentUsage, agent } from "./shared.ts";
+import {
+  type AgentResult,
+  type AgentRunContext,
+  type AgentUsage,
+  agent,
+  MAX_STDERR_LINES,
+} from "./shared.ts";
 
 async function installClaudeCli(): Promise<string> {
   return await installFromNpmTarball({
@@ -311,7 +317,7 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
   };
 
   const recentStderr: string[] = [];
-  const MAX_STDERR_LINES = 20;
+
   let lastProviderError: string | null = null;
 
   let output = "";
@@ -323,7 +329,7 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
       args: params.args,
       cwd: params.cwd,
       env: params.env,
-      activityTimeout: 0,
+      activityTimeout: 300_000,
       stdio: ["ignore", "pipe", "pipe"],
       onStdout: async (chunk) => {
         const text = chunk.toString();

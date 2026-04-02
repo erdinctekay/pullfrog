@@ -157,13 +157,13 @@ type FetchPrDiffParams = {
  * this is the core diff formatting logic, extracted for testability.
  */
 export async function fetchAndFormatPrDiff(params: FetchPrDiffParams): Promise<FormatFilesResult> {
-  const filesResponse = await params.octokit.rest.pulls.listFiles({
+  const files = await params.octokit.paginate(params.octokit.rest.pulls.listFiles, {
     owner: params.owner,
     repo: params.repo,
     pull_number: params.pullNumber,
     per_page: 100,
   });
-  return formatFilesWithLineNumbers(filesResponse.data);
+  return formatFilesWithLineNumbers(files);
 }
 
 import type { GitContext } from "../utils/setup.ts";

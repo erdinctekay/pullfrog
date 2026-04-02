@@ -41621,8 +41621,12 @@ var package_default = {
     type: "git",
     url: "git+https://github.com/pullfrog/pullfrog.git"
   },
-  keywords: [],
-  author: "",
+  keywords: [
+    "github-actions",
+    "ai-coding-agent",
+    "code-review"
+  ],
+  author: "Pullfrog <support@pullfrog.com>",
   license: "MIT",
   bugs: {
     url: "https://github.com/pullfrog/pullfrog/issues"

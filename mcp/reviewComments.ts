@@ -462,6 +462,19 @@ async function getReviewThreads(input: GetReviewDataInput) {
 
   const allThreads = response.repository?.pullRequest?.reviewThreads?.nodes ?? [];
 
+  if (allThreads.length >= 100) {
+    log.warning(
+      `PR ${input.owner}/${input.name}#${input.pullNumber}: reviewThreads returned 100 results (limit reached, some threads may be missing)`
+    );
+  }
+  for (const thread of allThreads) {
+    if (thread?.comments?.nodes && thread.comments.nodes.length >= 50) {
+      log.warning(
+        `PR ${input.owner}/${input.name}#${input.pullNumber}: review thread at ${thread.path}:${thread.line} has 50 comments (limit reached, some comments may be missing)`
+      );
+    }
+  }
+
   const threadsForReview = allThreads.filter((thread): thread is ReviewThread => {
     if (!thread?.comments?.nodes) return false;
     return thread.comments.nodes.some((c) => c?.pullRequestReview?.databaseId === input.reviewId);
@@ -511,13 +524,14 @@ export async function getReviewData(input: GetReviewDataInput): Promise<
   let threadBlocks: Array<{ path: string; lineRange: string; content: string[] }> = [];
 
   if (threads.length > 0) {
-    const prFilesResponse = await input.octokit.rest.pulls.listFiles({
+    const prFiles = await input.octokit.paginate(input.octokit.rest.pulls.listFiles, {
       owner: input.owner,
       repo: input.name,
       pull_number: input.pullNumber,
+      per_page: 100,
     });
     const filePatchMap = new Map<string, ParsedHunk[]>();
-    for (const file of prFilesResponse.data) {
+    for (const file of prFiles) {
       if (file.patch) {
         filePatchMap.set(file.filename, parseFilePatches(file.patch));
       }

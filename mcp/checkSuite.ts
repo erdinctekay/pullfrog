@@ -138,6 +138,7 @@ export function GetCheckSuiteLogsTool(ctx: ToolContext) {
           repo: ctx.repo.name,
           check_suite_id,
           per_page: 100,
+          request: { signal: AbortSignal.timeout(10_000) },
         }
       );
 
@@ -167,6 +168,7 @@ export function GetCheckSuiteLogsTool(ctx: ToolContext) {
           owner: ctx.repo.owner,
           repo: ctx.repo.name,
           run_id: run.id,
+          request: { signal: AbortSignal.timeout(10_000) },
         });
 
         // only process failed jobs
@@ -178,10 +180,17 @@ export function GetCheckSuiteLogsTool(ctx: ToolContext) {
               owner: ctx.repo.owner,
               repo: ctx.repo.name,
               job_id: job.id,
+              request: { signal: AbortSignal.timeout(10_000) },
             });
 
             const logsUrl = logsResponse.url;
-            const logsText = await fetch(logsUrl).then((r) => r.text());
+            const logsResult = await fetch(logsUrl, { signal: AbortSignal.timeout(10_000) });
+            if (!logsResult.ok) {
+              throw new Error(
+                `failed to fetch logs: ${logsResult.status} ${logsResult.statusText}`
+              );
+            }
+            const logsText = await logsResult.text();
 
             // write full log to disk
             const logPath = join(logsDir, `job-${job.id}.log`);
