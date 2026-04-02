@@ -60,6 +60,13 @@ function stripProviderPrefix(specifier: string): string {
   return slashIndex > 0 ? specifier.slice(slashIndex + 1) : specifier;
 }
 
+// `max` effort is Opus 4.6 only — errors on other models.
+// use `max` when the resolved model is Opus, `high` otherwise.
+function resolveEffort(model: string | undefined): "max" | "high" {
+  if (model?.includes("opus")) return "max";
+  return "high";
+}
+
 // ── NDJSON event types ─────────────────────────────────────────────────────────
 
 interface ContentBlock {
@@ -487,6 +494,7 @@ export const claude = agent({
     });
 
     const mcpConfigPath = writeMcpConfig(ctx);
+    const effort = resolveEffort(model);
 
     const args = [
       cliPath,
@@ -499,6 +507,8 @@ export const claude = agent({
       mcpConfigPath,
       "--verbose",
       "--no-session-persistence",
+      "--effort",
+      effort,
       "--disallowedTools",
       "Bash",
       "Agent(Bash)",
@@ -517,6 +527,7 @@ export const claude = agent({
 
     const repoDir = process.cwd();
 
+    log.info(`» effort: ${effort}`);
     log.debug(`» starting Pullfrog (Claude Code): node ${args.join(" ")}`);
     log.debug(`» working directory: ${repoDir}`);
 

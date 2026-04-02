@@ -27,8 +27,8 @@ exports[`latest model per provider snapshot > matches snapshot 1`] = `
     "releaseDate": "2026-03-30",
   },
   "openrouter": {
-    "modelId": "qwen/qwen3.6-plus-preview:free",
-    "releaseDate": "2026-03-30",
+    "modelId": "qwen/qwen3.6-plus:free",
+    "releaseDate": "2026-04-02",
   },
   "xai": {
     "modelId": "grok-4.20-multi-agent-0309",

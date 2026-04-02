@@ -1,25 +1,17 @@
 // changes to mode definitions should be reflected in docs/modes.mdx
-import { type } from "arktype";
 import { ghPullfrogMcpName } from "./external.ts";
 
 export interface Mode {
   name: string;
   description: string;
-  prompt: string;
+  // step-by-step guidance returned when the agent calls select_mode.
+  // custom user-defined modes supply this; built-in modes define it here.
+  prompt?: string | undefined;
 }
 
-// arktype schema for Mode validation
-export const ModeSchema = type({
-  name: "string",
-  description: "string",
-  prompt: "string",
-});
-
-const reportProgressInstruction = `Use ${ghPullfrogMcpName}/report_progress to share your **final** results in 1-3 sentences. The completed task list is automatically preserved in a collapsible section below your summary — do not repeat individual steps in the summary. Focus on the outcome and link to any artifacts (PRs, branches). Never create additional comments manually.`;
-
-const dependencyInstallationStep = `If this task will require running tests, builds, linters, or CLI commands that need installed packages, call \`${ghPullfrogMcpName}/start_dependency_installation\` NOW. This is non-blocking and allows dependencies to install in the background while you continue. Later, call \`${ghPullfrogMcpName}/await_dependency_installation\` before running commands that need them. Skip this step if only reading code or answering questions.`;
-
-const permalinkTip = `**TIP**: To reference specific code, use GitHub permalinks: \`https://github.com/{owner}/{repo}/blob/{commit_sha}/{path}#L{start}-L{end}\`. GitHub renders these as expandable code blocks.`;
+function learningsStep(n: number): string {
+  return `${n}. **learnings** (only if high confidence): if you discovered something about repo setup, test commands, conventions, or patterns that you are confident is correct and would reliably help future runs, call \`${ghPullfrogMcpName}/update_learnings\` to persist it. skip this step if you are unsure or the finding is speculative/one-off. format as a flat bullet list (\`- \` per line, one fact per bullet). merge with existing learnings from the prompt — pass the FULL merged list. deduplicate, and drop bullets that are clearly wrong or no longer relevant to the current codebase.`;
+}
 
 export function computeModes(): Mode[] {
   return [
@@ -27,297 +19,220 @@ export function computeModes(): Mode[] {
       name: "Build",
       description:
         "Implement, build, create, or develop code changes; make specific changes to files or features; execute a plan; or handle tasks with specific implementation details",
-      prompt: `Follow these steps exactly.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Determine whether to checkout the existing PR branch or create a new one:
-   - **PR event, modifying the existing PR**: Call \`${ghPullfrogMcpName}/checkout_pr\` with the PR number to checkout the PR branch.
-   - **PR event, but user wants a NEW branch/PR**: Create a new branch with \`git checkout -b pullfrog/branch-name\` via the \`${ghPullfrogMcpName}/git\` tool.
+1. **plan** (optional, for complex tasks): analyze requirements, read AGENTS.md and relevant code, produce a step-by-step implementation plan.
 
-   Branch names must be prefixed with "pullfrog/" and be specific enough to avoid collisions. Never commit directly to main/master/production.
+2. **setup**: checkout or create the branch:
+   - **PR event, modifying the existing PR**: call \`${ghPullfrogMcpName}/checkout_pr\`
+   - **new branch**: use \`${ghPullfrogMcpName}/git\` to create a branch (\`git checkout -b pullfrog/branch-name\`)
 
-2. **DEPENDENCIES** - ${dependencyInstallationStep}
+3. **build**: implement changes using your native file and shell tools:
+   - follow the plan (if you ran a plan phase)
+   - plan your approach before writing code: identify which files need to change, key design decisions, and edge cases. for non-trivial changes, consider whether there's a more elegant approach.
+   - run relevant tests/lints before committing
 
-3. **CONTEXT** - If the request requires understanding the codebase structure or conventions, gather relevant context. Read AGENTS.md if it exists. Skip this step if the prompt is trivial and self-contained.
+4. **self-review**: delegate a read-only subagent to review your diff. the subagent must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. provide it with the output of \`git diff\` and instruct it to look for bugs, logic errors, missing edge cases, and unintended changes. review its findings, address any valid points, and discard nitpicks or false positives. then:
+   - verify only intended changes are present, no debug artifacts or commented-out code remain, and no unrelated files were modified
+   - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-4. **REQUIREMENTS** - Understand the requirements and any existing plan.
+5. **finalize**:
+   - push the branch via \`${ghPullfrogMcpName}/push_branch\`
+   - create a PR via \`${ghPullfrogMcpName}/create_pull_request\`
+   - call \`${ghPullfrogMcpName}/report_progress\` with the final summary including PR link
 
-5. **IMPLEMENT** - Make the necessary code changes using file operations. You should change the minimum amount of code necessary to accomplish your task. Emphasize code quality and elegance.
+${learningsStep(6)}
 
-6. **TEST** - Test your changes to ensure they work correctly. Run relevant tests, builds, or linters BEFORE committing. If tests fail, fix the issues and repeat this step until everything passes.
+### Notes
 
-7. **COMMIT** - Commit your changes using \`${ghPullfrogMcpName}/git\` (e.g., \`git add .\` then \`git commit -m "message"\`), then push with \`${ghPullfrogMcpName}/push_branch\`. Do NOT use \`git push\` directly - it requires credentials that only the MCP tool provides.
-
-8. **PR** - Determine whether to create a PR (if not already on a PR branch):
-   - **Default behavior**: Create a PR using ${ghPullfrogMcpName}/create_pull_request with an informative title and body. If you are working in the context of an issue (check EVENT DATA for \`issue_number\` where \`is_pr\` is not true), include "Closes #<issue_number>" in the PR body to auto-close the issue when merged.
-   - **Draft PR request**: If the user explicitly asks for a draft PR (e.g. "draft PR", "create as draft", "WIP"), create a PR with \`draft: true\`.
-   - **Branch-only request**: If the user explicitly asks for a branch without a PR (e.g. "don't create a PR", "branch only", "just create a branch"), do NOT create a PR. Simply push the branch and report the branch link.
-
-9. **FINAL REPORT** - ${reportProgressInstruction} Ensure the summary includes:
-   - A summary of what was accomplished
-   - Links to any artifacts created (PRs, branches, issues)
-   - If you created a PR, ALWAYS include the PR link. e.g.:
-     \`\`\`md
-     [View PR ➔](https://github.com/org/repo/pull/123)
-     \`\`\`
-   - If you created a branch without a PR, ALWAYS include a "Create PR" link and a link to the branch. e.g.:
-     \`\`\`md
-     [\`pullfrog/branch-name\`](https://github.com/pullfrog/scratch/tree/pullfrog/branch-name) • [Create PR ➔](https://github.com/pullfrog/scratch/compare/main...pullfrog/branch-name?quick_pull=1&title=<informative_title>&body=<informative_body>)
-     \`\`\`
-
-`,
+For simple, well-defined tasks, skip the plan phase and go straight to build.`,
     },
     {
       name: "AddressReviews",
       description:
         "Address PR review feedback; respond to reviewer comments; make requested changes to an existing PR",
-      prompt: `Follow these steps. THINK HARDER.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Checkout the PR using ${ghPullfrogMcpName}/checkout_pr with the PR number. This fetches the PR branch and configures push settings (including for fork PRs).
+1. Checkout the PR branch via \`${ghPullfrogMcpName}/checkout_pr\`.
 
-2. **DEPENDENCIES** - ${dependencyInstallationStep}
+2. Fetch review comments via \`${ghPullfrogMcpName}/get_review_comments\`.
 
-3. **FETCH COMMENTS** - Fetch review comments using ${ghPullfrogMcpName}/get_review_comments with \`pull_number\` and \`review_id\` from EVENT DATA. This returns \`commentsPath\` - read that file for full comment details with diff context. When \`approved_only\` is set in EVENT DATA, only approved comments are returned automatically.
+3. For each comment:
+   - understand the feedback
+   - make the code change using your native tools
+   - record what was done
 
-4. **UNDERSTAND** - Review the feedback provided. Understand each review comment and what changes are being requested.
+4. Quality check:
+   - test changes, then review the diff before committing — verify only intended changes are present, no debug artifacts remain, and the changes are clean enough that a senior engineer would approve without hesitation
+   - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-5. **CONTEXT** - If the request requires understanding the codebase structure or conventions, gather relevant context. Read AGENTS.md if it exists.
+5. Finalize:
+   - push changes via \`${ghPullfrogMcpName}/push_branch\`
+   - reply to each comment using \`${ghPullfrogMcpName}/reply_to_review_comment\`
+   - resolve addressed threads via \`${ghPullfrogMcpName}/resolve_review_thread\`
+   - call \`${ghPullfrogMcpName}/report_progress\` with a brief summary
 
-6. **IMPLEMENT** - Make the necessary code changes to address the feedback. Work through each review comment systematically.
-
-7. **REPLY** - Reply to EACH review comment individually. After fixing each comment, use ${ghPullfrogMcpName}/reply_to_review_comment to reply directly to that comment thread. Keep replies extremely brief (1 sentence max, e.g., "Fixed by renaming to X" or "Added null check"). If suggesting a small, specific, self-contained code change, use GitHub's suggestion format with \`\`\`suggestion blocks. After addressing a comment and posting your reply, use ${ghPullfrogMcpName}/resolve_review_thread with the thread_id to mark it as resolved. Only resolve threads where you made code changes to address the feedback — don't resolve threads that are already resolved, threads where no action was taken, or threads where you disagree with the feedback.
-
-8. **TEST** - Test your changes to ensure they work correctly. Run relevant tests, builds, or linters BEFORE committing. If tests fail, fix the issues and repeat until everything passes.
-
-9. **COMMIT** - Commit your changes with \`${ghPullfrogMcpName}/git\` (\`git add .\` then \`git commit -m "message"\`), then push with \`${ghPullfrogMcpName}/push_branch\`. The push will automatically go to the correct remote (including fork repos). Do not create a new branch or PR - you are updating an existing one.
-
-10. **PROGRESS** - ${reportProgressInstruction}
-
-Keep the progress comment extremely brief. The summary should be 1-2 sentences max (e.g., "Fixed 3 review comments and pushed changes."). Almost all detail belongs in the individual reply_to_review_comment calls, NOT in the progress comment.`,
+${learningsStep(6)}`,
     },
     {
       name: "Review",
       description:
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
-      prompt: `Follow these steps to review the PR. Your job is to find problems—assume they exist until you've proven otherwise. Do not submit a clean review without thorough investigation.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number. This should give you all PR metadata you need, including a \`diffPath\`: a path to a temp file containing the PR diff.
+1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata and a \`diffPath\`. Read the diff to identify the major areas of change.
 
-2. **ANALYZE** - Read the modified files to understand the changes in context.
-   - **Understand the change**: What is being modified and why? What's the before/after behavior?
-   - **Evaluate the approach**: Is it sound? If not, focus on approach before implementation details.
+2. For each area of change:
+   - read the diff and trace data flow, check boundaries, and verify assumptions
+   - plan your investigation: identify the highest-risk areas (tricky state transitions, boundary crossings, assumption chains) and prioritize depth over breadth
+   - use \`${ghPullfrogMcpName}/get_pull_request\` and other read-only GitHub tools for additional context
+   - if the PR removes features, deletes exports, renames identifiers, or changes architectural patterns, run a dedicated impact analysis: list what changed, then use grep across code, tests, docs (\`docs/\`, \`wiki/\`), comments, configs, and UI to find stale references
+   - report impact-analysis findings in the summary body, ordered by severity (runtime breakage > incorrect docs > stale comments)
+   - draft inline comments with NEW line numbers from the diff — every comment must be actionable (2-3 sentences max)
+   - use GitHub permalink format for code references
+   - for large or cross-cutting PRs that touch disparate subsystems, consider delegating read-only subagents to investigate areas in parallel. subagents must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. collect their findings and use them to draft comments.
 
-3. **INVESTIGATE** - Actively hunt for problems. Use these techniques:
-   - **Trace data flow**: Use grep to follow how data moves through the system. How is state passed? Where could it get lost?
-   - **Check boundaries**: What happens across process boundaries, module boundaries, async boundaries? State that exists in one context may not exist in another.
-   - **Explore failure modes**: What if this throws? What if that returns null? What if the network fails? What if this runs twice?
-   - **Verify assumptions**: If the code assumes X, verify X is actually true. Use grep, read related files, check documentation.
-   - **Consider lifecycle**: Initialization, cleanup, error recovery. Are resources acquired before use? Released after? What happens on cancellation?
-   - **Spot performance issues**: Nested loops over large collections, blocking I/O, memory leaks, excessive object creation in hot paths, inefficient array operations (e.g., repeated \`.find()\` in a loop).
-   - **Check PR consistency**: Does the PR title/description match the actual code changes? Flag significant discrepancies.
-   - **Impact analysis**: Identify what was removed, renamed, or deprecated in the PR. Use grep to search the broader codebase for remaining references to those things in code, tests, docs, comments, and configs. Report stale references in the review body.
-   - Do NOT stop at "this looks reasonable." Dig until you either find a problem or have concrete evidence there isn't one.
+3. Self-critique: review all drafted comments and drop any that are praise, style preferences, speculative/unverified claims, about pre-existing code unrelated to the PR, or not actionable.
 
-4. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable: the author should need to change something in response. 2-3 sentences max. Use the NEW line number from the diff (second column: \`| OLD | NEW | TYPE | CODE\`). If no issues found, skip to step 5. NO COMPLIMENTS. NO NITPICKING ABOUT CHANGES UNRELATED TO THE MAIN CHANGE. Non-actionable comments (praise, style preferences, minor optimizations, documentation nits) must not be drafted.
-
-5. **WRITE SUMMARY** - Draft a 1-3 sentence summary for the review body. If issues were found, include urgency level and any concerns about code outside the diff. If no issues were found, write a brief approval summary (e.g., "Changes look good. No issues found.").
-
-6. **SUBMIT** — Determine whether to submit a review:
-   - **Issues found**: Submit via ${ghPullfrogMcpName}/create_pull_request_review with the summary body from step 5, the inline comments from step 4, and \`approved: false\`. Then call \`report_progress\` with a 1-sentence summary (e.g., "Reviewed — found 3 issues.").
-   - **No issues found**: Do NOT submit a review. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Reviewed — no issues found.").
-
-${permalinkTip}
-`,
+4. Submit:
+   - **actionable issues found**: call \`${ghPullfrogMcpName}/create_pull_request_review\` with all comments, a 1-3 sentence summary body, and \`approved: false\`. Then call \`report_progress\` with a 1-sentence summary.
+   - **no actionable issues found**: do NOT submit a review. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Reviewed — no issues found.").`,
     },
     {
       name: "IncrementalReview",
       description:
         "Re-review a PR after new commits are pushed; focus on new changes since the last review",
-      prompt: `Follow these steps to incrementally re-review the PR after new commits were pushed. Focus on what changed since the last review.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number. This returns \`diffPath\` (full PR diff) and \`incrementalDiffPath\` (changes since last reviewed version, if available).
+1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available).
 
-2. **INCREMENTAL DIFF** - If \`incrementalDiffPath\` is present, read it to see what changed since the last review. This is a range-diff that isolates only the net changes, filtering out base branch noise. If not present, fall back to reviewing the full PR diff.
+2. If \`incrementalDiffPath\` is present, read it to see what changed since the last review. This is a range-diff that isolates the net changes, filtering out base branch noise. If not present, fall back to reviewing the full PR diff.
 
-3. **FETCH PREVIOUS REVIEWS** - Use ${ghPullfrogMcpName}/list_pull_request_reviews to find previous Pullfrog reviews. For the most recent one, call ${ghPullfrogMcpName}/get_review_comments with the review ID to see specific line-level feedback. This lets you understand what feedback was already given.
+3. Fetch previous reviews via \`${ghPullfrogMcpName}/list_pull_request_reviews\`. For the most recent Pullfrog review, call \`${ghPullfrogMcpName}/get_review_comments\` with the review ID to retrieve specific prior line-level feedback.
 
-4. **ANALYZE** - Read the incremental diff to understand the new changes. Use the full PR diff for surrounding context and to catch any changes not covered by the incremental diff.
-   - **Understand the change**: What is new or modified since the last review?
-   - **Evaluate the approach**: Are the new changes sound? Do they address prior feedback?
+4. For each area of the new changes:
+   - review the incremental diff while using the full diff for context
+   - check whether prior review feedback was addressed by the new commits
+   - trace data flow, check boundaries, verify assumptions, consider lifecycle, spot performance issues
+   - if the new commits remove, rename, or deprecate anything, run impact analysis with grep across code/tests/docs/comments/configs to find stale references and include those findings in the summary body
+   - never repeat prior feedback. if the author did not address an earlier comment, assume it was intentionally declined; only comment on genuinely new issues introduced by the new commits
+   - draft inline comments with NEW line numbers from the full PR diff — every comment must be actionable (2-3 sentences max)
+   - for large or cross-cutting PRs, consider delegating read-only subagents for parallel investigation. subagents must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. collect their findings and use them to draft comments.
 
-5. **INVESTIGATE** - Hunt for problems in the new code using the same techniques as a full review:
-   - Trace data flow, check boundaries, explore failure modes, verify assumptions, consider lifecycle, spot performance issues.
-   - Focus investigation on code that changed in the incremental diff, but trace its effects through the broader codebase.
-   - **Impact analysis**: If the new commits remove, rename, or deprecate anything, use grep to search the broader codebase for stale references in code, tests, docs, comments, and configs. Report these in the review body.
-   - **NEVER repeat feedback from previous reviews.** If a prior issue was not addressed, assume it was intentionally declined. Only comment on genuinely new issues introduced by the new commits.
+5. Self-critique: drop any comments that are praise, style preferences, speculative, about pre-existing code, or not actionable.
 
-6. **DRAFT LINE-BY-LINE COMMENTS** - Every comment must be actionable. 2-3 sentences max. Use the NEW line number from the full PR diff. NO COMPLIMENTS. NO NITPICKING.
-
-7. **SUBMIT** — Determine whether to submit a review:
-   - **Issues found**: Submit via ${ghPullfrogMcpName}/create_pull_request_review with \`approved: false\`, the inline comments from step 6, and an **empty body** — inline comments speak for themselves, and a top-level body clutters the PR conversation on every re-review cycle. Then call \`report_progress\` with a 1-sentence summary (e.g., "Re-reviewed — found 2 issues in the new commits.").
-   - **No issues, but substantive changes or prior fixes confirmed**: Post a brief comment (1-3 sentences) via ${ghPullfrogMcpName}/create_issue_comment confirming the review happened and listing which prior review issues were resolved. Substantive = new functionality, behavior changes, architectural changes, or fixes to previously flagged issues.
-   - **No issues, non-substantive changes only** (e.g., trivial formatting, import reordering, comment tweaks with no functional impact): Do NOT submit a review. Call \`report_progress\` with a brief note (e.g., "Re-reviewed — no new issues found.").
-
-${permalinkTip}
-`,
+6. Submit:
+   - **actionable issues found**: call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and an **empty body** — inline comments speak for themselves, and a top-level body clutters the PR conversation on every re-review cycle. Then call \`report_progress\` with a 1-sentence summary.
+   - **no actionable issues, but substantive changes or prior fixes confirmed**: post a brief comment (1-3 sentences) via \`${ghPullfrogMcpName}/create_issue_comment\` confirming the review happened and listing which prior review issues were resolved. Substantive = new functionality, behavior changes, architectural changes, or fixes to previously flagged issues.
+   - **no actionable issues, non-substantive changes only** (e.g., trivial formatting, import reordering, comment tweaks with no functional impact): do NOT submit a review. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Re-reviewed — no new issues found.").`,
     },
     {
       name: "Plan",
       description:
         "Create plans, break down tasks, outline steps, analyze requirements, understand scope of work, or provide task breakdowns",
-      prompt: `Follow these steps. THINK HARDER.
+      prompt: `### Checklist
 
-1. **CONTEXT** - If the request requires understanding the codebase structure or conventions, gather relevant context (read AGENTS.md if it exists). Skip this step if the prompt is trivial and self-contained.
+1. Analyze the task and gather context:
+   - read AGENTS.md and relevant codebase files
+   - understand the architecture and constraints
 
-2. **ANALYZE** - Analyze the request and break it down into clear, actionable tasks.
+2. Produce a structured, actionable plan with clear milestones.
 
-3. **DEPENDENCIES** - Consider dependencies, potential challenges, and implementation order.
+3. Call \`${ghPullfrogMcpName}/report_progress\` with the plan.
 
-4. **PLAN** - Create a structured plan with clear milestones.
-
-5. **PROGRESS** - ${reportProgressInstruction}
-
-${permalinkTip}`,
+${learningsStep(4)}`,
     },
     {
       name: "Fix",
       description:
         "Fix CI failures; debug failing tests or builds; investigate and resolve check suite failures",
-      prompt: `Follow these steps to fix CI failures. THINK HARDER.
+      prompt: `### Checklist
 
-**CRITICAL RULE**: Only fix issues that were INTRODUCED BY THIS PR. If the CI failure is unrelated to the PR's changes, you MUST abort without committing anything and report why.
+1. Checkout the PR branch via \`${ghPullfrogMcpName}/checkout_pr\`.
 
-1. **GET FAILURE INFO** - Call ${ghPullfrogMcpName}/get_check_suite_logs with the check_suite_id from EVENT DATA. This returns:
-   - \`log_index\`: array of interesting lines (errors, warnings, failures) with line numbers - scan this first
-   - \`excerpt\`: curated ~80 lines around the main error - read this for immediate context
-   - \`full_log_path\`: path to complete log file - read specific line ranges if needed
-   - \`failed_steps\`: which CI steps failed (e.g., "Step 6: Run tests")
+2. Fetch check suite logs via \`${ghPullfrogMcpName}/get_check_suite_logs\`.
 
-2. **CHECKOUT AND ASSESS CAUSATION** - Use ${ghPullfrogMcpName}/checkout_pr to get the PR diff. BEFORE attempting any fix, you MUST determine if this PR caused the failure:
+3. **CRITICAL**: verify the failure was INTRODUCED BY THIS PR before fixing. If unrelated, abort and report.
 
-   **Ask yourself**: "Could the changes in this PR have caused this failure?"
+4. Diagnose and fix:
+   - read the workflow file, reproduce locally with the EXACT same commands CI runs
+   - fix the issue using your native file and shell tools
+   - verify the fix by re-running the exact CI command
+   - review the diff before committing — verify only the fix is present, no debug artifacts, no unrelated changes. the fix should be clean enough that a senior engineer would approve without hesitation.
+   - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-   - Read the PR diff carefully - what files were modified?
-   - What is failing? (test file, module, assertion)
-   - Is there a PLAUSIBLE CONNECTION between the PR changes and the failure?
+5. Finalize:
+   - push changes via \`${ghPullfrogMcpName}/push_branch\`
+   - call \`${ghPullfrogMcpName}/report_progress\` with the diagnosis and fix summary
 
-   **ABORT immediately if any of these are true:**
-   - The failing test/file was NOT touched by this PR AND doesn't depend on changed code
-   - The error is infrastructure-related (network timeout, runner OOM, service unavailable)
-   - The error is a flaky test that passes/fails randomly
-   - The error existed before this PR (pre-existing bug in main branch)
-   - The error is in a dependency update not introduced by this PR
-
-   **When aborting**, use ${ghPullfrogMcpName}/report_progress to explain:
-   "This CI failure appears unrelated to the PR's changes. [Describe the failure]. [Explain why it's not caused by the PR]. No changes made."
-
-   **Only proceed** if there's a clear, logical connection between the PR changes and the failure.
-
-3. **UNDERSTAND HOW CI RUNS** - Read the workflow file to understand exactly what commands CI runs:
-   - Look at \`.github/workflows/*.yml\` files
-   - Find the job/step that failed (from \`failed_steps\`)
-   - Note the EXACT command (e.g., \`pnpm -r test --filter=action\`, not just \`pnpm test\`)
-   - Check for any CI-specific environment variables or setup steps
-
-4. **DEPENDENCIES** - ${dependencyInstallationStep}
-
-5. **REPRODUCE LOCALLY** - Run the EXACT same command that CI runs:
-   - Do NOT simplify (e.g., don't run \`pnpm test\` if CI runs \`pnpm -r test --filter=action\`)
-   - Check if CI uses specific flags, filters, or environment variables
-   - If CI runs multiple test suites, run them all
-
-6. **ANALYZE THE FAILURE** - Use the log_index and excerpt to understand:
-   - What exactly failed (test name, file, assertion)
-   - Are there earlier warnings that might explain the failure?
-   - Is the failure flaky or deterministic?
-
-7. **FIX THE ISSUE** - Make the necessary code changes. Common patterns:
-   - Test assertion failures: fix the code or update the test expectation
-   - Build failures: fix type errors, missing imports, syntax issues
-   - Lint failures: fix code style issues
-   - Timeout/flaky tests: investigate race conditions or increase timeouts
-
-8. **VERIFY THE FIX** - Run the EXACT same CI command again to confirm the fix works
-
-9. **COMMIT AND PUSH** - Use \`${ghPullfrogMcpName}/git\` for add/commit, then \`${ghPullfrogMcpName}/push_branch\` to push
-
-10. **PROGRESS** - ${reportProgressInstruction}
-
-Your job is to fix issues THIS PR introduced, not to fix all CI failures. If in doubt about causation, abort and explain rather than making speculative changes.`,
+${learningsStep(6)}`,
     },
     {
       name: "ResolveConflicts",
       description: "Resolve merge conflicts in a PR branch against the base branch",
-      prompt: `Follow these steps to resolve merge conflicts.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number. This fetches the PR branch.
+1. **Setup**:
+   - Call \`${ghPullfrogMcpName}/checkout_pr\` to get the PR branch.
+   - Call \`${ghPullfrogMcpName}/get_pull_request\` to identify the base branch (e.g., 'main').
+   - Call \`${ghPullfrogMcpName}/git_fetch\` to fetch the base branch.
 
-2. **FETCH BASE** - Identify the base branch (usually main or master) and fetch it using ${ghPullfrogMcpName}/git_fetch (e.g., ref: "main").
+2. **Merge Attempt**:
+   - Run \`git merge origin/<base_branch>\` via shell.
+   - If it succeeds automatically, push via \`${ghPullfrogMcpName}/push_branch\` and report success.
+   - If it fails (conflicts), resolve them manually.
 
-3. **ATTEMPT MERGE** - Use ${ghPullfrogMcpName}/shell to run \`git merge origin/<base_branch>\`.
-   - If the merge succeeds (exit code 0), the branch is up to date. Push it and you're done.
-   - If the merge fails, you have conflicts to resolve.
+3. **Resolve Conflicts**:
+   - Run \`git status\` or parse the merge output to find the list of conflicting files.
+   - For each conflicting file: read it, find the conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`), understand the code context, and rewrite the file with the correct resolution. Remove all markers.
+   - Verify the file syntax is correct after resolution.
 
-4. **IDENTIFY CONFLICTS** - Run \`git status\` to see which files are conflicting (modified by both).
-
-5. **RESOLVE** - For each conflicting file:
-   - Read the file to see the conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`).
-   - Determine the correct content. You may need to keep changes from both sides, or choose one.
-   - Edit the file to apply the resolution and remove the markers.
-
-6. **VERIFY** - ${dependencyInstallationStep}
-   - Run tests/builds to ensure the resolution is correct.
-
-7. **COMMIT** - Once all conflicts are resolved:
-   - \`git add .\`
-   - \`git commit -m "Merge branch <base_branch> into <pr_branch>"\` (or similar).
-
-8. **PUSH** - Call ${ghPullfrogMcpName}/push_branch.
-
-9. **PROGRESS** - ${reportProgressInstruction}
-`,
+4. **Finalize**:
+   - Run a final verification (build/test) to ensure the resolution works.
+   - \`git add . && git commit -m "resolve merge conflicts"\`
+   - Push via \`${ghPullfrogMcpName}/push_branch\`
+   - Call \`${ghPullfrogMcpName}/report_progress\` with a summary of what was resolved`,
     },
     {
       name: "Task",
       description:
         "General-purpose tasks that don't fit other modes: answering questions, adding comments, labeling, running ad-hoc commands, or any direct request",
-      prompt: `Follow these steps. THINK HARDER.
+      prompt: `### Checklist
 
-1. **UNDERSTAND** - Read the request carefully. Only take action if you have high confidence that you understand what is being asked. Take stock of the tools at your disposal.
+1. Analyze the task. For simple operations (labeling, commenting, answering questions, running a single command), handle directly.
 
-2. **CONTEXT** - If the request requires understanding the codebase structure or conventions, gather relevant context. Read AGENTS.md if it exists. Skip this step if the prompt is trivial and self-contained.
+2. For substantial work — code changes across multiple files, multi-step investigations:
+   - plan your approach before starting
+   - use native file and shell tools for local operations
+   - use ${ghPullfrogMcpName} MCP tools for GitHub/git operations
+   - if code changes are needed: review your own diff before committing — verify only intended changes are present, no debug artifacts remain, and the changes are clean enough that a senior engineer would approve without hesitation
 
-3. **EXECUTE** - Perform the requested task.
+3. Finalize:
+   - call \`${ghPullfrogMcpName}/report_progress\` with results
+   - if the task involved code changes, push via \`${ghPullfrogMcpName}/push_branch\` and create a PR via \`${ghPullfrogMcpName}/create_pull_request\`
+   - if the task involved labeling, commenting, or other GitHub operations, perform those directly
 
-4. **CODE CHANGES** - If the task involves making code changes:
-   - Create a branch using \`${ghPullfrogMcpName}/git\` (\`git checkout -b pullfrog/branch-name\`). Branch names should be prefixed with "pullfrog/" and reflect the exact changes you are making. Never commit directly to main, master, or production.
-   - ${dependencyInstallationStep}
-   - Use file operations to create/modify files with your changes.
-   - Test your changes to ensure they work correctly. Run relevant tests, builds, or linters BEFORE committing. If tests fail, fix the issues and repeat until everything passes.
-   - Commit your changes with \`${ghPullfrogMcpName}/git\` (\`git add .\` then \`git commit -m "message"\`), then push with \`${ghPullfrogMcpName}/push_branch\`. Do NOT use \`git push\` directly - it requires credentials that only the MCP tool provides.
-   - Determine whether to create a PR:
-     - **Default behavior**: Create a PR using ${ghPullfrogMcpName}/create_pull_request with an informative title and body. If you are working in the context of an issue (check EVENT DATA for \`issue_number\` where \`is_pr\` is not true), include "Closes #<issue_number>" in the PR body to auto-close the issue when merged.
-     - **Draft PR request**: If the user explicitly asks for a draft PR (e.g. "draft PR", "create as draft", "WIP"), create a PR with \`draft: true\`.
-     - **Branch-only request**: If the user explicitly asks for a branch without a PR (e.g. "don't create a PR", "branch only", "just create a branch"), do NOT create a PR. Simply push the branch and report the branch link.
-
-5. **PROGRESS** - ${reportProgressInstruction}`,
+${learningsStep(4)}`,
     },
     {
       name: "Summarize",
       description:
         "Summarize a PR with a structured comment that is updated in place on subsequent pushes",
-      prompt: `Follow these steps.
+      prompt: `### Checklist
 
-1. **CHECKOUT** - Call ${ghPullfrogMcpName}/checkout_pr with the PR number to get PR metadata and diffPath.
+1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata and a \`diffPath\`.
+2. Delegate a subagent to analyze the diff and produce a structured summary. Include in its prompt:
+   - the diff file path
+   - PR metadata (title, file count, commit count, base/head branches)
+   - format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with plain-language \`##\` titles and before/after framing
+   - instruct it to use the TOC to selectively read relevant diff sections, not the entire file
+   - instruct it to return the full summary markdown as its final response
+3. After the subagent completes, call \`${ghPullfrogMcpName}/create_issue_comment\` with \`type: "Summary"\` and the summary body.
+4. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Posted PR summary.").
 
-2. **ANALYZE** - Read the diff file. Use the TOC to selectively read relevant sections — do not read the entire file unless the PR is small.
+### Effort
 
-3. **SUMMARIZE** - Write a structured summary following the format from EVENT INSTRUCTIONS. If no format instructions are provided, produce a concise summary with a TL;DR, key changes list, and per-change sections with human-readable \`##\` titles and before/after framing.
-
-4. **POST** - Call ${ghPullfrogMcpName}/create_issue_comment with type: 'Summary' and the summary body.
-
-5. **PROGRESS** - ${reportProgressInstruction}
-
-${permalinkTip}`,
+Use mini or auto effort.`,
     },
   ];
 }
