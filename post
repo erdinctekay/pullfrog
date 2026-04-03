@@ -41559,7 +41559,7 @@ var core3 = __toESM(require_core(), 1);
 // package.json
 var package_default = {
   name: "@pullfrog/pullfrog",
-  version: "0.0.189",
+  version: "0.0.190",
   type: "module",
   files: [
     "index.js",
