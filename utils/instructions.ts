@@ -53,22 +53,13 @@ function buildRuntimeContext(ctx: InstructionsContext): string {
   return toonEncode(filtered);
 }
 
-function buildEventTitleBody(event: PayloadEvent): string {
-  const sections: string[] = [];
-
-  // render title + body as markdown
+function buildEventTitle(event: PayloadEvent): string {
   const trimmedTitle = typeof event.title === "string" ? event.title.trim() : "";
-  const trimmedBody = typeof event.body === "string" ? event.body.trim() : "";
+  if (!trimmedTitle) return "";
 
-  if (trimmedTitle) {
-    sections.push(`# ${trimmedTitle}`);
-  }
+  const prefix = event.issue_number ? `${event.is_pr ? "PR" : "Issue"} #${event.issue_number}` : "";
 
-  if (trimmedBody) {
-    sections.push(trimmedBody);
-  }
-
-  return sections.join("\n\n");
+  return prefix ? `${prefix} ("${trimmedTitle}")` : `("${trimmedTitle}")`;
 }
 
 function buildEventMetadata(event: PayloadEvent): string {
@@ -261,7 +252,7 @@ export interface ResolvedInstructions {
 interface ContextSectionsInput {
   payload: ResolvedPayload;
   eventInstructions: string;
-  eventTitleBody: string;
+  eventTitle: string;
   eventMetadata: string;
   userQuoted: string;
 }
@@ -276,7 +267,7 @@ function buildContextSections(ctx: ContextSectionsInput): string {
 ${ctx.eventInstructions}`
     : "";
 
-  const titleBodySection = ctx.eventTitleBody ? `${relatedLabel}\n\n${ctx.eventTitleBody}` : "";
+  const titleBodySection = ctx.eventTitle ? `${relatedLabel}\n\n${ctx.eventTitle}` : "";
   const metadataSection = ctx.eventMetadata ? `--- event context ---\n\n${ctx.eventMetadata}` : "";
 
   const userSection = ctx.userQuoted
@@ -298,7 +289,7 @@ ${metadataSection}`;
 
 // shared computation for all instruction builders
 interface CommonInputs {
-  eventTitleBody: string;
+  eventTitle: string;
   eventMetadata: string;
   runtime: string;
   user: string;
@@ -308,12 +299,12 @@ interface CommonInputs {
 }
 
 function buildCommonInputs(ctx: InstructionsContext): CommonInputs {
-  const eventTitleBody = buildEventTitleBody(ctx.payload.event);
+  const eventTitle = buildEventTitle(ctx.payload.event);
   const eventMetadata = buildEventMetadata(ctx.payload.event);
   const runtime = buildRuntimeContext(ctx);
   const user = ctx.payload.prompt;
   const eventInstructions = ctx.payload.eventInstructions ?? "";
-  const event = [eventTitleBody, eventMetadata].filter(Boolean).join("\n\n---\n\n");
+  const event = [eventTitle, eventMetadata].filter(Boolean).join("\n\n---\n\n");
   const userQuoted = user
     ? user
         .split("\n")
@@ -321,7 +312,7 @@ function buildCommonInputs(ctx: InstructionsContext): CommonInputs {
         .join("\n")
     : "";
   return {
-    eventTitleBody,
+    eventTitle,
     eventMetadata,
     runtime,
     user,
@@ -388,7 +379,7 @@ If the task clearly requires no work, call \`${ghPullfrogMcpName}/report_progres
   const contextSections = buildContextSections({
     payload: ctx.payload,
     eventInstructions: inputs.eventInstructions,
-    eventTitleBody: inputs.eventTitleBody,
+    eventTitle: inputs.eventTitle,
     eventMetadata: inputs.eventMetadata,
     userQuoted: inputs.userQuoted,
   });
