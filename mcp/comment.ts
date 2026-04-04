@@ -400,7 +400,7 @@ export function ReportProgressTool(ctx: ToolContext) {
   return tool({
     name: "report_progress",
     description:
-      "Share progress on the associated GitHub issue/PR. The first call creates a comment; subsequent calls update it in place. You MUST call this at the end of every run with a brief final summary (1-3 sentences). The completed task list is automatically appended in a collapsible section — do not restate individual steps.",
+      "Share progress on the associated GitHub issue/PR. The first call creates a comment; subsequent calls update it in place. Call this at the end of every run with a brief final summary (1-3 sentences) unless the mode guidance instructs otherwise. The current task list is automatically appended in a collapsible section — do not restate individual steps.",
     parameters: ReportProgress,
     execute: execute(async (params) => {
       let body = params.body;

@@ -94,9 +94,20 @@ ${learningsStep(6)}`,
 
 3. Self-critique: review all drafted comments and drop any that are praise, style preferences, speculative/unverified claims, about pre-existing code unrelated to the PR, or not actionable.
 
-4. Submit:
-   - **actionable issues found**: call \`${ghPullfrogMcpName}/create_pull_request_review\` with all comments, a 1-3 sentence summary body, and \`approved: false\`. Then call \`report_progress\` with a 1-sentence summary.
-   - **no actionable issues found**: do NOT submit a review. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Reviewed — no issues found.").`,
+4. Submit — ALWAYS submit exactly one review via \`${ghPullfrogMcpName}/create_pull_request_review\`.
+   Do NOT call \`report_progress\` — the review is the final record and the progress
+   comment will be cleaned up automatically.
+
+   - **critical issues** (blocks merge — bugs, security, data loss):
+     \`approved: false\`. Body begins with a GitHub alert blockquote, e.g.:
+     \`> [!CAUTION]\\n> This PR introduces a race condition in ...\`
+     Follow with a brief summary if needed. Include all inline comments.
+   - **recommended changes** (non-critical):
+     \`approved: false\`. Body begins with a GitHub alert blockquote, e.g.:
+     \`> [!IMPORTANT]\\n> Consider adding input validation for ...\`
+     Follow with a brief summary if needed. Include all inline comments.
+   - **no actionable issues**:
+     \`approved: true\`, body: "Reviewed — no issues found."`,
     },
     {
       name: "IncrementalReview",
@@ -121,10 +132,20 @@ ${learningsStep(6)}`,
 
 5. Self-critique: drop any comments that are praise, style preferences, speculative, about pre-existing code, or not actionable.
 
-6. Submit:
-   - **actionable issues found**: call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and an **empty body** — inline comments speak for themselves, and a top-level body clutters the PR conversation on every re-review cycle. Then call \`report_progress\` with a 1-sentence summary.
-   - **no actionable issues, but substantive changes or prior fixes confirmed**: post a brief comment (1-3 sentences) via \`${ghPullfrogMcpName}/create_issue_comment\` confirming the review happened and listing which prior review issues were resolved. Substantive = new functionality, behavior changes, architectural changes, or fixes to previously flagged issues.
-   - **no actionable issues, non-substantive changes only** (e.g., trivial formatting, import reordering, comment tweaks with no functional impact): do NOT submit a review. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Re-reviewed — no new issues found.").`,
+6. **Summarize incremental changes**: produce a concise summary of the changes since the last review. This summary MUST follow strict formatting rules:
+   - **never put more than 3 sentences in a row** — break up prose with lists, tables, or headings
+   - use bullet lists, tables, and structured formatting liberally
+   - start with a 1-sentence TL;DR of what the new commits do
+   - then list the key changes (use a table for file-level changes if 3+ files changed, bullet list otherwise)
+   - note which prior review comments were addressed vs. not addressed (use a checklist: \`- [x] addressed\` / \`- [ ] not addressed\`)
+   - keep the entire summary compact — aim for ≤15 lines of markdown
+   - in some cases you may receive a complete diff for the whole pull request instead of an incremental one. when this happens, you will need to determine what changes have happened since Pullfrog's most recent review.
+
+7. Submit — Do NOT call \`report_progress\` or \`create_issue_comment\` — the review is the final record and the progress comment will be cleaned up automatically. Follow these rules:
+   - IF NO NEW ISSUES, NON-SUBSTANTIVE CHANGES ONLY (trivial formatting, import reordering, comment tweaks): do NOT submit a review. Do NOT call \`report_progress\`. Exit — the progress comment will be cleaned up automatically.
+   - ELSE IF NEW CRITICAL ISSUES (blocks merge): call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!CAUTION]\\n> This PR introduces ...\`) + incremental summary from step 6.
+   - ELSE IF NEW RECOMMENDED CHANGES (non-critical): call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!IMPORTANT]\\n> Consider adding input validation for ...\`) + incremental summary.
+   - ELSE IF NO NEW ISSUES, SUBSTANTIVE CHANGES (new functionality, behavior changes, or fixes to prior review feedback): call \`${ghPullfrogMcpName}/create_pull_request_review\` to create a PR review. If all Previous reviews have been properly addressed and no new issues were discovered, you can set \`approved: true\`. The "body" should state up front that no new issues were found. Then include a summary of the detected changes so the user knows that you have reviewed them.`,
     },
     {
       name: "Plan",
