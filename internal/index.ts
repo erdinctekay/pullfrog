@@ -19,10 +19,10 @@ export {
   getModelEnvVars,
   getModelProvider,
   getProviderDisplayName,
-  ghPullfrogMcpName,
   modelAliases,
   parseModel,
   providers,
+  pullfrogMcpName,
   resolveCliModel,
   resolveModelSlug,
 } from "../external.ts";

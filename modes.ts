@@ -1,5 +1,5 @@
 // changes to mode definitions should be reflected in docs/modes.mdx
-import { ghPullfrogMcpName } from "./external.ts";
+import { type AgentId, formatMcpToolRef, pullfrogMcpName } from "./external.ts";
 
 export interface Mode {
   name: string;
@@ -9,11 +9,12 @@ export interface Mode {
   prompt?: string | undefined;
 }
 
-function learningsStep(n: number): string {
-  return `${n}. **learnings** (only if high confidence): if you discovered something about repo setup, test commands, conventions, or patterns that you are confident is correct and would reliably help future runs, call \`${ghPullfrogMcpName}/update_learnings\` to persist it. skip this step if you are unsure or the finding is speculative/one-off. format as a flat bullet list (\`- \` per line, one fact per bullet). merge with existing learnings from the prompt — pass the FULL merged list. deduplicate, and drop bullets that are clearly wrong or no longer relevant to the current codebase.`;
+function learningsStep(t: (toolName: string) => string, n: number): string {
+  return `${n}. **learnings** (only if high confidence): if you discovered something about repo setup, test commands, conventions, or patterns that you are confident is correct and would reliably help future runs, call \`${t("update_learnings")}\` to persist it. skip this step if you are unsure or the finding is speculative/one-off. format as a flat bullet list (\`- \` per line, one fact per bullet). merge with existing learnings from the prompt — pass the FULL merged list. deduplicate, and drop bullets that are clearly wrong or no longer relevant to the current codebase.`;
 }
 
-export function computeModes(): Mode[] {
+export function computeModes(agentId: AgentId): Mode[] {
+  const t = (toolName: string) => formatMcpToolRef(agentId, toolName);
   return [
     {
       name: "Build",
@@ -24,8 +25,8 @@ export function computeModes(): Mode[] {
 1. **plan** (optional, for complex tasks): analyze requirements, read AGENTS.md and relevant code, produce a step-by-step implementation plan.
 
 2. **setup**: checkout or create the branch:
-   - **PR event, modifying the existing PR**: call \`${ghPullfrogMcpName}/checkout_pr\`
-   - **new branch**: use \`${ghPullfrogMcpName}/git\` to create a branch (\`git checkout -b pullfrog/branch-name\`)
+   - **PR event, modifying the existing PR**: call \`${t("checkout_pr")}\`
+   - **new branch**: use \`${t("git")}\` to create a branch (\`git checkout -b pullfrog/branch-name\`)
 
 3. **build**: implement changes using your native file and shell tools:
    - follow the plan (if you ran a plan phase)
@@ -37,11 +38,11 @@ export function computeModes(): Mode[] {
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
 5. **finalize**:
-   - push the branch via \`${ghPullfrogMcpName}/push_branch\`
-   - create a PR via \`${ghPullfrogMcpName}/create_pull_request\`
-   - call \`${ghPullfrogMcpName}/report_progress\` with the final summary including PR link
+   - push the branch via \`${t("push_branch")}\`
+   - create a PR via \`${t("create_pull_request")}\`
+   - call \`${t("report_progress")}\` with the final summary including PR link
 
-${learningsStep(6)}
+${learningsStep(t, 6)}
 
 ### Notes
 
@@ -53,9 +54,9 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
         "Address PR review feedback; respond to reviewer comments; make requested changes to an existing PR",
       prompt: `### Checklist
 
-1. Checkout the PR branch via \`${ghPullfrogMcpName}/checkout_pr\`.
+1. Checkout the PR branch via \`${t("checkout_pr")}\`.
 
-2. Fetch review comments via \`${ghPullfrogMcpName}/get_review_comments\`.
+2. Fetch review comments via \`${t("get_review_comments")}\`.
 
 3. For each comment:
    - understand the feedback
@@ -67,12 +68,12 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
 5. Finalize:
-   - push changes via \`${ghPullfrogMcpName}/push_branch\`
-   - reply to each comment using \`${ghPullfrogMcpName}/reply_to_review_comment\`
-   - resolve addressed threads via \`${ghPullfrogMcpName}/resolve_review_thread\`
-   - call \`${ghPullfrogMcpName}/report_progress\` with a brief summary
+   - push changes via \`${t("push_branch")}\`
+   - reply to each comment using \`${t("reply_to_review_comment")}\`
+   - resolve addressed threads via \`${t("resolve_review_thread")}\`
+   - call \`${t("report_progress")}\` with a brief summary
 
-${learningsStep(6)}`,
+${learningsStep(t, 6)}`,
     },
     {
       name: "Review",
@@ -80,12 +81,12 @@ ${learningsStep(6)}`,
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
       prompt: `### Checklist
 
-1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata and a \`diffPath\`. Read the diff to identify the major areas of change.
+1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`. Read the diff to identify the major areas of change.
 
 2. For each area of change:
    - read the diff and trace data flow, check boundaries, and verify assumptions
    - plan your investigation: identify the highest-risk areas (tricky state transitions, boundary crossings, assumption chains) and prioritize depth over breadth
-   - use \`${ghPullfrogMcpName}/get_pull_request\` and other read-only GitHub tools for additional context
+   - use \`${t("get_pull_request")}\` and other read-only GitHub tools for additional context
    - if the PR removes features, deletes exports, renames identifiers, or changes architectural patterns, run a dedicated impact analysis: list what changed, then use grep across code, tests, docs (\`docs/\`, \`wiki/\`), comments, configs, and UI to find stale references
    - report impact-analysis findings in the summary body, ordered by severity (runtime breakage > incorrect docs > stale comments)
    - draft inline comments with NEW line numbers from the diff — every comment must be actionable (2-3 sentences max)
@@ -94,7 +95,7 @@ ${learningsStep(6)}`,
 
 3. Self-critique: review all drafted comments and drop any that are praise, style preferences, speculative/unverified claims, about pre-existing code unrelated to the PR, or not actionable.
 
-4. Submit — ALWAYS submit exactly one review via \`${ghPullfrogMcpName}/create_pull_request_review\`.
+4. Submit — ALWAYS submit exactly one review via \`${t("create_pull_request_review")}\`.
    Do NOT call \`report_progress\` — the review is the final record and the progress
    comment will be cleaned up automatically.
 
@@ -115,11 +116,11 @@ ${learningsStep(6)}`,
         "Re-review a PR after new commits are pushed; focus on new changes since the last review",
       prompt: `### Checklist
 
-1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available).
+1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available).
 
 2. If \`incrementalDiffPath\` is present, read it to see what changed since the last review. This is a range-diff that isolates the net changes, filtering out base branch noise. If not present, fall back to reviewing the full PR diff.
 
-3. Fetch previous reviews via \`${ghPullfrogMcpName}/list_pull_request_reviews\`. For the most recent Pullfrog review, call \`${ghPullfrogMcpName}/get_review_comments\` with the review ID to retrieve specific prior line-level feedback.
+3. Fetch previous reviews via \`${t("list_pull_request_reviews")}\`. For the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback.
 
 4. For each area of the new changes:
    - review the incremental diff while using the full diff for context
@@ -143,9 +144,9 @@ ${learningsStep(6)}`,
 
 7. Submit — Do NOT call \`report_progress\` or \`create_issue_comment\` — the review is the final record and the progress comment will be cleaned up automatically. Follow these rules:
    - IF NO NEW ISSUES, NON-SUBSTANTIVE CHANGES ONLY (trivial formatting, import reordering, comment tweaks): do NOT submit a review. Do NOT call \`report_progress\`. Exit — the progress comment will be cleaned up automatically.
-   - ELSE IF NEW CRITICAL ISSUES (blocks merge): call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!CAUTION]\\n> This PR introduces ...\`) + incremental summary from step 6.
-   - ELSE IF NEW RECOMMENDED CHANGES (non-critical): call \`${ghPullfrogMcpName}/create_pull_request_review\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!IMPORTANT]\\n> Consider adding input validation for ...\`) + incremental summary.
-   - ELSE IF NO NEW ISSUES, SUBSTANTIVE CHANGES (new functionality, behavior changes, or fixes to prior review feedback): call \`${ghPullfrogMcpName}/create_pull_request_review\` to create a PR review. If all Previous reviews have been properly addressed and no new issues were discovered, you can set \`approved: true\`. The "body" should state up front that no new issues were found. Then include a summary of the detected changes so the user knows that you have reviewed them.`,
+   - ELSE IF NEW CRITICAL ISSUES (blocks merge): call \`${t("create_pull_request_review")}\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!CAUTION]\\n> This PR introduces ...\`) + incremental summary from step 6.
+   - ELSE IF NEW RECOMMENDED CHANGES (non-critical): call \`${t("create_pull_request_review")}\` with \`approved: false\`, all comments, and the review body. The review body begins with a GitHub alert blockquote (e.g. \`> [!IMPORTANT]\\n> Consider adding input validation for ...\`) + incremental summary.
+   - ELSE IF NO NEW ISSUES, SUBSTANTIVE CHANGES (new functionality, behavior changes, or fixes to prior review feedback): call \`${t("create_pull_request_review")}\` to create a PR review. If all Previous reviews have been properly addressed and no new issues were discovered, you can set \`approved: true\`. The "body" should state up front that no new issues were found. Then include a summary of the detected changes so the user knows that you have reviewed them.`,
     },
     {
       name: "Plan",
@@ -159,9 +160,9 @@ ${learningsStep(6)}`,
 
 2. Produce a structured, actionable plan with clear milestones.
 
-3. Call \`${ghPullfrogMcpName}/report_progress\` with the plan.
+3. Call \`${t("report_progress")}\` with the plan.
 
-${learningsStep(4)}`,
+${learningsStep(t, 4)}`,
     },
     {
       name: "Fix",
@@ -169,9 +170,9 @@ ${learningsStep(4)}`,
         "Fix CI failures; debug failing tests or builds; investigate and resolve check suite failures",
       prompt: `### Checklist
 
-1. Checkout the PR branch via \`${ghPullfrogMcpName}/checkout_pr\`.
+1. Checkout the PR branch via \`${t("checkout_pr")}\`.
 
-2. Fetch check suite logs via \`${ghPullfrogMcpName}/get_check_suite_logs\`.
+2. Fetch check suite logs via \`${t("get_check_suite_logs")}\`.
 
 3. **CRITICAL**: verify the failure was INTRODUCED BY THIS PR before fixing. If unrelated, abort and report.
 
@@ -183,10 +184,10 @@ ${learningsStep(4)}`,
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
 5. Finalize:
-   - push changes via \`${ghPullfrogMcpName}/push_branch\`
-   - call \`${ghPullfrogMcpName}/report_progress\` with the diagnosis and fix summary
+   - push changes via \`${t("push_branch")}\`
+   - call \`${t("report_progress")}\` with the diagnosis and fix summary
 
-${learningsStep(6)}`,
+${learningsStep(t, 6)}`,
     },
     {
       name: "ResolveConflicts",
@@ -194,13 +195,13 @@ ${learningsStep(6)}`,
       prompt: `### Checklist
 
 1. **Setup**:
-   - Call \`${ghPullfrogMcpName}/checkout_pr\` to get the PR branch.
-   - Call \`${ghPullfrogMcpName}/get_pull_request\` to identify the base branch (e.g., 'main').
-   - Call \`${ghPullfrogMcpName}/git_fetch\` to fetch the base branch.
+   - Call \`${t("checkout_pr")}\` to get the PR branch.
+   - Call \`${t("get_pull_request")}\` to identify the base branch (e.g., 'main').
+   - Call \`${t("git_fetch")}\` to fetch the base branch.
 
 2. **Merge Attempt**:
    - Run \`git merge origin/<base_branch>\` via shell.
-   - If it succeeds automatically, push via \`${ghPullfrogMcpName}/push_branch\` and report success.
+   - If it succeeds automatically, push via \`${t("push_branch")}\` and report success.
    - If it fails (conflicts), resolve them manually.
 
 3. **Resolve Conflicts**:
@@ -211,8 +212,8 @@ ${learningsStep(6)}`,
 4. **Finalize**:
    - Run a final verification (build/test) to ensure the resolution works.
    - \`git add . && git commit -m "resolve merge conflicts"\`
-   - Push via \`${ghPullfrogMcpName}/push_branch\`
-   - Call \`${ghPullfrogMcpName}/report_progress\` with a summary of what was resolved`,
+   - Push via \`${t("push_branch")}\`
+   - Call \`${t("report_progress")}\` with a summary of what was resolved`,
     },
     {
       name: "Task",
@@ -225,15 +226,15 @@ ${learningsStep(6)}`,
 2. For substantial work — code changes across multiple files, multi-step investigations:
    - plan your approach before starting
    - use native file and shell tools for local operations
-   - use ${ghPullfrogMcpName} MCP tools for GitHub/git operations
+   - use ${pullfrogMcpName} MCP tools for GitHub/git operations
    - if code changes are needed: review your own diff before committing — verify only intended changes are present, no debug artifacts remain, and the changes are clean enough that a senior engineer would approve without hesitation
 
 3. Finalize:
-   - call \`${ghPullfrogMcpName}/report_progress\` with results
-   - if the task involved code changes, push via \`${ghPullfrogMcpName}/push_branch\` and create a PR via \`${ghPullfrogMcpName}/create_pull_request\`
+   - if code changes were made, push all changes to a pull request (new or existing). \`git status\` must be clean before you finish.
+   - call \`${t("report_progress")}\` with results
    - if the task involved labeling, commenting, or other GitHub operations, perform those directly
 
-${learningsStep(4)}`,
+${learningsStep(t, 4)}`,
     },
     {
       name: "Summarize",
@@ -241,15 +242,15 @@ ${learningsStep(4)}`,
         "Summarize a PR with a structured comment that is updated in place on subsequent pushes",
       prompt: `### Checklist
 
-1. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata and a \`diffPath\`.
+1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`.
 2. Delegate a subagent to analyze the diff and produce a structured summary. Include in its prompt:
    - the diff file path
    - PR metadata (title, file count, commit count, base/head branches)
    - format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with plain-language \`##\` titles and before/after framing
    - instruct it to use the TOC to selectively read relevant diff sections, not the entire file
    - instruct it to return the full summary markdown as its final response
-3. After the subagent completes, call \`${ghPullfrogMcpName}/create_issue_comment\` with \`type: "Summary"\` and the summary body.
-4. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Posted PR summary.").
+3. After the subagent completes, call \`${t("create_issue_comment")}\` with \`type: "Summary"\` and the summary body.
+4. Call \`${t("report_progress")}\` with a brief note (e.g., "Posted PR summary.").
 
 ### Effort
 
@@ -258,4 +259,5 @@ Use mini or auto effort.`,
   ];
 }
 
-export const modes: Mode[] = computeModes();
+// static export for UI display — uses opentoad format as the readable default
+export const modes: Mode[] = computeModes("opentoad");

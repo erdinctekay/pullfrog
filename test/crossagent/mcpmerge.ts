@@ -3,7 +3,7 @@ import type { AgentResult, TestRunnerOptions, ValidationCheck } from "../utils.t
 import { defineFixture } from "../utils.ts";
 
 /**
- * MCP merge test - validates repo-level MCP servers merge correctly with gh_pullfrog.
+ * MCP merge test - validates repo-level MCP servers merge correctly with pullfrog.
  *
  * Uses GITHUB_REPOSITORY=pullfrog/test-repo-mcp whose robin-mcp reads a secret
  * from /tmp/pullfrog-mcp-secret/secret.txt (outside the repo) and exposes it

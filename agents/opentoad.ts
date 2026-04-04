@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { ghPullfrogMcpName } from "../external.ts";
+import { pullfrogMcpName } from "../external.ts";
 import { modelAliases } from "../models.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
@@ -32,6 +32,9 @@ import {
   type AgentRunContext,
   type AgentUsage,
   agent,
+  buildCommitPrompt,
+  getGitStatus,
+  MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
 } from "./shared.ts";
 
@@ -66,7 +69,7 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
       skill: "allow",
     },
     mcp: {
-      [ghPullfrogMcpName]: { type: "remote", url: ctx.mcpServerUrl },
+      [pullfrogMcpName]: { type: "remote", url: ctx.mcpServerUrl },
     },
   };
 
@@ -627,7 +630,8 @@ export const opentoad = agent({
       agent: "opencode",
     });
 
-    const args = ["run", ctx.instructions.full, "--format", "json", "--print-logs"];
+    // base args shared between initial run and continue runs
+    const baseArgs = ["run", "--format", "json", "--print-logs"];
 
     // OPENCODE_PERMISSION has absolute highest precedence (merged after managed/MDM configs).
     // external_directory gates ALL native filesystem tools (Read, Write, Edit, Glob, Grep, etc.)
@@ -647,16 +651,35 @@ export const opentoad = agent({
 
     const repoDir = process.cwd();
 
-    log.debug(`» starting Pullfrog (OpenCode): ${cliPath} ${args.join(" ")}`);
+    log.debug(`» starting Pullfrog (OpenCode): ${cliPath} ${baseArgs.join(" ")}`);
     log.debug(`» working directory: ${repoDir}`);
 
-    return runOpenCode({
+    const runParams = {
       label: "Pullfrog",
       cliPath,
-      args,
       cwd: repoDir,
       env,
       todoTracker: ctx.todoTracker,
+    };
+
+    let result = await runOpenCode({
+      ...runParams,
+      args: [...baseArgs, ctx.instructions.full],
     });
+
+    // post-run: if the working tree is dirty, continue the session and ask the agent to commit
+    for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
+      if (!result.success) break;
+      const status = getGitStatus();
+      if (!status) break;
+
+      log.info(`» dirty working tree (attempt ${attempt + 1}/${MAX_COMMIT_RETRIES}):\n${status}`);
+      result = await runOpenCode({
+        ...runParams,
+        args: [...baseArgs, "--continue", buildCommitPrompt("opentoad", status)],
+      });
+    }
+
+    return result;
   },
 });

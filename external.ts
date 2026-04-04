@@ -5,7 +5,26 @@
  */
 
 // mcp name constant
-export const ghPullfrogMcpName = "gh_pullfrog";
+export const pullfrogMcpName = "pullfrog";
+
+/** @see {@link file://./agents/shared.ts} Agent interface that uses this type */
+export type AgentId = "claude" | "opentoad";
+
+/**
+ * format a tool name the way each agent's MCP client presents it to the model.
+ * claude code: mcp__pullfrog__select_mode
+ * opencode:    pullfrog_select_mode
+ */
+export function formatMcpToolRef(agentId: AgentId, toolName: string): string {
+  switch (agentId) {
+    case "claude":
+      return `mcp__${pullfrogMcpName}__${toolName}`;
+    case "opentoad":
+      return `${pullfrogMcpName}_${toolName}`;
+    default:
+      return agentId satisfies never;
+  }
+}
 
 // model alias registry lives in models.ts — re-exported here for shared access
 export type { ModelAlias, ModelProvider, ProviderConfig } from "./models.ts";

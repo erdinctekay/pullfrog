@@ -18,7 +18,7 @@ export function buildShellToolPrompt(command: string): string {
   return `Try to run this shell command: ${command}
 
 Check ALL available tools that could execute shell commands:
-- MCP tools from gh_pullfrog server (e.g. shell tool)
+- MCP tools from pullfrog server (e.g. shell tool)
 - Internal agent tools (e.g. Shell, Task that can run shell commands)
 - Any other tool that can execute commands`;
 }

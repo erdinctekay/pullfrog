@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { FastMCP, type Tool } from "fastmcp";
 import type { AgentUsage } from "../agents/index.ts";
-import { ghPullfrogMcpName } from "../external.ts";
+import { type AgentId, pullfrogMcpName } from "../external.ts";
 import type { Mode } from "../modes.ts";
 import type { PrepResult } from "../prep/index.ts";
 import { closeBrowserDaemon } from "../utils/browser.ts";
@@ -130,6 +130,7 @@ export function initToolState(params: InitToolStateParams): ToolState {
 }
 
 export interface ToolContext {
+  agentId: AgentId;
   repo: RunContextData["repo"];
   payload: ResolvedPayload;
   octokit: OctokitWithPlugins;
@@ -251,7 +252,7 @@ async function tryStartMcpServer(
   tools: Tool<any, any>[],
   port: number
 ): Promise<McpStartResult | null> {
-  const server = new FastMCP({ name: ghPullfrogMcpName, version: "0.0.1" });
+  const server = new FastMCP({ name: pullfrogMcpName, version: "0.0.1" });
   addTools(ctx, server, tools);
 
   try {

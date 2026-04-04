@@ -277,12 +277,14 @@ export async function main(): Promise<MainResult> {
     });
     timer.checkpoint("lifecycleHooks::setup");
 
-    const modes = [...computeModes(), ...runContext.repoSettings.modes];
+    const agentId = agent.name;
+    const modes = [...computeModes(agentId), ...runContext.repoSettings.modes];
 
     const outputSchema = resolveOutputSchema();
 
     // mcpServerUrl and tmpdir are set after server starts
     toolContext = {
+      agentId,
       repo: runContext.repo,
       payload,
       octokit,
@@ -314,6 +316,7 @@ export async function main(): Promise<MainResult> {
       payload,
       repo: runContext.repo,
       modes,
+      agentId,
       outputSchema,
       learnings: runContext.repoSettings.learnings,
     });
@@ -326,6 +329,9 @@ export async function main(): Promise<MainResult> {
     ].filter(Boolean);
     log.box(logParts.join("\n\n---\n\n"), {
       title: "Instructions",
+    });
+    log.group("View full prompt", () => {
+      log.info(instructions.full);
     });
 
     // run agent, optionally with timeout enforcement

@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { ghPullfrogMcpName } from "../external.ts";
+import { pullfrogMcpName } from "../external.ts";
 
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
@@ -31,6 +31,9 @@ import {
   type AgentRunContext,
   type AgentUsage,
   agent,
+  buildCommitPrompt,
+  getGitStatus,
+  MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
 } from "./shared.ts";
 
@@ -53,7 +56,7 @@ function writeMcpConfig(ctx: AgentRunContext): string {
     configPath,
     JSON.stringify({
       mcpServers: {
-        [ghPullfrogMcpName]: { type: "http", url: ctx.mcpServerUrl },
+        [pullfrogMcpName]: { type: "http", url: ctx.mcpServerUrl },
       },
     })
   );
@@ -177,12 +180,15 @@ type RunParams = {
   todoTracker?: TodoTracker | undefined;
 };
 
-async function runClaude(params: RunParams): Promise<AgentResult> {
+type ClaudeRunResult = AgentResult & { sessionId?: string | undefined };
+
+async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
   const startTime = performance.now();
   let eventCount = 0;
   const thinkingTimer = new ThinkingTimer();
 
   let finalOutput = "";
+  let sessionId: string | undefined;
   let accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let tokensLogged = false;
 
@@ -271,6 +277,7 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
       }
     },
     result: (event: ClaudeResultEvent) => {
+      if (event.session_id) sessionId = event.session_id;
       const subtype = event.subtype || "unknown";
       const numTurns = event.num_turns || 0;
 
@@ -431,7 +438,13 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
       );
       log.debug(`stdout: ${result.stdout?.substring(0, 500)}`);
       log.debug(`stderr: ${result.stderr?.substring(0, 500)}`);
-      return { success: false, output: finalOutput || output, error: errorMessage, usage };
+      return {
+        success: false,
+        output: finalOutput || output,
+        error: errorMessage,
+        usage,
+        sessionId,
+      };
     }
 
     if (eventCount === 0 && lastProviderError) {
@@ -440,10 +453,11 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
         output: finalOutput || output,
         error: `provider error: ${lastProviderError}`,
         usage,
+        sessionId,
       };
     }
 
-    return { success: true, output: finalOutput || output, usage };
+    return { success: true, output: finalOutput || output, usage, sessionId };
   } catch (error) {
     params.todoTracker?.cancel();
     const duration = performance.now() - startTime;
@@ -471,6 +485,7 @@ async function runClaude(params: RunParams): Promise<AgentResult> {
       output: finalOutput || output,
       error: `${errorMessage} [${diagnosis}]`,
       usage: buildUsage(),
+      sessionId,
     };
   }
 }
@@ -557,17 +572,15 @@ export const claude = agent({
 
     installManagedSettings();
 
-    const args = [
+    // base args shared between initial run and continue runs
+    const baseArgs = [
       cliPath,
-      "-p",
-      ctx.instructions.full,
       "--output-format",
       "stream-json",
       "--dangerously-skip-permissions",
       "--mcp-config",
       mcpConfigPath,
       "--verbose",
-      "--no-session-persistence",
       "--effort",
       effort,
       "--disallowedTools",
@@ -576,7 +589,7 @@ export const claude = agent({
     ];
 
     if (model) {
-      args.push("--model", model);
+      baseArgs.push("--model", model);
     }
 
     // agent process gets full env — needs LLM API keys, PATH, locale, etc.
@@ -589,15 +602,35 @@ export const claude = agent({
     const repoDir = process.cwd();
 
     log.info(`» effort: ${effort}`);
-    log.debug(`» starting Pullfrog (Claude Code): node ${args.join(" ")}`);
+    log.debug(`» starting Pullfrog (Claude Code): node ${baseArgs.join(" ")}`);
     log.debug(`» working directory: ${repoDir}`);
 
-    return runClaude({
-      label: "Pullfrog",
-      args,
-      cwd: repoDir,
-      env,
-      todoTracker: ctx.todoTracker,
+    const runParams = { label: "Pullfrog", cwd: repoDir, env, todoTracker: ctx.todoTracker };
+
+    let result = await runClaude({
+      ...runParams,
+      args: [...baseArgs, "-p", ctx.instructions.full],
     });
+
+    // post-run: if the working tree is dirty, resume the session and ask the agent to commit
+    for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
+      if (!result.success || !result.sessionId) break;
+      const status = getGitStatus();
+      if (!status) break;
+
+      log.info(`» dirty working tree (attempt ${attempt + 1}/${MAX_COMMIT_RETRIES}):\n${status}`);
+      result = await runClaude({
+        ...runParams,
+        args: [
+          ...baseArgs,
+          "-p",
+          buildCommitPrompt("claude", status),
+          "--resume",
+          result.sessionId,
+        ],
+      });
+    }
+
+    return result;
   },
 });

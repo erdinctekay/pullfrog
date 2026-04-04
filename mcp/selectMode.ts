@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { ghPullfrogMcpName } from "../external.ts";
+import { formatMcpToolRef } from "../external.ts";
 import type { Mode } from "../modes.ts";
 import { apiFetch } from "../utils/apiFetch.ts";
 import { log } from "../utils/log.ts";
@@ -19,9 +19,9 @@ function resolveMode(modes: Mode[], modeName: string): Mode | null {
   return modes.find((m) => m.name.toLowerCase() === modeName.toLowerCase()) ?? null;
 }
 
-// override guidance for contextual variants that aren't standalone modes
-const modeOverrides: Record<string, string> = {
-  PlanEdit: `### Checklist (editing existing plan)
+function buildModeOverrides(t: (name: string) => string): Record<string, string> {
+  return {
+    PlanEdit: `### Checklist (editing existing plan)
 
 An existing plan comment was found for this issue. Update that comment with the revised plan — do not create a new plan comment.
 
@@ -30,27 +30,28 @@ An existing plan comment was found for this issue. Update that comment with the 
    - incorporate the current plan (\`previousPlanBody\`) and the user's revision request
    - gather relevant codebase context (file paths, architecture notes from AGENTS.md)
    - produce a structured plan with clear milestones
-3. Call \`${ghPullfrogMcpName}/report_progress\` with the full revised plan text and \`{ target_plan_comment: true }\` so it updates the existing plan comment (not the progress comment).
-4. Then post a short note to the progress comment (e.g. "Plan has been updated in the comment above.") via \`${ghPullfrogMcpName}/report_progress\` so it is not left as "Leaping...".`,
+3. Call \`${t("report_progress")}\` with the full revised plan text and \`{ target_plan_comment: true }\` so it updates the existing plan comment (not the progress comment).
+4. Then post a short note to the progress comment (e.g. "Plan has been updated in the comment above.") via \`${t("report_progress")}\` so it is not left as "Leaping...".`,
 
-  SummaryUpdate: `### Checklist (updating existing summary)
+    SummaryUpdate: `### Checklist (updating existing summary)
 
 An existing summary comment was found for this PR. Update it rather than creating a new one.
 
 1. Use \`previousSummaryBody\` from this response as the current summary to revise.
-2. Checkout the PR via \`${ghPullfrogMcpName}/checkout_pr\` — this returns PR metadata and a \`diffPath\`.
+2. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`.
 3. Delegate a subagent with:
    - the diff file path and PR metadata
    - the existing summary body (\`previousSummaryBody\`) so it can update rather than rewrite from scratch
    - format instructions from EVENT INSTRUCTIONS (if any)
    - instruct it to produce an updated summary reflecting the current state of the PR and return it as its final response
-4. After the subagent completes, call \`${ghPullfrogMcpName}/edit_issue_comment\` with \`commentId: existingSummaryCommentId\` (from this response) and the updated summary body.
-5. Call \`${ghPullfrogMcpName}/report_progress\` with a brief note (e.g., "Updated PR summary.").
+4. After the subagent completes, call \`${t("edit_issue_comment")}\` with \`commentId: existingSummaryCommentId\` (from this response) and the updated summary body.
+5. Call \`${t("report_progress")}\` with a brief note (e.g., "Updated PR summary.").
 
 ### Effort
 
 Use mini or auto effort.`,
-};
+  };
+}
 
 type OrchestratorGuidance = {
   modeName: string;
@@ -139,6 +140,9 @@ async function fetchExistingSummaryComment(
 }
 
 export function SelectModeTool(ctx: ToolContext) {
+  const t = (name: string) => formatMcpToolRef(ctx.agentId, name);
+  const overrides = buildModeOverrides(t);
+
   return tool({
     name: "select_mode",
     description:
@@ -180,7 +184,7 @@ export function SelectModeTool(ctx: ToolContext) {
             return {
               ...buildOrchestratorGuidance(selectedMode, {
                 ...guidanceOpts,
-                overrideGuidance: modeOverrides.PlanEdit,
+                overrideGuidance: overrides.PlanEdit,
               }),
               previousPlanBody: existing.body,
             };
@@ -197,7 +201,7 @@ export function SelectModeTool(ctx: ToolContext) {
             return {
               ...buildOrchestratorGuidance(selectedMode, {
                 ...guidanceOpts,
-                overrideGuidance: modeOverrides.SummaryUpdate,
+                overrideGuidance: overrides.SummaryUpdate,
               }),
               existingSummaryCommentId: existing.commentId,
               previousSummaryBody: existing.body,

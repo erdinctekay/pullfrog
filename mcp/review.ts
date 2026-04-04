@@ -1,6 +1,6 @@
 import type { RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
-import { ghPullfrogMcpName } from "../external.ts";
+import { formatMcpToolRef } from "../external.ts";
 import { apiFetch } from "../utils/apiFetch.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter } from "../utils/buildPullfrogFooter.ts";
@@ -230,7 +230,7 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
             to: toSha,
             instructions:
               `new commits were pushed while you were reviewing. ` +
-              `call \`${ghPullfrogMcpName}/checkout_pr\` again to fetch the latest version — it will compute the incremental diff automatically. ` +
+              `call \`${formatMcpToolRef(ctx.agentId, "checkout_pr")}\` again to fetch the latest version — it will compute the incremental diff automatically. ` +
               `submit another review covering only the new changes. do not repeat feedback from your previous review.`,
           },
         };
