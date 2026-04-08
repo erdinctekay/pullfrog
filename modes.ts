@@ -240,18 +240,9 @@ ${learningsStep(t, 4)}`,
       prompt: `### Checklist
 
 1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`.
-2. Delegate a subagent to analyze the diff and produce a structured summary. Include in its prompt:
-   - the diff file path
-   - PR metadata (title, file count, commit count, base/head branches)
-   - format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with plain-language \`##\` titles and before/after framing
-   - instruct it to use the TOC to selectively read relevant diff sections, not the entire file
-   - instruct it to return the full summary markdown as its final response
-3. After the subagent completes, call \`${t("create_issue_comment")}\` with \`type: "Summary"\` and the summary body.
-4. Call \`${t("report_progress")}\` with a brief note (e.g., "Posted PR summary.").
-
-### Effort
-
-Use mini or auto effort.`,
+2. Read the diff using the TOC to selectively read relevant sections (not the entire file). Produce a structured summary using format instructions from EVENT INSTRUCTIONS (if any); otherwise use default format: TL;DR, key changes list, per-change sections with plain-language \`##\` titles and before/after framing.
+3. Call \`${t("create_issue_comment")}\` with \`type: "Summary"\` and the summary body.
+4. Call \`${t("report_progress")}\` with a brief note (e.g., "Posted PR summary.").`,
     },
   ];
 }
