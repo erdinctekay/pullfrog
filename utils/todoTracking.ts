@@ -56,6 +56,8 @@ export type TodoTracker = {
   cancel: () => void;
   /** resolves when any in-flight onUpdate call completes */
   settled: () => Promise<void>;
+  /** mark in-progress items as completed (for final snapshot before review/progress post) */
+  completeInProgress: () => void;
   renderCollapsible: () => string;
   readonly enabled: boolean;
   /** true after the tracker has successfully called onUpdate at least once */
@@ -133,6 +135,12 @@ export function createTodoTracker(onUpdate: (body: string) => Promise<void>): To
 
     async settled() {
       await inflightPromise;
+    },
+
+    completeInProgress() {
+      for (const item of state.values()) {
+        if (item.status === "in_progress") item.status = "completed";
+      }
     },
 
     renderCollapsible(): string {

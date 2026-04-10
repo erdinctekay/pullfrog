@@ -386,6 +386,7 @@ export function ReportProgressTool(ctx: ToolContext) {
       if (!params.target_plan_comment && ctx.toolState.todoTracker) {
         ctx.toolState.todoTracker.cancel();
         await ctx.toolState.todoTracker.settled();
+        ctx.toolState.todoTracker.completeInProgress();
         const collapsible = ctx.toolState.todoTracker.renderCollapsible();
         if (collapsible) {
           body = `${body}\n\n${collapsible}`;

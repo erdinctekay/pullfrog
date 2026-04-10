@@ -134,7 +134,7 @@ ${learningsStep(t, 6)}`,
 5. Self-critique: drop any comments that are praise, style preferences, speculative, about pre-existing code, or not actionable.
 
 6. **Summarize**: build two distinct sections for the review body:
-   a. **Reviewed changes**: one bullet per logical change in the new commits (e.g. \`- dispatch/route.ts: switched from parse() to safeParse with structured 400 responses\`). describe what each change does — these are the novel changes you are acknowledging as reviewed.
+   a. **Reviewed changes**: summarize at the logical-change level, not per-file. each bullet starts with a past-tense verb (e.g. \`- Extracted shared CLI runtime into a single module\`, \`- Renamed package to pullfrog\`). avoid file paths unless they add clarity. if the changes can be described in one sentence, use one sentence — no bullets needed.
    b. **Prior review feedback**: list only the prior review comments that WERE addressed by the new commits (\`- [x] safeParse instead of parse — addressed\`). omit unaddressed comments. a change can appear in both sections — described as a reviewed change AND acknowledged as addressed feedback.
    - no headings, no tables, no prose paragraphs in either section — just bullets
    - in some cases you may receive a complete diff for the whole pull request instead of an incremental one. when this happens, you will need to determine what changes have happened since Pullfrog's most recent review.

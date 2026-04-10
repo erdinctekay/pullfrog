@@ -87,6 +87,7 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
       if (body && ctx.toolState.selectedMode === "Review" && ctx.toolState.todoTracker) {
         ctx.toolState.todoTracker.cancel();
         await ctx.toolState.todoTracker.settled();
+        ctx.toolState.todoTracker.completeInProgress();
         const collapsible = ctx.toolState.todoTracker.renderCollapsible();
         if (collapsible) {
           body = `${body}\n\n${collapsible}`;
