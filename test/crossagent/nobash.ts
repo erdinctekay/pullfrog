@@ -42,4 +42,5 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   agentEnv,
+  env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
 };

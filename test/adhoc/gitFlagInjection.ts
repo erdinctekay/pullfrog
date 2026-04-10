@@ -108,4 +108,5 @@ export const test: TestRunnerOptions = {
   validator,
   tags: ["adhoc", "security"],
   agents: ["opentoad"],
+  env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
 };

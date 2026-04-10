@@ -10,7 +10,7 @@ import { defineFixture, generateAgentUuids, getAgentOutput } from "../utils.ts";
  *     managed-settings.json denies /proc reads (claude)
  *
  * runs with both agents to verify each sandbox independently.
- * requires: CI=true (to enable sandbox), PULLFROG_DISABLE_SECURITY_INSTRUCTIONS=1
+ * requires: CI=true (to enable sandbox)
  */
 
 const fixture = defineFixture(
@@ -57,4 +57,5 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   agentEnv,
+  env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
 };

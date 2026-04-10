@@ -49,4 +49,5 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   tags: ["adhoc", "security"],
+  env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
 };
