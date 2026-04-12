@@ -11,15 +11,9 @@ jobs:
   test-token:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-
       - name: Get installation token
         id: token
-        uses: ./get-installation-token
+        uses: pullfrog/pullfrog/get-installation-token@main
 
       - name: Verify token with Node.js
         env:
