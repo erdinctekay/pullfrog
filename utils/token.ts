@@ -6,7 +6,7 @@ import { onExitSignal } from "./exitHandler.ts";
 import { acquireNewToken } from "./github.ts";
 import { isGitHubActions } from "./globals.ts";
 
-// re-export for get-installation-token action
+// re-export for `pullfrog gha token` subcommand
 export { acquireNewToken as acquireInstallationToken };
 export { revokeGitHubInstallationToken as revokeInstallationToken };
 

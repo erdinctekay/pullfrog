@@ -13,8 +13,8 @@ outputs:
 
 runs:
   using: "node24"
-  main: "entry"
-  post: "entry"
+  main: "entry.ts"
+  post: "post.ts"
 
 branding:
   icon: "key"

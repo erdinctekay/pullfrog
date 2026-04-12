@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { log } from "./cli.ts";
+
+const skillsBin = resolve(import.meta.dirname, "../node_modules/.bin/skills");
 
 export function addSkill(params: {
   ref: string;
@@ -8,8 +11,8 @@ export function addSkill(params: {
   agent: string;
 }): void {
   const result = spawnSync(
-    "npx",
-    ["skills", "add", params.ref, "--skill", params.skill, "-g", "-a", params.agent, "-y"],
+    skillsBin,
+    ["add", params.ref, "--skill", params.skill, "-g", "-a", params.agent, "-y"],
     {
       env: { ...process.env, ...params.env },
       stdio: "pipe",

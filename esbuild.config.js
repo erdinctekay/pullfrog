@@ -3,7 +3,7 @@
 import { build } from "esbuild";
 import { readFileSync, writeFileSync } from "fs";
 
-const isMainOnlyBuild = process.argv.includes("--main-only");
+const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 
 // Plugin to strip shebangs from output files
 /**
@@ -61,30 +61,21 @@ const sharedConfig = {
   drop: [],
 };
 
-// Build the main entry bundle
+// Build the CLI bundle (published to npm, used by npx)
 await build({
   ...sharedConfig,
-  entryPoints: ["./entry.ts"],
-  outfile: "./entry",
+  entryPoints: ["./cli.ts"],
+  outfile: "./dist/cli.mjs",
+  target: "node20",
   plugins: [stripShebangPlugin],
+  define: {
+    "process.env.CLI_VERSION": JSON.stringify(pkg.version),
+  },
 });
 
-if (!isMainOnlyBuild) {
-  // Build the post cleanup entry bundle
-  await build({
-    ...sharedConfig,
-    entryPoints: ["./post.ts"],
-    outfile: "./post",
-    plugins: [stripShebangPlugin],
-  });
-
-  // Build the get-installation-token action
-  await build({
-    ...sharedConfig,
-    entryPoints: ["./get-installation-token/entry.ts"],
-    outfile: "./get-installation-token/entry",
-    plugins: [stripShebangPlugin],
-  })
-}
+// prepend shebang after strip (esbuild banner can't guarantee line 1 placement)
+const cliPath = "./dist/cli.mjs";
+const cliContent = readFileSync(cliPath, "utf8");
+writeFileSync(cliPath, `#!/usr/bin/env node\n${cliContent}`);
 
 console.log("» build completed successfully");

@@ -7,16 +7,25 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@actions/core':
         specifier: ^1.11.1
         version: 1.11.1
+      '@anthropic-ai/claude-code':
+        specifier: 2.1.85
+        version: 2.1.85
       '@ark/fs':
         specifier: 0.56.0
         version: 0.56.0
       '@ark/util':
         specifier: 0.56.0
         version: 0.56.0
+      '@clack/prompts':
+        specifier: ^1.2.0
+        version: 1.2.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.26.0
+        version: 1.26.0(zod@4.3.6)
       '@octokit/plugin-throttling':
         specifier: ^11.0.3
         version: 11.0.3(@octokit/core@7.0.5)
@@ -32,46 +41,6 @@ importers:
       '@toon-format/toon':
         specifier: ^1.0.0
         version: 1.4.0
-      ajv:
-        specifier: ^8.18.0
-        version: 8.18.0
-      arkregex:
-        specifier: 0.0.5
-        version: 0.0.5
-      arktype:
-        specifier: 2.2.0
-        version: 2.2.0
-      dotenv:
-        specifier: ^17.2.3
-        version: 17.2.3
-      execa:
-        specifier: ^9.6.0
-        version: 9.6.0
-      fastmcp:
-        specifier: ^3.34.0
-        version: 3.34.0(arktype@2.2.0)
-      file-type:
-        specifier: ^21.3.0
-        version: 21.3.0
-      package-manager-detector:
-        specifier: ^1.6.0
-        version: 1.6.0
-      semver:
-        specifier: ^7.7.3
-        version: 7.7.3
-      table:
-        specifier: ^6.9.0
-        version: 6.9.0
-      turndown:
-        specifier: ^7.2.0
-        version: 7.2.2
-    devDependencies:
-      '@anthropic-ai/claude-code':
-        specifier: 2.1.85
-        version: 2.1.85
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.26.0
-        version: 1.26.0(zod@4.3.6)
       '@types/node':
         specifier: ^24.7.2
         version: 24.7.2
@@ -84,18 +53,57 @@ importers:
       agent-browser:
         specifier: 0.21.0
         version: 0.21.0
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
       arg:
         specifier: ^5.0.2
         version: 5.0.2
+      arkregex:
+        specifier: 0.0.5
+        version: 0.0.5
+      arktype:
+        specifier: 2.2.0
+        version: 2.2.0
+      dotenv:
+        specifier: ^17.2.3
+        version: 17.2.3
       esbuild:
         specifier: ^0.25.9
         version: 0.25.12
+      execa:
+        specifier: ^9.6.0
+        version: 9.6.0
+      fastmcp:
+        specifier: ^3.34.0
+        version: 3.34.0(arktype@2.2.0)
+      file-type:
+        specifier: ^21.3.0
+        version: 21.3.0
       husky:
         specifier: ^9.0.0
         version: 9.1.7
       opencode-ai:
         specifier: 1.1.56
         version: 1.1.56
+      package-manager-detector:
+        specifier: ^1.6.0
+        version: 1.6.0
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
+      semver:
+        specifier: ^7.7.3
+        version: 7.7.3
+      skills:
+        specifier: 1.4.9
+        version: 1.4.9
+      table:
+        specifier: ^6.9.0
+        version: 6.9.0
+      turndown:
+        specifier: ^7.2.0
+        version: 7.2.2
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -136,6 +144,12 @@ packages:
 
   '@borewit/text-codec@0.2.1':
     resolution: {integrity: sha512-k7vvKPbf7J2fZ5klGRD9AeKfUvojuZIQ3BT5u7Jfv+puwXkUBUT5PVyMDfJZpy30CBDXGMgw7fguK/lpOMBvgw==}
+
+  '@clack/core@1.2.0':
+    resolution: {integrity: sha512-qfxof/3T3t9DPU/Rj3OmcFyZInceqj/NVtO9rwIuJqCUgh32gwPjpFQQp/ben07qKlhpwq7GzfWpST4qdJ5Drg==}
+
+  '@clack/prompts@1.2.0':
+    resolution: {integrity: sha512-4jmztR9fMqPMjz6H/UZXj0zEmE43ha1euENwkckKKel4XpSfokExPo5AiVStdHSAlHekz4d0CA/r45Ok1E4D3w==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -1120,8 +1134,17 @@ packages:
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
+  fast-string-truncated-width@1.2.1:
+    resolution: {integrity: sha512-Q9acT/+Uu3GwGj+5w/zsGuQjh9O1TyywhIwAxHudtWrgF09nHOPrvTLhQevPbttcxjr/SNN7mJmfOw/B1bXgow==}
+
+  fast-string-width@1.1.0:
+    resolution: {integrity: sha512-O3fwIVIH5gKB38QNbdg+3760ZmGz0SZMgvwJbA1b2TGXceKE6A2cOlfogh1iw8lr049zPyd7YADHy+B7U4W9bQ==}
+
   fast-uri@3.1.0:
     resolution: {integrity: sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==}
+
+  fast-wrap-ansi@0.1.6:
+    resolution: {integrity: sha512-HlUwET7a5gqjURj70D5jl7aC3Zmy4weA1SHUfM0JFI0Ptq987NH2TwbBFLoERhfwk+E+eaq4EK3jXoT+R3yp3w==}
 
   fastmcp@3.34.0:
     resolution: {integrity: sha512-xKOXjU+MK7OZy91BY3FS5aenSiclJBCRMaZtXb3HYaKZVFbq4qYvAlFu6xYI3UU1NGLtv+h8izoStnOQ1By0BA==}
@@ -1626,6 +1649,14 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
+  sisteransi@1.0.5:
+    resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
+
+  skills@1.4.9:
+    resolution: {integrity: sha512-BTh7kfSkGPirsLgvg5vvALjDlgNImm9HRn937yAfESFzmShQEZWWTYJQbN34qjlwxOBO7Me4E9Lh6Ot5AE29zA==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   slice-ansi@4.0.0:
     resolution: {integrity: sha512-qMCMfhY040cVHT43K9BFygqYbUPFZKHOg7K73mtTWJRb8pyP3fzf4Ixd5SzdEJQ6MRUg/WBnOLxghZtKKurENQ==}
     engines: {node: '>=10'}
@@ -1886,6 +1917,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@22.0.0:
     resolution: {integrity: sha512-rwu/ClNdSMpkSrUb+d6BRsSkLUq1fmfsY6TOpYzTwvwkg1/NRG85KBy3kq++A8LKQwX6lsu+aWad+2khvuXrqw==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=23}
@@ -1945,6 +1981,18 @@ snapshots:
   '@ark/util@0.56.0': {}
 
   '@borewit/text-codec@0.2.1': {}
+
+  '@clack/core@1.2.0':
+    dependencies:
+      fast-wrap-ansi: 0.1.6
+      sisteransi: 1.0.5
+
+  '@clack/prompts@1.2.0':
+    dependencies:
+      '@clack/core': 1.2.0
+      fast-string-width: 1.1.0
+      fast-wrap-ansi: 0.1.6
+      sisteransi: 1.0.5
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
@@ -2801,7 +2849,17 @@ snapshots:
 
   fast-deep-equal@3.1.3: {}
 
+  fast-string-truncated-width@1.2.1: {}
+
+  fast-string-width@1.1.0:
+    dependencies:
+      fast-string-truncated-width: 1.2.1
+
   fast-uri@3.1.0: {}
+
+  fast-wrap-ansi@0.1.6:
+    dependencies:
+      fast-string-width: 1.1.0
 
   fastmcp@3.34.0(arktype@2.2.0):
     dependencies:
@@ -3334,6 +3392,12 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
+  sisteransi@1.0.5: {}
+
+  skills@1.4.9:
+    dependencies:
+      yaml: 2.8.3
+
   slice-ansi@4.0.0:
     dependencies:
       ansi-styles: 4.3.0
@@ -3524,6 +3588,8 @@ snapshots:
   y18n@5.0.8: {}
 
   yaml@2.8.2: {}
+
+  yaml@2.8.3: {}
 
   yargs-parser@22.0.0: {}
 

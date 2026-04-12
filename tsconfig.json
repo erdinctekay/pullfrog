@@ -20,5 +20,6 @@
     "stripInternal": true,
     "moduleDetection": "force",
     "useUnknownInCatchVariables": true
-  }
+  },
+  "exclude": []
 }

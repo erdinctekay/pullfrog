@@ -35,8 +35,8 @@ outputs:
 
 runs:
   using: "node24"
-  main: "entry"
-  post: "post"
+  main: "entry.ts"
+  post: "post.ts"
   post-if: "failure() || cancelled()"
 
 branding:
