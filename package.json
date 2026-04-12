@@ -74,24 +74,14 @@
     "url": "https://github.com/pullfrog/pullfrog/issues"
   },
   "homepage": "https://github.com/pullfrog/pullfrog#readme",
-  "zshy": {
-    "exports": "./index.ts"
-  },
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "@pullfrog/source": "./index.ts",
-      "types": "./dist/index.d.cts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "default": "./index.ts"
     },
     "./internal": {
       "@pullfrog/source": "./internal/index.ts",
-      "types": "./dist/internal.d.cts",
-      "import": "./dist/internal.js",
-      "default": "./dist/internal.js"
+      "default": "./internal/index.ts"
     },
     "./package.json": "./package.json"
   },

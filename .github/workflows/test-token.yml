@@ -20,13 +20,14 @@ jobs:
           GITHUB_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           node -e '
-            const res = await fetch("https://api.github.com/repos/" + process.env.GITHUB_REPOSITORY, {
+            const res = await fetch("https://api.github.com/installation/repositories?per_page=1", {
               headers: {
                 Authorization: "token " + process.env.GITHUB_TOKEN,
                 Accept: "application/vnd.github+json",
               },
             });
-            if (!res.ok) throw new Error("GET repo failed: " + res.status + " " + (await res.text()));
-            const repo = await res.json();
-            console.log("authenticated as installation — repo:", repo.full_name, "private:", repo.private);
+            if (!res.ok) throw new Error("GET installation/repositories failed: " + res.status + " " + (await res.text()));
+            const data = await res.json();
+            console.log("authenticated — installation has access to", data.total_count, "repo(s)");
+            console.log("first repo:", data.repositories[0].full_name);
           '
