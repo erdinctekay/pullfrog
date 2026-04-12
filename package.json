@@ -20,7 +20,7 @@
     "scratch": "node scratch.ts",
     "upDeps": "pnpm up --latest",
     "lock": "pnpm install --no-frozen-lockfile",
-    "prepare": "cd .. && husky action/.husky"
+    "prepare": "cd .. && husky"
   },
   "devDependencies": {
     "@actions/core": "^1.11.1",

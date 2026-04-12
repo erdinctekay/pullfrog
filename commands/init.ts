@@ -384,7 +384,9 @@ async function ensureInstallation(ctx: {
       isOrg: initial.isOrg,
     });
     activeSpin!.stop(`pullfrog is installed on selected repos, but ${repoRef} is not included.`);
-    p.log.info(`add it under "Repository access" on the installation config page.\n  ${pc.dim(configUrl)}`);
+    p.log.info(
+      `add it under "Repository access" on the installation config page.\n  ${pc.dim(configUrl)}`
+    );
     const openIt = await p.confirm({ message: "open browser?", active: "yes", inactive: "no" });
     handleCancel(openIt);
     if (openIt) openBrowser(configUrl);
@@ -742,7 +744,9 @@ async function promptTestRun(ctx: { token: string; owner: string; repo: string }
 
   activeSpin!.stop("dispatched test run");
   if (result.data.url) {
-    process.stdout.write(`${pc.gray(p.S_BAR)}    ${link(pc.dim(result.data.url), result.data.url)}\n`);
+    process.stdout.write(
+      `${pc.gray(p.S_BAR)}    ${link(pc.dim(result.data.url), result.data.url)}\n`
+    );
     openBrowser(result.data.url);
   }
 }
@@ -867,7 +871,9 @@ async function main() {
     if (!merged) skipTestRun = true;
   } else {
     const short = result.data.hash?.slice(0, 7);
-    spin.stop(short ? `committed pullfrog.yml to repo ${pc.dim(short)}` : "committed pullfrog.yml to repo");
+    spin.stop(
+      short ? `committed pullfrog.yml to repo ${pc.dim(short)}` : "committed pullfrog.yml to repo"
+    );
   }
 
   if (!skipTestRun && !secrets.hasRuns) {

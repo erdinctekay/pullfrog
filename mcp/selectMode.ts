@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { formatMcpToolRef } from "../external.ts";
-import { PR_SUMMARY_FORMAT, type Mode } from "../modes.ts";
+import { type Mode, PR_SUMMARY_FORMAT } from "../modes.ts";
 import { apiFetch } from "../utils/apiFetch.ts";
 import { log } from "../utils/log.ts";
 import type { ToolContext } from "./server.ts";
