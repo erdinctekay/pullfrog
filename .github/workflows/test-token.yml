@@ -1,0 +1,38 @@
+name: Test get-installation-token
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Get installation token
+        id: token
+        uses: ./get-installation-token
+
+      - name: Verify token with Node.js
+        env:
+          GITHUB_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          node -e '
+            const res = await fetch("https://api.github.com/repos/" + process.env.GITHUB_REPOSITORY, {
+              headers: {
+                Authorization: "token " + process.env.GITHUB_TOKEN,
+                Accept: "application/vnd.github+json",
+              },
+            });
+            if (!res.ok) throw new Error("GET repo failed: " + res.status + " " + (await res.text()));
+            const repo = await res.json();
+            console.log("authenticated as installation — repo:", repo.full_name, "private:", repo.private);
+          '
