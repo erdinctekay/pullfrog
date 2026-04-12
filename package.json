@@ -3,9 +3,9 @@
   "version": "0.0.194",
   "type": "module",
   "bin": {
-    "pullfrog": "./dist/cli.mjs",
-    "pullfrog-dev": "./dist/cli.mjs",
-    "pf": "./dist/cli.mjs"
+    "pullfrog": "dist/cli.mjs",
+    "pullfrog-dev": "dist/cli.mjs",
+    "pf": "dist/cli.mjs"
   },
   "files": [
     "dist/"
