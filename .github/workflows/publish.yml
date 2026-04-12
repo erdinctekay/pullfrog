@@ -101,7 +101,7 @@ jobs:
 
       - name: Publish to npm
         if: steps.check_tag.outputs.exists == 'false'
-        run: NODE_AUTH_TOKEN="" npm publish --provenance --access public
+        run: npm publish --provenance --access public
 
       - name: Summary
         if: always()
