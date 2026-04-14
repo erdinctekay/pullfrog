@@ -13,7 +13,7 @@ export interface WorkflowRunFooterInfo {
 }
 
 export interface BuildPullfrogFooterParams {
-  /** add "Triggered by Pullfrog" link */
+  /** add "via Pullfrog" link */
   triggeredBy?: boolean;
   /** add "View workflow run" link */
   workflowRun?: WorkflowRunFooterInfo | undefined;
@@ -52,7 +52,7 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
   }
 
   if (params.triggeredBy) {
-    parts.push("Triggered by [Pullfrog](https://pullfrog.com)");
+    parts.push("via [Pullfrog](https://pullfrog.com)");
   }
 
   if (params.model) {

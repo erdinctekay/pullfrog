@@ -67,9 +67,10 @@ Inspect the repository structure to determine how dependencies should be install
 }
 
 /**
- * start dependency installation in the background (non-blocking, idempotent)
+ * start dependency installation in the background (non-blocking, idempotent).
+ * called eagerly from main.ts at startup and also available via MCP tools.
  */
-function startInstallation(ctx: ToolContext): void {
+export function startInstallation(ctx: ToolContext): void {
   // already started or completed - do nothing
   if (ctx.toolState.dependencyInstallation) {
     return;

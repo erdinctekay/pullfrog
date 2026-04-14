@@ -2,6 +2,7 @@
 
 import * as core from "@actions/core";
 import { deleteProgressComment, reportProgress } from "./mcp/comment.ts";
+import { startInstallation } from "./mcp/dependencies.ts";
 import {
   initToolState,
   startMcpHttpServer,
@@ -306,6 +307,8 @@ export async function main(): Promise<MainResult> {
     toolContext.mcpServerUrl = mcpHttpServer.url;
     log.info(`» MCP server started at ${mcpHttpServer.url}`);
     timer.checkpoint("mcpServer");
+
+    startInstallation(toolContext);
 
     if (payload.model) log.info(`» model:   ${payload.model}`);
     if (payload.timeout) log.info(`» timeout: ${payload.timeout}`);

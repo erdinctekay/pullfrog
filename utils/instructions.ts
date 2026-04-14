@@ -153,9 +153,10 @@ ${ctx.userQuoted}`;
 
   const eventInstructions = ctx.payload.eventInstructions ?? "";
   if (eventInstructions) {
+    const parts = [ctx.eventTitle, eventInstructions].filter(Boolean);
     return `************* YOUR TASK *************
 
-${eventInstructions}`;
+${parts.join("\n\n")}`;
   }
 
   return "";
