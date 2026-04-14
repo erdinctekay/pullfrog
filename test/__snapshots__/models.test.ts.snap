@@ -27,8 +27,8 @@ exports[`latest model per provider snapshot > matches snapshot 1`] = `
     "releaseDate": "2026-04-07",
   },
   "openrouter": {
-    "modelId": "z-ai/glm-5.1",
-    "releaseDate": "2026-04-07",
+    "modelId": "openrouter/elephant-alpha",
+    "releaseDate": "2026-04-13",
   },
   "xai": {
     "modelId": "grok-4.20-multi-agent-0309",
