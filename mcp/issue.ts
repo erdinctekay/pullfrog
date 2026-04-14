@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
+import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -21,15 +22,22 @@ export function IssueTool(ctx: ToolContext) {
     name: "create_issue",
     description: "Create a new GitHub issue",
     parameters: Issue,
-    execute: execute(async ({ title, body, labels, assignees }) => {
+    execute: execute(async (params) => {
       const result = await ctx.octokit.rest.issues.create({
         owner: ctx.repo.owner,
         repo: ctx.repo.name,
-        title: title,
-        body: fixDoubleEscapedString(body),
-        labels: labels ?? [],
-        assignees: assignees ?? [],
+        title: params.title,
+        body: fixDoubleEscapedString(params.body),
+        labels: params.labels ?? [],
+        assignees: params.assignees ?? [],
       });
+
+      const nodeId = result.data.node_id;
+      if (typeof nodeId === "string" && nodeId.length > 0) {
+        await patchWorkflowRunFields(ctx, {
+          issueNodeId: nodeId,
+        });
+      }
 
       return {
         success: true,

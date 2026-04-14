@@ -1,11 +1,11 @@
 import type { RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
 import { formatMcpToolRef } from "../external.ts";
-import { apiFetch } from "../utils/apiFetch.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
+import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -305,34 +305,12 @@ async function createAndSubmitWithFooter(
 }
 
 /**
- * report the review node ID to the server so the WorkflowRun is marked as "review submitted".
+ * report the review node ID so the WorkflowRun is marked as "review submitted".
  * exported for use in main.ts post-agent cleanup.
  */
-export async function reportReviewNodeId(ctx: ToolContext, reviewNodeId: string): Promise<void> {
-  for (let remaining = 2; remaining >= 0; remaining--) {
-    try {
-      const response = await apiFetch({
-        path: `/api/workflow-run/${ctx.runId}`,
-        method: "PATCH",
-        headers: {
-          authorization: `Bearer ${ctx.apiToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ reviewNodeId }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (response.ok) return;
-      if (remaining > 0) {
-        log.debug(`reportReviewNodeId got ${response.status}, retrying (${remaining} left)`);
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    } catch (error) {
-      if (remaining > 0) {
-        log.debug(`reportReviewNodeId failed, retrying (${remaining} left): ${error}`);
-        await new Promise((r) => setTimeout(r, 2000));
-      } else {
-        log.debug(`reportReviewNodeId exhausted retries: ${error}`);
-      }
-    }
-  }
+export async function reportReviewNodeId(
+  ctx: ToolContext,
+  params: { nodeId: string }
+): Promise<void> {
+  await patchWorkflowRunFields(ctx, { reviewNodeId: params.nodeId });
 }

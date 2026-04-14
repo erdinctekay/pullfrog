@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
+import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
 import { $ } from "../utils/shell.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -92,6 +93,12 @@ export function CreatePullRequestTool(ctx: ToolContext) {
         } catch {
           log.info(`failed to request review from ${reviewer} on PR #${result.data.number}`);
         }
+      }
+
+      if (typeof result.data.node_id === "string" && result.data.node_id.length > 0) {
+        await patchWorkflowRunFields(ctx, {
+          prNodeId: result.data.node_id,
+        });
       }
 
       return {

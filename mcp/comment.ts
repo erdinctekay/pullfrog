@@ -1,48 +1,11 @@
 import { type } from "arktype";
-import { apiFetch } from "../utils/apiFetch.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
-import { retry } from "../utils/retry.ts";
+import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
-
-type CommentNodeIdField = "planCommentNodeId" | "summaryCommentNodeId";
-
-// IMPORTANT: this route authenticates via Pullfrog API JWT (verifyApiToken),
-// NOT a GitHub token. use ctx.apiToken here. see wiki/api-auth.md.
-export async function updateCommentNodeId(
-  ctx: ToolContext,
-  field: CommentNodeIdField,
-  nodeId: string
-): Promise<void> {
-  if (ctx.runId === undefined || !ctx.apiToken) return;
-  try {
-    await retry(
-      async () => {
-        const response = await apiFetch({
-          path: `/api/workflow-run/${ctx.runId}`,
-          method: "PATCH",
-          headers: {
-            authorization: `Bearer ${ctx.apiToken}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ [field]: nodeId }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error(`PATCH workflow-run: ${response.status}`);
-      },
-      {
-        maxAttempts: 3,
-        delayMs: 2000,
-        label: `updateCommentNodeId(${field})`,
-      }
-    );
-  } catch (error) {
-    log.warning(`updateCommentNodeId(${field}) exhausted retries: ${error}`);
-  }
-}
 
 /**
  * The prefix text for the initial "leaping into action" comment.
@@ -118,7 +81,7 @@ export function CreateCommentTool(ctx: ToolContext) {
         });
 
         if (result.data.node_id) {
-          await updateCommentNodeId(ctx, "summaryCommentNodeId", result.data.node_id);
+          await patchWorkflowRunFields(ctx, { summaryCommentNodeId: result.data.node_id });
         }
 
         return {
@@ -138,7 +101,7 @@ export function CreateCommentTool(ctx: ToolContext) {
 
       if (commentType === "Plan") {
         if (result.data.node_id) {
-          await updateCommentNodeId(ctx, "planCommentNodeId", result.data.node_id);
+          await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });
         }
         // add "Implement plan" link (needs comment ID, so create-then-update)
         const customParts = [buildImplementPlanLink(ctx, issueNumber, result.data.id)];
@@ -161,7 +124,7 @@ export function CreateCommentTool(ctx: ToolContext) {
       }
 
       if (commentType === "Summary" && result.data.node_id) {
-        await updateCommentNodeId(ctx, "summaryCommentNodeId", result.data.node_id);
+        await patchWorkflowRunFields(ctx, { summaryCommentNodeId: result.data.node_id });
       }
 
       return {
@@ -266,7 +229,7 @@ export async function reportProgress(
     ctx.toolState.wasUpdated = true;
 
     if (isPlanMode && result.data.node_id) {
-      await updateCommentNodeId(ctx, "planCommentNodeId", result.data.node_id);
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });
     }
 
     return {
@@ -300,7 +263,7 @@ export async function reportProgress(
     ctx.toolState.wasUpdated = true;
 
     if (isPlanMode && result.data.node_id) {
-      await updateCommentNodeId(ctx, "planCommentNodeId", result.data.node_id);
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });
     }
 
     return {
@@ -353,7 +316,7 @@ export async function reportProgress(
     });
 
     if (updateResult.data.node_id) {
-      await updateCommentNodeId(ctx, "planCommentNodeId", updateResult.data.node_id);
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: updateResult.data.node_id });
     }
 
     return {

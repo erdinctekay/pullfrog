@@ -24,7 +24,7 @@ export async function postReviewCleanup(ctx: ToolContext): Promise<void> {
   delete ctx.toolState.review;
 
   // mark review as submitted — unlocks webhook dedup for new pushes
-  await bestEffort(() => reportReviewNodeId(ctx, review.nodeId), "reportReviewNodeId");
+  await bestEffort(() => reportReviewNodeId(ctx, { nodeId: review.nodeId }), "reportReviewNodeId");
 
   // dispatch follow-up if PR HEAD moved past the reviewed commit
   if (review.reviewedSha) {
