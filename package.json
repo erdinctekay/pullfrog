@@ -1,6 +1,6 @@
 {
   "name": "pullfrog",
-  "version": "0.0.199",
+  "version": "0.0.200",
   "type": "module",
   "bin": {
     "pullfrog": "dist/cli.mjs",
@@ -37,7 +37,7 @@
     "@types/node": "^24.7.2",
     "@types/semver": "^7.7.1",
     "@types/turndown": "^5.0.5",
-    "agent-browser": "0.21.0",
+    "agent-browser": "0.25.4",
     "ajv": "^8.18.0",
     "arg": "^5.0.2",
     "arkregex": "0.0.5",
