@@ -23,14 +23,12 @@ function hasClaudeCodeAuth(): boolean {
 export function resolveModel(ctx: { slug?: string | undefined }): string | undefined {
   const envModel = process.env.PULLFROG_MODEL?.trim();
   if (envModel) {
-    log.info(`» model: ${envModel} (override via PULLFROG_MODEL)`);
     return envModel;
   }
 
   if (ctx.slug) {
     const resolved = resolveCliModel(ctx.slug);
     if (resolved) {
-      log.info(`» model: ${resolved} (resolved from ${ctx.slug})`);
       return resolved;
     }
     log.warning(`» unknown model slug "${ctx.slug}" — agent will auto-select`);
@@ -44,7 +42,6 @@ export function resolveAgent(ctx: { model?: string | undefined }): Agent {
   const envAgent = process.env.PULLFROG_AGENT?.trim();
   if (envAgent) {
     if (envAgent in agents) {
-      log.info(`» agent: ${envAgent} (override via PULLFROG_AGENT)`);
       return agents[envAgent as keyof typeof agents];
     }
     log.warning(`» unknown PULLFROG_AGENT="${envAgent}" — falling through to auto-select`);
@@ -55,7 +52,6 @@ export function resolveAgent(ctx: { model?: string | undefined }): Agent {
     try {
       const provider = getModelProvider(ctx.model);
       if (provider === "anthropic" && hasClaudeCodeAuth()) {
-        log.info(`» agent: claude (auto-selected for ${ctx.model})`);
         return agents.claude;
       }
     } catch {

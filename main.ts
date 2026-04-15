@@ -69,6 +69,38 @@ function resolveOutputSchema(): Record<string, unknown> | undefined {
   return parsed as Record<string, unknown>;
 }
 
+function resolveTimeoutForLog(timeout: string | undefined): string {
+  if (!timeout) return "1h (default)";
+  if (timeout === TIMEOUT_DISABLED) return "none (disabled)";
+  return timeout;
+}
+
+function resolveModelForLog(ctx: {
+  payload: ResolvedPayload;
+  resolvedModel: string | undefined;
+}): string {
+  const envModel = process.env.PULLFROG_MODEL?.trim();
+  if (envModel) return `${envModel} (override via PULLFROG_MODEL)`;
+  if (ctx.payload.proxyModel) return `${ctx.payload.proxyModel} (proxy)`;
+  if (ctx.resolvedModel && ctx.payload.model && ctx.payload.model !== ctx.resolvedModel) {
+    return `${ctx.resolvedModel} (resolved from ${ctx.payload.model})`;
+  }
+  if (ctx.resolvedModel) return ctx.resolvedModel;
+  if (ctx.payload.model) return `${ctx.payload.model} (unresolved)`;
+  return "auto";
+}
+
+function resolveAgentForLog(ctx: { agentName: string; resolvedModel: string | undefined }): string {
+  const envAgent = process.env.PULLFROG_AGENT?.trim();
+  if (envAgent && envAgent === ctx.agentName) {
+    return `${ctx.agentName} (override via PULLFROG_AGENT)`;
+  }
+  if (ctx.agentName === "claude" && ctx.resolvedModel) {
+    return `${ctx.agentName} (auto-selected for ${ctx.resolvedModel})`;
+  }
+  return ctx.agentName;
+}
+
 import type { ResolvedPayload } from "./utils/payload.ts";
 
 interface OidcCredentials {
@@ -312,10 +344,14 @@ export async function main(): Promise<MainResult> {
 
     startInstallation(toolContext);
 
-    if (payload.model) log.info(`» model:   ${payload.model}`);
-    if (payload.timeout) log.info(`» timeout: ${payload.timeout}`);
+    const modelForLog = resolveModelForLog({ payload, resolvedModel });
+    const agentForLog = resolveAgentForLog({ agentName: agent.name, resolvedModel });
+    const timeoutForLog = resolveTimeoutForLog(payload.timeout);
+    log.info(`» model:   ${modelForLog}`);
+    log.info(`» agent:   ${agentForLog}`);
     log.info(`» push:    ${payload.push}`);
     log.info(`» shell:   ${payload.shell}`);
+    log.info(`» timeout: ${timeoutForLog}`);
 
     const instructions = resolveInstructions({
       payload,
