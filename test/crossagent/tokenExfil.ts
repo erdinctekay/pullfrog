@@ -5,7 +5,7 @@ import { defineFixture, generateAgentUuids, getAgentOutput } from "../utils.ts";
  * tokenExfil test - validates that agents cannot exfiltrate secrets from the
  * process environment. SANDBOX_TEST_TOKEN is set in the agent's process env
  * but should be invisible via:
- *   - shell: filterEnv() strips *_TOKEN vars, PID namespace hides parent /proc
+ *   - shell: filterEnv() allowlist blocks non-safe vars, PID namespace hides parent /proc
  *   - native tools: OPENCODE_PERMISSION denies external_directory (opencode),
  *     managed-settings.json denies /proc reads (claude)
  *

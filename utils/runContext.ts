@@ -20,6 +20,7 @@ export interface RepoSettings {
   prApproveEnabled: boolean;
   modeInstructions: Record<string, string>;
   learnings: string | null;
+  envAllowlist: string | null;
 }
 
 export interface RunContext {
@@ -41,6 +42,7 @@ const defaultSettings: RepoSettings = {
   prApproveEnabled: false,
   modeInstructions: {},
   learnings: null,
+  envAllowlist: null,
 };
 
 const defaultRunContext: RunContext = {

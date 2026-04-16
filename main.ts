@@ -35,6 +35,7 @@ import { resolvePayload, resolvePromptInput } from "./utils/payload.ts";
 import { postReviewCleanup } from "./utils/reviewCleanup.ts";
 import { handleAgentResult } from "./utils/run.ts";
 import { resolveRunContextData } from "./utils/runContextData.ts";
+import { setEnvAllowlist } from "./utils/secrets.ts";
 import { createTempDirectory, setupGit } from "./utils/setup.ts";
 import { killTrackedChildren } from "./utils/subprocess.ts";
 import { parseTimeString, TIMEOUT_DISABLED } from "./utils/time.ts";
@@ -214,6 +215,14 @@ export async function main(): Promise<MainResult> {
     }
     const count = Object.keys(runContext.dbSecrets).length;
     if (count > 0) log.info(`» ${count} db secret(s) loaded`);
+  }
+
+  // configure env allowlist for subprocess filtering
+  if (runContext.repoSettings.envAllowlist) {
+    const blocked = setEnvAllowlist(runContext.repoSettings.envAllowlist);
+    if (blocked.length > 0) {
+      log.warning(`env allowlist contains blocked names (ignored): ${blocked.join(", ")}`);
+    }
   }
 
   // resolve payload to determine shell permission
