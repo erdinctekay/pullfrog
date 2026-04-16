@@ -29,7 +29,7 @@ export function isSensitiveEnvName(key: string): boolean {
 const BLOCKED_ENV_NAMES = new Set(["GITHUB_TOKEN", "GH_TOKEN"]);
 
 // prefixes whose vars are safe to pass through (runner metadata, workflow context)
-const SAFE_ENV_PREFIXES = ["GITHUB_", "RUNNER_", "JAVA_HOME_", "GOROOT_", "PULLFROG_"];
+const SAFE_ENV_PREFIXES = ["GITHUB_", "RUNNER_", "JAVA_HOME_", "GOROOT_"];
 
 // exact var names safe to pass through (system + runner image toolchain)
 const SAFE_ENV_NAMES = new Set([
@@ -109,7 +109,9 @@ export function filterEnv(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
     if (BLOCKED_ENV_NAMES.has(key)) continue;
-    if (isSafeEnvVar(key) || _userAllowlist?.has(key)) {
+    const userAllowed = _userAllowlist?.has(key) ?? false;
+    if (isSensitiveEnvName(key) && !userAllowed) continue;
+    if (isSafeEnvVar(key) || userAllowed) {
       filtered[key] = value;
     }
   }
