@@ -55,7 +55,7 @@ export function resolveGit(): void {
   const resolvedPath = realpathSync(whichPath);
   const sha256 = hashFile(resolvedPath);
   gitBinary = { path: resolvedPath, sha256 };
-  log.info(`git binary: ${resolvedPath} (sha256: ${sha256.slice(0, 12)}...)`);
+  log.debug(`» git binary: ${resolvedPath} (sha256: ${sha256.slice(0, 12)}...)`);
 }
 
 function verifyGitBinary(): string {
