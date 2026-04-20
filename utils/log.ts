@@ -5,7 +5,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as core from "@actions/core";
 import { table } from "table";
-import type { AgentUsage } from "../agents/shared.ts";
+import { type AgentUsage, formatCostUsd } from "../agents/shared.ts";
 import { isGitHubActions, isInsideDocker } from "./globals.ts";
 
 // --- log prefix via AsyncLocalStorage ---
@@ -334,28 +334,49 @@ export function formatIndentedField(label: string, content: string): string {
 }
 
 /**
- * format aggregated usage data as a markdown table for the GitHub step summary
+ * format aggregated usage data as a markdown table for the GitHub step summary.
+ *
+ * columns mirror the per-run stdout token table emitted by `logTokenTable`
+ * (Input / Cache Read / Cache Write / Output / Total / Cost ($)) so the job
+ * summary and the in-run logs can be compared row-for-row.
+ *
+ * notes:
+ *   - `AgentUsage.inputTokens` is the sum of non-cached input + cache read
+ *     + cache write (set that way by both agent harnesses' `buildUsage`),
+ *     so the non-cached Input column is recovered by subtracting cache fields.
+ *   - `costUsd` is sourced from models.dev (OpenCode) or `total_cost_usd`
+ *     (Claude CLI). absent rows show `—` so per-agent coverage is obvious.
  */
 export function formatUsageSummary(entries: AgentUsage[]): string {
   if (entries.length === 0) return "";
 
-  const header = "| Agent | Input | Output | Cache Read | Cache Write |";
-  const separatorRow = "| --- | ---: | ---: | ---: | ---: |";
+  const header = "| Agent | Input | Cache Read | Cache Write | Output | Total | Cost ($) |";
+  const separatorRow = "| --- | ---: | ---: | ---: | ---: | ---: | ---: |";
   const fmt = (n: number) => n.toLocaleString("en-US");
+
+  const nonCachedInput = (e: AgentUsage): number =>
+    Math.max(0, e.inputTokens - (e.cacheReadTokens ?? 0) - (e.cacheWriteTokens ?? 0));
+  const totalFor = (e: AgentUsage): number =>
+    nonCachedInput(e) + (e.cacheReadTokens ?? 0) + (e.cacheWriteTokens ?? 0) + e.outputTokens;
+  const costCell = (e: AgentUsage): string =>
+    typeof e.costUsd === "number" && e.costUsd > 0 ? formatCostUsd(e.costUsd) : "—";
 
   const rows = entries.map(
     (e) =>
-      `| ${e.agent} | ${fmt(e.inputTokens)} | ${fmt(e.outputTokens)} | ${fmt(e.cacheReadTokens ?? 0)} | ${fmt(e.cacheWriteTokens ?? 0)} |`
+      `| ${e.agent} | ${fmt(nonCachedInput(e))} | ${fmt(e.cacheReadTokens ?? 0)} | ${fmt(e.cacheWriteTokens ?? 0)} | ${fmt(e.outputTokens)} | ${fmt(totalFor(e))} | ${costCell(e)} |`
   );
 
   const totalsRows: string[] = [];
   if (entries.length > 1) {
-    const totalInput = entries.reduce((sum, e) => sum + e.inputTokens, 0);
+    const totalInput = entries.reduce((sum, e) => sum + nonCachedInput(e), 0);
     const totalOutput = entries.reduce((sum, e) => sum + e.outputTokens, 0);
     const totalCacheRead = entries.reduce((sum, e) => sum + (e.cacheReadTokens ?? 0), 0);
     const totalCacheWrite = entries.reduce((sum, e) => sum + (e.cacheWriteTokens ?? 0), 0);
+    const grandTotal = totalInput + totalCacheRead + totalCacheWrite + totalOutput;
+    const totalCostUsd = entries.reduce((sum, e) => sum + (e.costUsd ?? 0), 0);
+    const totalCostCell = totalCostUsd > 0 ? `**${formatCostUsd(totalCostUsd)}**` : "—";
     totalsRows.push(
-      `| **Total** | **${fmt(totalInput)}** | **${fmt(totalOutput)}** | **${fmt(totalCacheRead)}** | **${fmt(totalCacheWrite)}** |`
+      `| **Total** | **${fmt(totalInput)}** | **${fmt(totalCacheRead)}** | **${fmt(totalCacheWrite)}** | **${fmt(totalOutput)}** | **${fmt(grandTotal)}** | ${totalCostCell} |`
     );
   }
 

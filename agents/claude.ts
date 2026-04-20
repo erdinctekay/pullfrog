@@ -33,8 +33,10 @@ import {
   agent,
   buildCommitPrompt,
   getGitStatus,
+  logTokenTable,
   MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
+  mergeAgentUsage,
 } from "./shared.ts";
 
 async function installClaudeCli(): Promise<string> {
@@ -192,6 +194,10 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
   let finalOutput = "";
   let sessionId: string | undefined;
   let accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // Claude CLI reports a single end-of-run `total_cost_usd` on the result
+  // event. per-message events don't carry cost, so there's nothing to sum —
+  // we just capture the final value when it arrives.
+  let accumulatedCostUsd = 0;
   let tokensLogged = false;
 
   function buildUsage(): AgentUsage | undefined {
@@ -204,6 +210,7 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
           outputTokens: accumulatedTokens.output,
           cacheReadTokens: accumulatedTokens.cacheRead || undefined,
           cacheWriteTokens: accumulatedTokens.cacheWrite || undefined,
+          costUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
         }
       : undefined;
   }
@@ -245,11 +252,15 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
         }
       }
 
-      // accumulate per-message usage if available
+      // accumulate per-message usage if available. capture cache fields too
+      // so the fallback token table (used when no final `result` event fires)
+      // still reports the full breakdown instead of silently dropping cache.
       const msgUsage = event.message?.usage;
       if (msgUsage) {
         accumulatedTokens.input += msgUsage.input_tokens || 0;
         accumulatedTokens.output += msgUsage.output_tokens || 0;
+        accumulatedTokens.cacheRead += msgUsage.cache_read_input_tokens || 0;
+        accumulatedTokens.cacheWrite += msgUsage.cache_creation_input_tokens || 0;
       }
     },
     user: (event: ClaudeUserEvent) => {
@@ -290,28 +301,35 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       const numTurns = event.num_turns || 0;
 
       if (subtype === "success") {
-        // extract detailed usage from result event (most accurate source)
+        // extract detailed usage from result event (most accurate source).
+        // note: `input` here is non-cached input tokens only, matching the
+        // semantics of OpenCode's step_finish.tokens.input — the logTokenTable
+        // helper sums Input + Cache Read + Cache Write + Output into the Total
+        // column so consumers get the real billable figure.
         const usage = event.usage;
         const inputTokens = usage?.input_tokens || 0;
         const cacheRead = usage?.cache_read_input_tokens || 0;
         const cacheWrite = usage?.cache_creation_input_tokens || 0;
         const outputTokens = usage?.output_tokens || 0;
-        const totalInput = inputTokens + cacheRead + cacheWrite;
+        // guard against NaN/Infinity from malformed CLI output poisoning the total
+        const costUsd =
+          typeof event.total_cost_usd === "number" && Number.isFinite(event.total_cost_usd)
+            ? event.total_cost_usd
+            : 0;
 
         accumulatedTokens = { input: inputTokens, output: outputTokens, cacheRead, cacheWrite };
+        accumulatedCostUsd = costUsd;
 
         log.info(`» ${params.label} result: subtype=${subtype}, turns=${numTurns}`);
 
         if (!tokensLogged) {
-          log.table([
-            [
-              { data: "Input", header: true },
-              { data: "Cache Read", header: true },
-              { data: "Cache Write", header: true },
-              { data: "Output", header: true },
-            ],
-            [String(totalInput), String(cacheRead), String(cacheWrite), String(outputTokens)],
-          ]);
+          logTokenTable({
+            input: inputTokens,
+            cacheRead,
+            cacheWrite,
+            output: outputTokens,
+            costUsd,
+          });
           tokensLogged = true;
         }
       } else if (subtype === "error_max_turns") {
@@ -432,16 +450,15 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       if (stderrContext) log.info(`» last stderr output:\n${stderrContext}`);
     }
 
-    if (!tokensLogged && (accumulatedTokens.input > 0 || accumulatedTokens.output > 0)) {
-      const totalTokens = accumulatedTokens.input + accumulatedTokens.output;
-      log.table([
-        [
-          { data: "Input Tokens", header: true },
-          { data: "Output Tokens", header: true },
-          { data: "Total Tokens", header: true },
-        ],
-        [String(accumulatedTokens.input), String(accumulatedTokens.output), String(totalTokens)],
-      ]);
+    if (
+      !tokensLogged &&
+      (accumulatedTokens.input > 0 ||
+        accumulatedTokens.output > 0 ||
+        accumulatedTokens.cacheRead > 0 ||
+        accumulatedTokens.cacheWrite > 0)
+    ) {
+      logTokenTable({ ...accumulatedTokens, costUsd: accumulatedCostUsd });
+      tokensLogged = true;
     }
 
     const usage = buildUsage();
@@ -637,6 +654,10 @@ export const claude = agent({
       ...runParams,
       args: [...baseArgs, "-p", ctx.instructions.full],
     });
+    // usage needs to aggregate across the initial run + every commit retry.
+    // each runClaude() returns only its own iteration's usage, so without
+    // merging the caller sees only the final retry's slice and undercounts.
+    let aggregatedUsage = result.usage;
 
     // post-run: if the working tree is dirty, resume the session and ask the agent to commit
     for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
@@ -655,8 +676,9 @@ export const claude = agent({
           result.sessionId,
         ],
       });
+      aggregatedUsage = mergeAgentUsage(aggregatedUsage, result.usage);
     }
 
-    return result;
+    return { ...result, usage: aggregatedUsage };
   },
 });

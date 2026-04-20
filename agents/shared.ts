@@ -34,10 +34,21 @@ export function buildCommitPrompt(_agentId: AgentId, status: string): string {
 }
 
 /**
- * token/cost usage data from a single agent run
+ * token/cost usage data from a single agent run.
+ *
+ * NOTE on semantics: `inputTokens` here is the *total* billable input for the
+ * run — non-cached input + cache read + cache write — matching the per-agent
+ * SDK conventions. This is what gets persisted to `WorkflowRun.inputTokens`.
+ *
+ * The stdout token table and markdown step summary display a different "Input"
+ * column that shows only the non-cached portion (derivable as
+ * `inputTokens - cacheReadTokens - cacheWriteTokens`) so humans can see the
+ * cache hit ratio at a glance. Dashboards that query `WorkflowRun.inputTokens`
+ * directly are seeing the full total, not the log column.
  */
 export interface AgentUsage {
   agent: string;
+  /** full billable input: non-cached + cache read + cache write */
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number | undefined;
@@ -95,3 +106,96 @@ export const agent = (input: Agent): Agent => {
     },
   };
 };
+
+/** format a USD cost to 4 decimal places, always showing the leading zero */
+export function formatCostUsd(costUsd: number): string {
+  return costUsd.toFixed(4);
+}
+
+/**
+ * merge two AgentUsage snapshots into one running total.
+ *
+ * both agent harnesses invoke their runner multiple times per `run()` when the
+ * post-run dirty-tree loop kicks in (MAX_COMMIT_RETRIES). each invocation
+ * produces its own AgentUsage; we sum them so downstream callers (usage
+ * summary, WorkflowRun persistence) see the whole session — not just the
+ * final retry's slice.
+ *
+ * returns `undefined` when both sides are empty so callers can short-circuit
+ * without a special case. zero-valued cache / cost fields are dropped to
+ * `undefined` for symmetry with each harness's `buildUsage`.
+ */
+export function mergeAgentUsage(
+  a: AgentUsage | undefined,
+  b: AgentUsage | undefined
+): AgentUsage | undefined {
+  // always return a fresh object — callers treat AgentUsage as immutable, and
+  // returning `a` / `b` directly would leak that invariant to future callers
+  if (!a && !b) return undefined;
+  if (!a) return { ...(b as AgentUsage) };
+  if (!b) return { ...a };
+  const cacheRead = (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0);
+  const cacheWrite = (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0);
+  const cost = (a.costUsd ?? 0) + (b.costUsd ?? 0);
+  return {
+    agent: a.agent,
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: cacheRead > 0 ? cacheRead : undefined,
+    cacheWriteTokens: cacheWrite > 0 ? cacheWrite : undefined,
+    costUsd: cost > 0 ? cost : undefined,
+  };
+}
+
+/**
+ * unified per-run token table used by every agent harness.
+ *
+ * columns are kept stable across agents and models so downstream log parsers
+ * (scripts/token-usage.ts, cost dashboards) only have to understand one format:
+ *
+ *   Input       non-cached input tokens sent this run
+ *   Cache Read  input tokens served from prompt cache (Anthropic, etc.)
+ *   Cache Write input tokens written to prompt cache this run
+ *   Output      assistant output tokens
+ *   Total       sum of the four columns — the real billable quantity
+ *   Cost ($)    USD cost reported by the provider (only rendered when known)
+ *
+ * models that don't report prompt caching leave Cache Read / Write at 0.
+ * OpenCode emits per-step `part.cost` sourced from models.dev (works across
+ * Anthropic, OpenAI, Google, xAI, DeepSeek, Moonshot, OpenRouter, etc.);
+ * Claude CLI emits `total_cost_usd` on its final `result` event. pass the
+ * accumulated value via `costUsd` to render the Cost column.
+ */
+export function logTokenTable(t: {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  costUsd?: number | undefined;
+}): void {
+  const total = t.input + t.cacheRead + t.cacheWrite + t.output;
+  // narrow costUsd to a concrete number so the render path doesn't need a cast
+  const costUsd = typeof t.costUsd === "number" && t.costUsd > 0 ? t.costUsd : undefined;
+
+  const headerRow: Array<{ data: string; header: true }> = [
+    { data: "Input", header: true },
+    { data: "Cache Read", header: true },
+    { data: "Cache Write", header: true },
+    { data: "Output", header: true },
+    { data: "Total", header: true },
+  ];
+  const dataRow: string[] = [
+    String(t.input),
+    String(t.cacheRead),
+    String(t.cacheWrite),
+    String(t.output),
+    String(total),
+  ];
+
+  if (costUsd !== undefined) {
+    headerRow.push({ data: "Cost ($)", header: true });
+    dataRow.push(formatCostUsd(costUsd));
+  }
+
+  log.table([headerRow, dataRow]);
+}

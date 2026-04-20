@@ -32,6 +32,7 @@ import { createOctokit, writeGitHubUsageSummaryToFile } from "./utils/github.ts"
 import { resolveInstructions } from "./utils/instructions.ts";
 import { executeLifecycleHook } from "./utils/lifecycle.ts";
 import { normalizeEnv } from "./utils/normalizeEnv.ts";
+import { aggregateUsage, patchWorkflowRunFields } from "./utils/patchWorkflowRunFields.ts";
 import { resolvePayload, resolvePromptInput } from "./utils/payload.ts";
 import { postReviewCleanup } from "./utils/reviewCleanup.ts";
 import { handleAgentResult } from "./utils/run.ts";
@@ -621,6 +622,24 @@ export async function main(): Promise<MainResult> {
         log.debug(
           `failed to write usage summary to ${usageSummaryPath}: ${err instanceof Error ? err.message : String(err)}`
         );
+      }
+    }
+
+    // persist aggregated token + cost usage to the WorkflowRun row.
+    // this is the single shared cleanup path across every agent implementation:
+    // each agent harness returns a single AgentUsage from agent.run() that
+    // already aggregates its internal retries via mergeAgentUsage, and the
+    // success branch above pushes that entry into toolState.usageEntries.
+    // aggregateUsage sums across those entries (one per agent.run()).
+    //
+    // caveat: if the agent promise rejected (timeout or uncaught throw) the
+    // usage was never pushed, so nothing gets persisted for that run. runs
+    // that returned AgentResult with success=false still report their partial
+    // usage because the harness populates AgentUsage before returning.
+    if (toolContext) {
+      const patch = aggregateUsage(toolState.usageEntries);
+      if (Object.keys(patch).length > 0) {
+        await patchWorkflowRunFields(toolContext, patch);
       }
     }
   }

@@ -33,8 +33,10 @@ import {
   agent,
   buildCommitPrompt,
   getGitStatus,
+  logTokenTable,
   MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
+  mergeAgentUsage,
 } from "./shared.ts";
 
 async function installOpencodeCli(): Promise<string> {
@@ -268,6 +270,10 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
 
   let finalOutput = "";
   let accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  // per-step `part.cost` sums across the whole session. sourced from models.dev
+  // inside opencode — present for every supported provider (Anthropic, OpenAI,
+  // Google, xAI, DeepSeek, Moonshot, OpenRouter sub-providers, etc.).
+  let accumulatedCostUsd = 0;
   let tokensLogged = false;
   const toolCallTimings = new Map<string, number>();
   let currentStepId: string | null = null;
@@ -284,6 +290,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           outputTokens: accumulatedTokens.output,
           cacheReadTokens: accumulatedTokens.cacheRead || undefined,
           cacheWriteTokens: accumulatedTokens.cacheWrite || undefined,
+          costUsd: accumulatedCostUsd > 0 ? accumulatedCostUsd : undefined,
         }
       : undefined;
   }
@@ -296,6 +303,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       log.debug(`» ${params.label} init event (full): ${JSON.stringify(event)}`);
       finalOutput = "";
       accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      accumulatedCostUsd = 0;
       tokensLogged = false;
     },
     message: (event: OpenCodeMessageEvent) => {
@@ -339,6 +347,15 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         accumulatedTokens.output += eventTokens.output || 0;
         accumulatedTokens.cacheRead += eventTokens.cache?.read || 0;
         accumulatedTokens.cacheWrite += eventTokens.cache?.write || 0;
+      }
+      // step_finish.part.cost is a per-step delta (not a running total) —
+      // OpenCode emits varying per-event values that sum to the session cost.
+      // verified empirically across Anthropic, OpenAI, Gemini, xAI, DeepSeek,
+      // Moonshot, and OpenRouter (see pullfrog-baseline/opencode-*.log).
+      // guard against NaN/Infinity — a single poison value would make the
+      // running total un-recoverable for the rest of the session.
+      if (typeof event.part?.cost === "number" && Number.isFinite(event.part.cost)) {
+        accumulatedCostUsd += event.part.cost;
       }
       if (currentStepId === stepId) {
         currentStepId = null;
@@ -429,20 +446,19 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       if (event.status === "error") {
         log.info(`» ${params.label} failed: ${JSON.stringify(event)}`);
       } else {
-        const inputTokens = event.stats?.input_tokens || accumulatedTokens.input || 0;
-        const outputTokens = event.stats?.output_tokens || accumulatedTokens.output || 0;
-        const totalTokens = event.stats?.total_tokens || inputTokens + outputTokens;
+        // the final `result` event only carries input_tokens/output_tokens and
+        // no cache breakdown — accumulatedTokens (summed across step_finish
+        // events) is strictly more accurate, so we prefer it unconditionally.
         log.info(`» run complete: tool_calls=${toolCalls}, duration=${duration}ms`);
 
-        if ((inputTokens > 0 || outputTokens > 0) && !tokensLogged) {
-          log.table([
-            [
-              { data: "Input Tokens", header: true },
-              { data: "Output Tokens", header: true },
-              { data: "Total Tokens", header: true },
-            ],
-            [String(inputTokens), String(outputTokens), String(totalTokens)],
-          ]);
+        if (
+          (accumulatedTokens.input > 0 ||
+            accumulatedTokens.output > 0 ||
+            accumulatedTokens.cacheRead > 0 ||
+            accumulatedTokens.cacheWrite > 0) &&
+          !tokensLogged
+        ) {
+          logTokenTable({ ...accumulatedTokens, costUsd: accumulatedCostUsd });
           tokensLogged = true;
         }
       }
@@ -555,16 +571,15 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       if (stderrContext) log.info(`» last stderr output:\n${stderrContext}`);
     }
 
-    if (!tokensLogged && (accumulatedTokens.input > 0 || accumulatedTokens.output > 0)) {
-      const totalTokens = accumulatedTokens.input + accumulatedTokens.output;
-      log.table([
-        [
-          { data: "Input Tokens", header: true },
-          { data: "Output Tokens", header: true },
-          { data: "Total Tokens", header: true },
-        ],
-        [String(accumulatedTokens.input), String(accumulatedTokens.output), String(totalTokens)],
-      ]);
+    if (
+      !tokensLogged &&
+      (accumulatedTokens.input > 0 ||
+        accumulatedTokens.output > 0 ||
+        accumulatedTokens.cacheRead > 0 ||
+        accumulatedTokens.cacheWrite > 0)
+    ) {
+      logTokenTable({ ...accumulatedTokens, costUsd: accumulatedCostUsd });
+      tokensLogged = true;
     }
 
     const usage = buildUsage();
@@ -688,6 +703,10 @@ export const opencode = agent({
       ...runParams,
       args: [...baseArgs, ctx.instructions.full],
     });
+    // usage needs to aggregate across the initial run + every commit retry.
+    // each runOpenCode() returns only its own iteration's usage, so without
+    // merging the caller sees only the final retry's slice and undercounts.
+    let aggregatedUsage = result.usage;
 
     // post-run: if the working tree is dirty, continue the session and ask the agent to commit
     for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
@@ -700,8 +719,9 @@ export const opencode = agent({
         ...runParams,
         args: [...baseArgs, "--continue", buildCommitPrompt("opencode", status)],
       });
+      aggregatedUsage = mergeAgentUsage(aggregatedUsage, result.usage);
     }
 
-    return result;
+    return { ...result, usage: aggregatedUsage };
   },
 });

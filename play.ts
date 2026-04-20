@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import arg from "arg";
@@ -36,6 +36,16 @@ config({ path: join(__dirname, "..", ".env") });
 
 export async function run(inputsOrPrompt: Inputs | string): Promise<AgentResult> {
   await ensureGitHubToken();
+
+  // play.ts is a CI-emulator — isolate it from the developer's user- and
+  // system-scope gitconfig so checks like `validatePushDestination` see the
+  // raw stored remote URL instead of values mutated by `url.*.insteadOf`
+  // rewrites (a common SSH-auth convenience on dev boxes). CI runners have
+  // empty gitconfigs so this is a no-op there; locally it makes `pnpm play`
+  // and real runs produce identical git state. `os.devNull` canonicalizes
+  // the null device across Unix (`/dev/null`) and Windows (`\\.\nul`).
+  process.env.GIT_CONFIG_GLOBAL = devNull;
+  process.env.GIT_CONFIG_SYSTEM = devNull;
 
   // create unique temp directory path in OS temp location for parallel execution
   // use a parent dir from mkdtemp, then clone into a 'repo' subdirectory
