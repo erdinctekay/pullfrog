@@ -1,7 +1,7 @@
 // @ts-check
 
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 
@@ -95,5 +95,10 @@ await build({
 const cliPath = "./dist/cli.mjs";
 const cliContent = readFileSync(cliPath, "utf8");
 writeFileSync(cliPath, `#!/usr/bin/env node\n${cliContent}`);
+
+// copy bundled SKILL.md files into dist/ so the npm-published runtime can read
+// them via readFileSync. source-mode runs (PULLFROG_FORCE_LOCAL_CLI=1) read
+// directly from action/skills/ instead. see utils/skills.ts.
+cpSync("./skills", "./dist/skills", { recursive: true });
 
 console.log("» build completed successfully");

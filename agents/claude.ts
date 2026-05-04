@@ -21,7 +21,7 @@ import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { detectProviderError } from "../utils/providerErrors.ts";
-import { addSkill } from "../utils/skills.ts";
+import { addSkill, installBundledSkills } from "../utils/skills.ts";
 import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
@@ -603,6 +603,8 @@ export const claude = agent({
       env: homeEnv,
       agent: "claude",
     });
+
+    installBundledSkills({ home: homeEnv.HOME });
 
     const mcpConfigPath = writeMcpConfig(ctx);
     const effort = resolveEffort(model);
