@@ -27,6 +27,8 @@ import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { buildLearningsReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
+import { REVIEWER_AGENT_NAME, REVIEWER_SYSTEM_PROMPT } from "./reviewer.ts";
+import { deriveLabelFromTaskInput } from "./sessionLabeler.ts";
 import {
   type AgentResult,
   type AgentRunContext,
@@ -60,6 +62,24 @@ function writeMcpConfig(ctx: AgentRunContext): string {
     })
   );
   return configPath;
+}
+
+/**
+ * Build the `--agents` JSON definition for the `reviewfrog` subagent.
+ * The non-mutative + non-recursive contract is enforced by the prose system
+ * prompt baked into the agent — see action/agents/reviewer.ts for why we no
+ * longer wire per-agent `disallowedTools` here.
+ */
+function buildAgentsJson(): string {
+  const agents = {
+    [REVIEWER_AGENT_NAME]: {
+      description:
+        "Read-only review subagent for self-review and lens-based code review. " +
+        "Reads only — no writes, no state-changing shell or MCP calls, no nested subagent dispatch.",
+      prompt: REVIEWER_SYSTEM_PROMPT,
+    },
+  };
+  return JSON.stringify(agents);
 }
 
 // ── model helpers ─────────────────────────────────────────────────────────────
@@ -235,6 +255,23 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
           }
           thinkingTimer.markToolCall();
           log.toolCall({ toolName, input: block.input || {} });
+
+          // surface the subagent identity when the orchestrator dispatches a
+          // Task — claude rolls subagent activity up into a single tool_result
+          // (no per-event session_id in its stream), so this log line is the
+          // only attribution available before the subagent's report-back.
+          if (toolName === "Task" && block.input && typeof block.input === "object") {
+            const taskInput = block.input as {
+              description?: string;
+              subagent_type?: string;
+              prompt?: string;
+            };
+            const label = deriveLabelFromTaskInput(taskInput);
+            log.info(
+              `» dispatching subagent: ${label}` +
+                (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
+            );
+          }
 
           // agent's explicit MCP report_progress takes priority over todo tracking
           if (toolName.includes("report_progress") && params.todoTracker) {
@@ -621,6 +658,8 @@ export const claude = agent({
       effort,
       "--disallowedTools",
       "Bash,Agent(Bash)",
+      "--agents",
+      buildAgentsJson(),
     ];
 
     if (model) {

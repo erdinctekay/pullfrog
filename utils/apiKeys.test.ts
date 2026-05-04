@@ -31,7 +31,6 @@ describe("validateAgentApiKey", () => {
         "opencode/gpt-5-nano",
         "opencode/mimo-v2-pro-free",
         "opencode/minimax-m2.5-free",
-        "opencode/nemotron-3-super-free",
       ]) {
         expect(() => validateAgentApiKey({ ...base, model: slug })).not.toThrow();
       }

@@ -287,12 +287,6 @@ export const providers = {
         envVars: [],
         isFree: true,
       },
-      "nemotron-3-super-free": {
-        displayName: "Nemotron 3 Super",
-        resolve: "opencode/nemotron-3-super-free",
-        envVars: [],
-        isFree: true,
-      },
     },
   }),
   openrouter: provider({

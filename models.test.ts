@@ -58,7 +58,6 @@ describe("getModelEnvVars", () => {
     expect(getModelEnvVars("opencode/gpt-5-nano")).toEqual([]);
     expect(getModelEnvVars("opencode/mimo-v2-pro-free")).toEqual([]);
     expect(getModelEnvVars("opencode/minimax-m2.5-free")).toEqual([]);
-    expect(getModelEnvVars("opencode/nemotron-3-super-free")).toEqual([]);
   });
 
   it("still requires OPENCODE_API_KEY for non-free opencode models", () => {

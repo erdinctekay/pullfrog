@@ -218,18 +218,21 @@ type RetryDecision = { retry: false } | { retry: true; reason: string; backoffMs
  *   - security checks failed (sandbox breach, token leak, etc.)
  *   - agent successfully ran and called set_output but produced wrong results
  */
-// detect rate limit / quota errors across all providers
-const RATE_LIMIT_PATTERNS = [
-  "Rate limit reached", // anthropic
-  "Resource has been exhausted", // google/gemini
-  "quota exceeded", // google/gemini
-  "429", // generic HTTP 429
-  "Too Many Requests", // generic
+// detect rate limit / quota errors across all providers. `\b429\b` uses word
+// boundaries because a bare "429" substring false-matches UUIDs (e.g. MCP
+// session ids like `...-4429-...`) and microsecond timestamps in agent stdout,
+// which used to send transient failures down the 60s rate-limit retry path
+// and push retries past the per-step CI timeout.
+const RATE_LIMIT_PATTERNS: RegExp[] = [
+  /rate limit reached/i, // anthropic
+  /resource has been exhausted/i, // google/gemini
+  /quota exceeded/i, // google/gemini
+  /\b429\b/, // generic HTTP 429
+  /too many requests/i, // generic
 ];
 
 function isRateLimited(output: string): boolean {
-  const lower = output.toLowerCase();
-  return RATE_LIMIT_PATTERNS.some((p) => lower.includes(p.toLowerCase()));
+  return RATE_LIMIT_PATTERNS.some((p) => p.test(output));
 }
 
 function shouldRetry(result: AgentResult, validation: ValidationResult): RetryDecision {

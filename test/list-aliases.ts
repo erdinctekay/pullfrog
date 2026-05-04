@@ -6,9 +6,18 @@
  * set MATRIX_FILTER to a substring to restrict the matrix to matching aliases
  * — useful for iterating on a single provider without paying for every model.
  *
+ * passthrough pruning: openrouter/* aliases and keyed opencode/* aliases are
+ * just routing-layer wrappers around models we already smoke-test directly
+ * (anthropic/*, openai/*, google/*, etc). running every passthrough burns CI
+ * minutes without catching anything the direct smoke doesn't. we keep one
+ * canary per routing layer to validate the routing layer itself is alive;
+ * slug-drift is caught separately by the `models-catalog` job. set
+ * INCLUDE_ALL_PASSTHROUGHS=1 to bypass this for full validation.
+ *
  * usage:
  *   node action/test/list-aliases.ts
  *   MATRIX_FILTER=gemini node action/test/list-aliases.ts
+ *   INCLUDE_ALL_PASSTHROUGHS=1 node action/test/list-aliases.ts
  */
 import { modelAliases } from "../models.ts";
 
@@ -16,10 +25,25 @@ function agentForSlug(slug: string): "claude" | "opencode" {
   return slug.startsWith("anthropic/") ? "claude" : "opencode";
 }
 
+// one canary per routing layer — proves the routing surface (auth, tool-call
+// translation) is alive without re-testing every underlying model.
+const ROUTING_CANARIES = new Set(["openrouter/claude-sonnet", "opencode/claude-sonnet"]);
+
+function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
+  if (ROUTING_CANARIES.has(alias.slug)) return false;
+  if (alias.provider === "openrouter") return true;
+  // opencode FREE models (big-pickle, mimo, minimax, gpt-5-nano) are unique
+  // to opencode and used in prod — keep them. only prune the keyed mirrors.
+  if (alias.provider === "opencode" && !alias.isFree) return true;
+  return false;
+}
+
 const filter = process.env.MATRIX_FILTER?.trim() ?? "";
+const includeAllPassthroughs = process.env.INCLUDE_ALL_PASSTHROUGHS === "1";
 
 const matrix = modelAliases
   .filter((alias) => (filter ? alias.slug.toLowerCase().includes(filter.toLowerCase()) : true))
+  .filter((alias) => includeAllPassthroughs || !isPrunablePassthrough(alias))
   .map((alias) => ({
     slug: alias.slug,
     agent: agentForSlug(alias.slug),

@@ -1,4 +1,5 @@
 // changes to mode definitions should be reflected in docs/modes.mdx
+import { REVIEWER_AGENT_NAME } from "./agents/reviewer.ts";
 import { type AgentId, formatMcpToolRef, pullfrogMcpName } from "./external.ts";
 
 export interface Mode {
@@ -82,9 +83,36 @@ export function computeModes(agentId: AgentId): Mode[] {
    - plan your approach before writing code: identify which files need to change, key design decisions, and edge cases. for non-trivial changes, consider whether there's a more elegant approach.
    - run relevant tests/lints before committing
 
-4. **self-review**: delegate a read-only subagent to review your diff. the subagent must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. provide it with the output of \`git diff\` and instruct it to look for bugs, logic errors, missing edge cases, and unintended changes. review its findings, address any valid points, and discard nitpicks or false positives. then:
-   - verify only intended changes are present, no debug artifacts or commented-out code remain, and no unrelated files were modified
-   - commit locally via shell (\`git add . && git commit -m "..."\`)
+4. **self-review**: judgment call — does YOUR diff warrant a fresh-eyes pass?
+
+   Skip self-review (commit directly) when the diff is **genuinely trivial**:
+   - doc typos, comment-only edits, whitespace/format-only, import reordering
+   - lockfile or generated-code regeneration, mechanical rename whose only effect is import-path updates (size of diff is irrelevant — read the *shape*, not the line count)
+   - low-risk dep patch bump from a trusted source
+
+   Run self-review when the diff has **any behavioral surface, however small**:
+   - 1-line changes to SQL operators / comparison logic / regexes / redirects / HTTP methods / response codes
+   - any change to money / tax / currency / billing / fee / refund / payout calculations or constants
+   - any change to auth / permissions / roles / sessions / tokens / signature verification
+   - any change to feature-flag defaults, retry counts, timeouts, rate limits, batch sizes
+   - new endpoints, new code paths, new error branches — even small ones
+   - mixed diffs (whitespace + a single semantic line) — the semantic line still triggers self-review
+   - anything you're uncertain about
+
+   Tie-breaker: when in doubt, run self-review. One false-positive subagent dispatch costs cents; one false-negative shipped bug costs much more. There's no value in dispatching for a typo, but there's also no excuse for skipping on a 1-line change to a billing path.
+
+   Otherwise delegate the \`${REVIEWER_AGENT_NAME}\` subagent to review your diff with fresh eyes against YOUR TASK. The subagent's baked-in system prompt enforces a non-mutative + non-recursive contract: read-only file/search/web tools and read-only MCP queries only; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch. Enforcement is prose-only — restate the constraint in your dispatch instructions and do not relax it.
+
+   Provide the subagent with YOUR TASK, the output of \`git diff\`, and a tight summary (not raw output) of any lint/typecheck/test failures you fixed during build — what broke, root cause, the fix — so it can check that fixes addressed root causes rather than suppressed symptoms; say "no build-phase failures" if the build path was clean. Instruct it to flag bugs, logic errors, missing edge cases, gaps between request and diff, and unintended changes.
+
+   Delegation + research discipline (distilled from \`/anneal\` canonical — these are codified learnings from many review rounds, not theoretical best practices):
+   - Do NOT summarize what you implemented — that biases the subagent toward validating the shape of your solution rather than questioning it.
+   - Do NOT curate a reading list of files. Let the subagent discover scope from the diff and codebase.
+   - Do NOT pre-shape output with a severity / category schema. That leaks your hypotheses; severity is your call during evaluation.
+   - Do NOT defect-hunt the diff yourself in parallel with the subagent. Your role is dispatch + evaluation; doing the review yourself reintroduces the implementation bias the subagent is meant to mitigate.
+   - For diffs that rely on third-party API contracts, SDK semantics, framework directives, or DB engine specifics, instruct the subagent to verify load-bearing claims via web search and quote source URLs rather than trust training data — this is the single most common review-quality failure mode.
+
+   Review the findings, address valid points, and discard nitpicks or false positives. Then verify only intended changes are present, no debug artifacts or commented-out code remain, no unrelated files were modified. Commit locally via shell (\`git add . && git commit -m "..."\`).
 
 5. **finalize**:
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (see *SYSTEM* Git rules if this fails — prepush errors are usually the repo's tests/lint, not infra timeouts)
@@ -124,29 +152,94 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
 
 ${learningsStep(t, 6)}`,
     },
+    // Review and IncrementalReview use the multi-lens orchestrator pattern
+    // (canonical source: .claude/commands/anneal.md). The orchestrator does
+    // triage → parallel read-only subagent fan-out → aggregate → draft comments
+    // → submit. For someone else's PR, parallel lenses (correctness, security,
+    // research-validated claims, user-journey, etc.) provide breadth across
+    // angles that a single subagent can't carry coherently. Build mode keeps
+    // a single fresh-eyes subagent (different problem shape — orchestrator
+    // wrote the code and bias-mitigation comes from delegating to one
+    // subagent that doesn't share the implementation context).
+    // Deliberate omission vs canonical /anneal: severity categorization in the
+    // final message (the review body has its own CAUTION/IMPORTANT framing
+    // instead of a severity table).
     {
       name: "Review",
       description:
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
       prompt: `### Checklist
 
-1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`. read the diff TOC first and treat its file line ranges as your coverage checklist.
+1. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`. read the diff TOC end-to-end and treat its file line ranges as your coverage checklist.
 
-2. For each area of change:
-   - read the diff and trace data flow, check boundaries, and verify assumptions
-   - plan your investigation: identify the highest-risk areas (tricky state transitions, boundary crossings, assumption chains) and prioritize depth over breadth
-   - use \`${t("get_pull_request")}\` and other read-only GitHub tools for additional context
-   - if the PR removes features, deletes exports, renames identifiers, or changes architectural patterns, run a dedicated impact analysis: list what changed, then use grep across code, tests, docs (\`docs/\`, \`wiki/\`), comments, configs, and UI to find stale references
-   - report impact-analysis findings in the summary body, ordered by severity (runtime breakage > incorrect docs > stale comments)
-   - draft inline comments with NEW line numbers from the diff — every comment must be actionable (2-3 sentences max)
-   - use GitHub permalink format for code references
-   - for large or cross-cutting PRs that touch disparate subsystems, consider delegating read-only subagents to investigate areas in parallel. subagents must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. collect their findings and use them to draft comments.
+2. **triage**: orient yourself on the PR — identify *what kind of thing this is* (domain it touches, seams it crosses, external contracts it depends on, user-facing surfaces it changes). orientation only — defer specific defect-hunting to the subagents; pre-reviewing biases the lenses you pick. use \`${t("get_pull_request")}\` and other read-only GitHub tools for additional context if needed.
 
-3. Self-critique: review all drafted comments and drop any that are praise, style preferences, speculative/unverified claims, about pre-existing code unrelated to the PR, or not actionable.
+   if the PR is **genuinely trivial**, skip steps 3–4 entirely and submit \`Reviewed — no issues found.\` per step 5. there's no value in dispatching even one lens for a typo.
 
-4. Submit — ALWAYS submit exactly one review via \`${t("create_pull_request_review")}\`.
-   Do NOT call \`report_progress\` — the review is the final record and the progress
-   comment will be cleaned up automatically.
+   "Genuinely trivial" (skip):
+   - single-word doc typo, whitespace/format-only, comment-only across any number of files
+   - lockfile or generated-code regeneration (size of diff is irrelevant — read the *shape*)
+   - mechanical rename whose only effect is import-path updates
+   - low-risk dep patch bump
+
+   "Looks trivial but isn't" (do **NOT** skip — small diff, big blast radius):
+   - any 1-line change to SQL / regex / auth / billing / permission / signature-verification code
+   - flipping a feature-flag default, default config value, or retry/timeout constant
+   - changing a money/tax/currency/fee constant by any amount
+   - changing an HTTP method, redirect URL, response code, or status enum
+   - tightening or loosening a comparison operator (\`<\` ↔ \`<=\`, \`==\` ↔ \`!=\`)
+   - renaming a public API surface (still trivial in shape, but needs an impact lens)
+   - adding a new direct dependency (supply-chain surface)
+   - any "typo fix" in user-facing copy that changes meaning ("approved" → "denied")
+   - mixed diffs where a semantic 1-liner is buried in whitespace/formatting changes
+
+   When unsure, treat as non-trivial. The cost of one extra subagent is cents; the cost of a missed billing/auth/data bug is much more.
+
+   otherwise pick lenses by where the PR concentrates risk — **there's no fixed count**. lens count is judgment, not a formula. concrete shapes to anchor against:
+
+   - **1 lens** — pure refactor / mechanical rename across many files (impact); new test file with no source change (test-integrity); small isolated bug fix (correctness); doc-only PR with non-trivial technical content (research-validated or holistic)
+   - **2–3 lenses (most PRs land here)** — new CRUD endpoint (correctness + security + test-integrity); new UI flow (user-journey + correctness); a single bug fix in a non-critical subsystem (correctness + test-integrity); design doc covering one domain (research-validated + correctness or holistic)
+   - **4–5 lenses (high-stakes subsystem touches)** — any billing/payments change (billing-subsystem + correctness + security + operational-readiness); new auth flow (auth-subsystem + correctness + security + test-integrity); schema migration (schema-migration-subsystem + correctness + operational-readiness + impact); cross-subsystem PR that touches billing AND auth AND schema (one subsystem lens per domain + correctness)
+   - **6+ lenses** — almost always a smell; you're either covering overlapping ground or this PR should have been split. push back via the review body rather than expanding lens count.
+
+   lenses come in two flavors, and you can mix them:
+   - **themed lenses** — a perspective applied across the whole diff (correctness, security, user-journey, performance, etc.).
+   - **subsystem lenses** — a domain-scoped frame for high-stakes subsystems the PR touches (e.g. "the auth lens", "the billing lens", "the schema-migration lens"). a subsystem lens is "review the PR specifically for what could go wrong in this subsystem" and naturally combines theme + scope. **for high-stakes domains, lead with the subsystem lens rather than the generic themed equivalent** — "billing-subsystem" outperforms "correctness on billing code" because the framing primes the subagent to remember domain-specific failure modes (double-charges, refund races, currency rounding, dispute flows) the generic lens misses.
+
+   starter menu (combine, omit, or invent your own):
+   - **correctness & invariants** — bugs, races, error handling, edge cases, state-machine boundaries
+   - **impact** — when the PR removes features, deletes exports, renames identifiers, or changes architectural patterns: stale references in code, tests, docs (\`docs/\`, \`wiki/\`), comments, configs, UI
+   - **research-validated assumptions** — third-party API contracts, SDK semantics, framework directives, version-gated behavior. the subagent must verify load-bearing claims via web search and quote source URLs.
+   - **security** — new endpoints, authZ, input validation, secrets handling, replay/CSRF/injection, cross-tenant isolation
+   - **user-journey** — UX-touching flows: walk through happy path and failure modes as a user
+   - **operational readiness** — observability, alerting, migrations (forward + rollback), feature flags, on-call burden
+   - **integration & cross-cutting** — API contracts between modules, backward-compat of public surfaces, multi-service ordering
+   - **test integrity** — meaningful coverage for the changed behavior; deterministic; no shared-state pollution
+   - **performance** — N+1 queries, hot-path allocation, latency budgets, index coverage
+   - **holistic** — does the PR make sense as a whole? symmetric flows (delete for every create, rollback for every migration)?
+   - **subsystem lenses** (invent as the PR demands) — auth, billing, payments, schema migration, webhooks, secrets, RBAC, multi-tenant isolation, cron/scheduling, etc.
+
+3. **fan out**: dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). when picking 2+ lenses, dispatch them in a **single assistant turn with multiple parallel subagent calls**; issuing one and awaiting reply before the next collapses the fan-out into a serial review. if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 3 entirely on a single subagent failure. each subagent gets:
+   - the diff path / target — reading the diff and the codebase is its job
+   - **only one lens** — never a multi-section "review for X, Y, and Z" prompt
+   - **a Task \`description\` set to the lens name** (e.g. \`"security"\`, \`"correctness"\`, \`"billing-subsystem"\`) — the harness reads this field to label the subagent's log lines so parallel runs can be told apart in CI output. without it, every subagent shows up as \`subagent#N\`.
+   - the read-only contract restated in your dispatch instructions so the rule is present twice (the subagent's system prompt also enforces it). The test: would this call still be a no-op if reverted? If not (PR comments, branch pushes, issue updates, set_output, label changes, dependency installs, etc.), don't make it.
+   - if the lens touches external contracts, instruct the subagent to verify load-bearing claims via web search rather than trust training data, and to quote source URLs in its reasoning. action runs are non-interactive — there's no human in the loop to catch "I'm pretty sure Stripe does X."
+   - ask the subagent to report findings with file paths and NEW line numbers from the diff so you can anchor inline comments without re-reading the entire diff.
+
+   delegation discipline:
+   - do NOT lens-review the diff yourself in parallel with the subagents (your job is dispatch + comment-drafting; doing the lens work yourself reintroduces the bias the fan-out avoids)
+   - do NOT summarize the PR for them (biases toward a validation frame)
+   - do NOT hand them a curated reading list (let them discover scope)
+   - do NOT pre-shape their output with a finding schema
+   - do NOT mention the other lenses (independence is the point — overlapping findings are a strong signal)
+
+4. **aggregate & draft**: merge findings; de-dup overlaps (two lenses catching the same issue = higher-confidence signal); trace each finding yourself before accepting it. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the PR (heuristic: if the finding's root cause lives in lines this PR added or modified, it's in scope; otherwise drop unless the PR plausibly introduced or amplified the regression), and anything not actionable.
+
+   for surviving findings, draft inline comments with NEW line numbers from the diff. every comment must be actionable, 2-3 sentences max. use GitHub permalink format for code references. for impact-analysis findings (stale references after rename/remove), report them in the review body ordered by severity (runtime breakage > incorrect docs > stale comments) rather than as inline comments unless they're anchored to a specific line.
+
+5. **submit**: ALWAYS submit exactly one review via \`${t("create_pull_request_review")}\`. Do NOT call \`report_progress\` — the review is the final record and the progress comment will be cleaned up automatically.
+
    note: the first create_pull_request_review submission may error with a one-time diff-coverage nudge listing unread TOC regions. retry the same call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session.
 
    - **critical issues** (blocks merge — bugs, security, data loss):
@@ -160,30 +253,57 @@ ${learningsStep(t, 6)}`,
    - **no actionable issues**:
      \`approved: true\`, body: "Reviewed — no issues found."`,
     },
+    // IncrementalReview shares Review's multi-lens orchestrator pattern but
+    // scopes the target to the incremental diff and adds prior-review-feedback
+    // tracking. The "issues must be NEW since the last Pullfrog review" filter
+    // lives at aggregation time (step 5), NOT in the subagent prompt — pushing
+    // the filter into subagents matches the canonical anneal anti-pattern of
+    // "list known pre-existing failures — don't flag these" and suppresses
+    // signal on regressions the new commits amplified. The body-format rules
+    // (Reviewed changes / Prior review feedback) are unchanged from the prior
+    // version. Same severity-table omission as Review.
     {
       name: "IncrementalReview",
       description:
         "Re-review a PR after new commits are pushed; focus on new changes since the last review",
       prompt: `### Checklist
 
-1. Checkout the PR via \`${t("checkout_pr")}\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available). read the diff TOC first and use its line ranges as your coverage checklist.
+1. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available). read the diff TOC first and use its line ranges as your coverage checklist.
 
-2. If \`incrementalDiffPath\` is present, read it to see what changed since the last review. This is a range-diff that isolates the net changes, filtering out base branch noise. If not present, fall back to reviewing the full PR diff.
+2. **incremental scope**: if \`incrementalDiffPath\` is present, read it to see what changed since the last review. this is a range-diff that isolates the net changes, filtering out base branch noise. if not present, fall back to reviewing the full PR diff and determine what changed since Pullfrog's most recent review.
 
-3. Fetch previous reviews via \`${t("list_pull_request_reviews")}\`. For the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback.
+3. **prior feedback**: fetch previous reviews via \`${t("list_pull_request_reviews")}\`. for the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback. you'll need this in step 6 to track which prior comments were addressed.
 
-4. For each area of the new changes:
-   - review the incremental diff while using the full diff for context
-   - check whether prior review feedback was addressed by the new commits
-   - trace data flow, check boundaries, verify assumptions, consider lifecycle, spot performance issues
-   - if the new commits remove, rename, or deprecate anything, run impact analysis with grep across code/tests/docs/comments/configs to find stale references and include those findings in the summary body
-   - never repeat prior feedback. only comment on genuinely new issues introduced by the new commits.
-   - draft inline comments with NEW line numbers from the full PR diff — every comment must be actionable (2-3 sentences max)
-   - for large or cross-cutting PRs, consider delegating read-only subagents for parallel investigation. subagents must ONLY read files, grep, and search — no MCP tools, no writes, no shell commands, no side effects. collect their findings and use them to draft comments.
+4. **triage & fan out**: orient on the *incremental* changes — domain, seams, external contracts, user-facing surfaces.
 
-5. Self-critique: drop any comments that are praise, style preferences, speculative, about pre-existing code, or not actionable.
+   if the incremental changes are **genuinely trivial**, skip the fan-out entirely and jump to step 7's non-substantive path (do NOT submit a review).
 
-6. **Summarize**: build two distinct sections for the review body:
+   "Genuinely trivial" (skip): formatting/comment tweaks, import reordering, lockfile regen, mechanical rename of import paths, whitespace-only.
+   "Looks trivial but isn't" (do NOT skip — same anti-patterns as Review mode): 1-line changes to SQL/regex/auth/billing/permissions/signature-verification code; flipping feature-flag defaults or retry/timeout constants; money/tax/HTTP-method/redirect changes; tightening or loosening a comparison operator; mixed diffs with a semantic line buried in formatting.
+   When unsure, treat as non-trivial.
+
+   otherwise pick lenses by where the new commits concentrate risk — **there's no fixed count**, same calibration as Review mode (1 lens for pure refactor / isolated fix; 2–3 for typical features; 4–5 for high-stakes subsystem touches; 6+ is a smell). lens framing follows Review mode: themed lenses (correctness & invariants, impact when new commits remove/rename/deprecate things, research-validated assumptions, security, user-journey, operational readiness, integration & cross-cutting, test integrity, performance, holistic) and subsystem lenses (auth, billing, schema migration, etc.) — for high-stakes domains lead with the subsystem lens rather than the generic themed equivalent.
+
+   dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). dispatch them in a **single assistant turn with multiple parallel subagent calls** (serial dispatch collapses the fan-out). if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 4 entirely on a single subagent failure. each subagent gets:
+   - the diff scope (incremental diff path if available, full diff otherwise). do NOT tell them to skip pre-existing issues — that suppresses regressions the new commits amplified; the "issues must be NEW" filter lives at aggregation time (step 5), not in the subagent prompt
+   - **only one lens** — never a multi-section "review for X, Y, and Z" prompt
+   - **a Task \`description\` set to the lens name** (e.g. \`"security"\`, \`"correctness"\`, \`"billing-subsystem"\`) — the harness reads this field to label the subagent's log lines so parallel runs can be told apart in CI output. without it, every subagent shows up as \`subagent#N\`.
+   - the read-only contract restated in your dispatch instructions so the rule is present twice (the subagent's system prompt also enforces it). The test: would this call still be a no-op if reverted? If not (PR comments, branch pushes, issue updates, set_output, label changes, dependency installs, etc.), don't make it.
+   - if the lens touches external contracts, instruct the subagent to verify load-bearing claims via web search and quote source URLs. action runs are non-interactive — there's no human to catch "I'm pretty sure Stripe does X."
+   - ask the subagent to report findings with file paths and NEW line numbers from the full PR diff so you can anchor inline comments.
+
+   delegation discipline:
+   - do NOT lens-review the diff yourself in parallel with the subagents
+   - do NOT summarize the changes for them (biases toward validation frame)
+   - do NOT hand them a curated reading list (let them discover scope)
+   - do NOT pre-shape their output with a finding schema
+   - do NOT mention the other lenses (independence is the point)
+
+5. **aggregate, draft, self-critique**: merge findings; de-dup overlaps; trace each finding yourself. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the new commits, anything not actionable, and anything that re-states prior review feedback (heuristic: if the finding's root cause lives in lines the *new commits* added or modified, it's in scope; otherwise drop). To compute "lines the new commits added or modified": if \`incrementalDiffPath\` from step 1 is present, use it directly. Otherwise, take the prior Pullfrog review's \`commit_id\` (returned alongside each entry from \`${t("list_pull_request_reviews")}\` in step 3) and run \`git diff <prior-review-sha>..HEAD\` to isolate the lines added since that review. draft inline comments with NEW line numbers from the full PR diff — every comment must be actionable, 2-3 sentences max.
+
+   then check: which prior review comments were addressed by the new commits? track the addressed ones for step 6b.
+
+6. **build the review body** — two distinct sections:
    a. **Reviewed changes**: summarize at the logical-change level, not per-file. each bullet starts with a past-tense verb (e.g. \`- Extracted shared CLI runtime into a single module\`, \`- Renamed package to pullfrog\`). avoid file paths unless they add clarity. if the changes can be described in one sentence, use one sentence — no bullets needed.
    b. **Prior review feedback** (only if any were addressed): list only the prior review comments that WERE addressed by the new commits (\`- [x] safeParse instead of parse — addressed\`). omit unaddressed comments. omit this entire section if nothing was addressed. a change can appear in both sections.
    - no headings, no tables, no prose paragraphs in either section — just bullets

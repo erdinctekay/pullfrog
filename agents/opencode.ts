@@ -18,7 +18,7 @@ import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
 import { modelAliases } from "../models.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
-import { log } from "../utils/cli.ts";
+import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { detectProviderError } from "../utils/providerErrors.ts";
 import { addSkill, installBundledSkills } from "../utils/skills.ts";
@@ -27,6 +27,8 @@ import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { buildLearningsReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
+import { REVIEWER_AGENT_NAME, REVIEWER_SYSTEM_PROMPT } from "./reviewer.ts";
+import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
 import {
   type AgentResult,
   type AgentRunContext,
@@ -51,6 +53,7 @@ type OpenCodeConfig = {
   mcp?: Record<string, unknown>;
   permission?: Record<string, unknown>;
   provider?: Record<string, unknown>;
+  agent?: Record<string, unknown>;
   model?: string;
   enabled_providers?: string[];
   [key: string]: unknown;
@@ -69,6 +72,7 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
     mcp: {
       [pullfrogMcpName]: { type: "remote", url: ctx.mcpServerUrl },
     },
+    agent: buildReviewerAgentConfig(),
   };
 
   if (model) {
@@ -81,6 +85,24 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
   }
 
   return JSON.stringify(config);
+}
+
+/**
+ * Read-only subagent for self-review and /anneal lens dispatch. The
+ * non-mutative + non-recursive contract is enforced by the prose system
+ * prompt — see action/agents/reviewer.ts for why we no longer wire per-agent
+ * tool/permission denies here.
+ */
+function buildReviewerAgentConfig(): Record<string, unknown> {
+  return {
+    [REVIEWER_AGENT_NAME]: {
+      description:
+        "Read-only review subagent for self-review and lens-based code review. " +
+        "Reads only — no writes, no state-changing shell or MCP calls, no nested subagent dispatch.",
+      mode: "subagent",
+      prompt: REVIEWER_SYSTEM_PROMPT,
+    },
+  };
 }
 
 // ── model auto-select fallback ──────────────────────────────────────────────────
@@ -277,6 +299,72 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   let currentStepType: string | null = null;
   let stepHistory: Array<{ stepId: string; stepType: string; toolCalls: string[] }> = [];
 
+  // per-session labeler so parallel subagent log lines can be differentiated.
+  // the orchestrator's task tool_use events seed the labeler; the next
+  // previously-unseen sessionID consumes the head of the pending-label queue.
+  // NB: opencode's runtime currently encapsulates subagent execution inside
+  // the `task` tool — subagent-internal tool_use/tool_result events do not
+  // surface on the parent's NDJSON stream. The labeler is therefore mostly
+  // dormant in practice for opencode (no per-event session differentiation
+  // is needed because there are no per-subagent events). The orchestrator's
+  // `task` dispatch log (with `description: <lens>`) and the per-task
+  // duration log below are the actual attribution surface available today.
+  // The labeler is kept in place defensively so that if/when opencode begins
+  // streaming subagent sessions, attribution flips on with no further work.
+  const labeler = new SessionLabeler();
+  function eventLabel(event: Record<string, unknown>): string {
+    const sid = event.sessionID ?? event.session_id;
+    return labeler.labelFor(typeof sid === "string" ? sid : null);
+  }
+  function withLabel(label: string, message: string): string {
+    return label === ORCHESTRATOR_LABEL ? message : formatWithLabel(label, message);
+  }
+
+  // tracks per-task dispatch metadata so the matching tool_result can log a
+  // labeled "» subagent finished: lens=X duration=Ys" line. this is the most
+  // useful per-lens observability available given that subagent-internal
+  // events aren't streamed.
+  //
+  // matching strategy is hybrid because opencode does NOT reliably emit a
+  // tool_result with a callID equal to the originating tool_use.callID for
+  // the `task` tool (verified empirically in T3 — 5 task dispatches recorded
+  // here, 0 finish lines fired, yet aggregation succeeded so results did
+  // arrive on the stream). we keep an exact-match Map for the fast path, and
+  // also a FIFO queue for the fallback path where the callID mismatches.
+  // the queue + map share entries by reference so popping one removes both.
+  interface TaskDispatch {
+    label: string;
+    startedAt: number;
+    toolUseCallID: string;
+  }
+  const taskDispatchByCallID = new Map<string, TaskDispatch>();
+  const pendingTaskDispatches: TaskDispatch[] = [];
+  // every non-task tool_use callID we've observed. lets us tell, on a
+  // tool_result, whether its callID belongs to a known non-task tool (in
+  // which case we never fall back to FIFO) or is unrecognised (in which case
+  // a long-output result is a strong "this is probably a task result with a
+  // mismatched callID" signal).
+  const knownNonTaskCallIDs = new Set<string>();
+
+  function emitSubagentFinished(
+    dispatch: TaskDispatch,
+    status: string,
+    output: unknown,
+    matchKind: "exact" | "fifo"
+  ) {
+    const subagentDuration = performance.now() - dispatch.startedAt;
+    const outputStr = typeof output === "string" ? output : "";
+    const outputPreview = outputStr.length > 120 ? `${outputStr.slice(0, 120)}…` : outputStr;
+    const matchSuffix = matchKind === "fifo" ? " [fifo-matched]" : "";
+    log.info(
+      `» subagent finished: ${dispatch.label} (${(subagentDuration / 1000).toFixed(1)}s, status=${status})${matchSuffix}` +
+        (outputPreview ? ` — ${outputPreview.replace(/\n/g, " ")}` : "")
+    );
+    taskDispatchByCallID.delete(dispatch.toolUseCallID);
+    const idx = pendingTaskDispatches.indexOf(dispatch);
+    if (idx >= 0) pendingTaskDispatches.splice(idx, 1);
+  }
+
   function buildUsage(): AgentUsage | undefined {
     const totalInput =
       accumulatedTokens.input + accumulatedTokens.cacheRead + accumulatedTokens.cacheWrite;
@@ -294,39 +382,76 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
 
   const handlers = {
     init: (event: OpenCodeInitEvent) => {
+      // bind this sessionID to a label so subsequent events (tool_use,
+      // tool_result, text, message) route to the right prefix. for the
+      // first session this is "orchestrator"; for subagents it pops from
+      // the pending-dispatch queue.
+      const label = labeler.labelFor(event.session_id ?? null);
       log.debug(
-        `» ${params.label} init: session_id=${event.session_id || "unknown"}, model=${event.model || "unknown"}`
+        withLabel(
+          label,
+          `» ${params.label} init: session_id=${event.session_id || "unknown"}, model=${event.model || "unknown"}`
+        )
       );
-      log.debug(`» ${params.label} init event (full): ${JSON.stringify(event)}`);
-      finalOutput = "";
-      accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-      accumulatedCostUsd = 0;
-      tokensLogged = false;
+      log.debug(withLabel(label, `» ${params.label} init event (full): ${JSON.stringify(event)}`));
+      // only reset run-wide state on the orchestrator's init — child sessions
+      // emit their own init events and we don't want them to clobber the
+      // parent's accumulated counters.
+      if (label === ORCHESTRATOR_LABEL) {
+        finalOutput = "";
+        accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+        accumulatedCostUsd = 0;
+        tokensLogged = false;
+      } else {
+        log.info(`» ${params.label} subagent init: ${label} (session ${event.session_id || "?"})`);
+      }
     },
     message: (event: OpenCodeMessageEvent) => {
+      const label = eventLabel(event);
       if (event.role === "assistant" && event.content?.trim()) {
         const message = event.content.trim();
         if (event.delta) {
           log.debug(
-            `» ${params.label} thinking: ${message.substring(0, 300)}${message.length > 300 ? "..." : ""}`
+            withLabel(
+              label,
+              `» ${params.label} thinking: ${message.substring(0, 300)}${message.length > 300 ? "..." : ""}`
+            )
           );
         } else {
           log.debug(
-            `» ${params.label} message (${event.role}): ${message.substring(0, 100)}${message.length > 100 ? "..." : ""}`
+            withLabel(
+              label,
+              `» ${params.label} message (${event.role}): ${message.substring(0, 100)}${message.length > 100 ? "..." : ""}`
+            )
           );
-          finalOutput = message;
+          // same reasoning as `text` handler — only orchestrator's non-delta
+          // assistant message is the run output; subagent reports stay scoped
+          // to the box / debug log.
+          if (label === ORCHESTRATOR_LABEL) {
+            finalOutput = message;
+          }
         }
       } else if (event.role === "user") {
         log.debug(
-          `» ${params.label} message (${event.role}): ${event.content?.substring(0, 100) || ""}${event.content && event.content.length > 100 ? "..." : ""}`
+          withLabel(
+            label,
+            `» ${params.label} message (${event.role}): ${event.content?.substring(0, 100) || ""}${event.content && event.content.length > 100 ? "..." : ""}`
+          )
         );
       }
     },
     text: (event: OpenCodeTextEvent) => {
       if (event.part?.text?.trim()) {
         const message = event.part.text.trim();
-        log.box(message, { title: params.label });
-        finalOutput = message;
+        const label = eventLabel(event);
+        const boxTitle = label === ORCHESTRATOR_LABEL ? params.label : `${params.label} [${label}]`;
+        log.box(message, { title: boxTitle });
+        // only the orchestrator's final text is the run's "output" — children
+        // emit their own text on report-back, which would clobber the parent's
+        // final answer if we accepted any text into finalOutput.
+        if (label === ORCHESTRATOR_LABEL) {
+          finalOutput = message;
+        }
       }
     },
     step_start: (event: OpenCodeStepStartEvent) => {
@@ -369,6 +494,40 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         return;
       }
 
+      // when the orchestrator dispatches a subagent via the `task` tool, push
+      // a label for the upcoming child session so its events are attributable.
+      // record BEFORE label lookup: this event's session is the parent (whose
+      // label is already bound); the dispatch label is for the next new
+      // sessionID that appears.
+      if (toolName === "task") {
+        const taskInput = (event.part?.state?.input ?? {}) as {
+          description?: string;
+          subagent_type?: string;
+          prompt?: string;
+        };
+        const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
+        // dual-index by callID (fast path) AND in a FIFO queue (fallback path
+        // for when opencode's task tool_result carries a different callID).
+        const dispatch: TaskDispatch = {
+          label: dispatchedLabel,
+          startedAt: performance.now(),
+          toolUseCallID: toolId,
+        };
+        taskDispatchByCallID.set(toolId, dispatch);
+        pendingTaskDispatches.push(dispatch);
+        log.info(
+          `» dispatching subagent: ${dispatchedLabel}` +
+            (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
+        );
+      } else {
+        // remember non-task callIDs so a later tool_result with that callID
+        // is correctly identified as not-a-task (and we don't FIFO-pop a
+        // pending task by mistake).
+        knownNonTaskCallIDs.add(toolId);
+      }
+
+      const label = eventLabel(event);
+
       if (stepHistory.length > 0) {
         stepHistory[stepHistory.length - 1]!.toolCalls.push(toolName);
       }
@@ -381,10 +540,13 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       }
 
       thinkingTimer.markToolCall();
-      log.toolCall({ toolName, input: event.part?.state?.input || {} });
+      const inputFormatted = formatJsonValue(event.part?.state?.input || {});
+      const toolCallLine =
+        inputFormatted !== "{}" ? `» ${toolName}(${inputFormatted})` : `» ${toolName}()`;
+      log.info(withLabel(label, toolCallLine));
 
       if (event.part?.state?.status === "completed" && event.part.state.output) {
-        log.debug(`  output: ${event.part.state.output}`);
+        log.debug(withLabel(label, `  output: ${event.part.state.output}`));
       }
 
       // agent's explicit MCP report_progress takes priority over todo tracking
@@ -402,8 +564,33 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       const toolId = event.part?.callID || event.tool_id;
       const status = event.part?.state?.status || event.status || "unknown";
       const output = event.part?.state?.output || event.output;
+      const label = eventLabel(event);
 
       thinkingTimer.markToolResult();
+
+      // surface subagent completion at info level — opencode otherwise hides
+      // per-task timing in debug-only logs, so a parallel multi-lens fan-out
+      // looks like N dispatches followed by a long quiet gap then a single
+      // assistant turn. with this line you can see each lens finishing.
+      //
+      // matching is hybrid: exact callID first; FIFO fallback when the
+      // tool_result's callID is unrecognised. opencode does not consistently
+      // surface matching callIDs for the `task` tool, so the FIFO path is the
+      // one that fires in practice. we only fall through to FIFO when the
+      // callID is brand-new (not in `knownNonTaskCallIDs`) so genuinely
+      // non-task tool_results never accidentally pop a pending task.
+      if (taskDispatchByCallID.size > 0 || pendingTaskDispatches.length > 0) {
+        if (toolId && taskDispatchByCallID.has(toolId)) {
+          const dispatch = taskDispatchByCallID.get(toolId);
+          if (dispatch) emitSubagentFinished(dispatch, status, output, "exact");
+        } else {
+          const callIDIsKnownNonTask = toolId ? knownNonTaskCallIDs.has(toolId) : false;
+          if (!callIDIsKnownNonTask && pendingTaskDispatches.length > 0) {
+            const dispatch = pendingTaskDispatches[0]!;
+            emitSubagentFinished(dispatch, status, output, "fifo");
+          }
+        }
+      }
 
       if (toolId) {
         const toolStartTime = toolCallTimings.get(toolId);
@@ -412,24 +599,35 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           toolCallTimings.delete(toolId);
           const stepContext = currentStepId ? ` (step=${currentStepType || "unknown"})` : "";
           log.debug(
-            `» ${params.label} tool_result${stepContext}: id=${toolId}, status=${status}, duration=${Math.round(toolDuration)}ms`
+            withLabel(
+              label,
+              `» ${params.label} tool_result${stepContext}: id=${toolId}, status=${status}, duration=${Math.round(toolDuration)}ms`
+            )
           );
           if (output) {
-            log.debug(`  output: ${typeof output === "string" ? output : JSON.stringify(output)}`);
+            log.debug(
+              withLabel(
+                label,
+                `  output: ${typeof output === "string" ? output : JSON.stringify(output)}`
+              )
+            );
           }
           if (toolDuration > 5000) {
             log.info(
-              `» tool call took ${(toolDuration / 1000).toFixed(1)}s - may indicate network latency`
+              withLabel(
+                label,
+                `» tool call took ${(toolDuration / 1000).toFixed(1)}s - may indicate network latency`
+              )
             );
           }
         }
       }
       if (status === "error") {
         const errorMsg = typeof output === "string" ? output : JSON.stringify(output);
-        log.info(`» tool call failed: ${errorMsg}`);
+        log.info(withLabel(label, `» tool call failed: ${errorMsg}`));
       } else if (output) {
         const outputStr = typeof output === "string" ? output : JSON.stringify(output);
-        log.debug(`tool output: ${outputStr}`);
+        log.debug(withLabel(label, `tool output: ${outputStr}`));
       }
     },
     result: async (event: OpenCodeResultEvent) => {
@@ -552,6 +750,28 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       await params.todoTracker?.flush();
     } else {
       params.todoTracker?.cancel();
+    }
+
+    // any pending task dispatches that never got a matching tool_result are
+    // surfaced here so the gap is visible rather than silently swallowed.
+    // this happens when opencode delivers the subagent's reply through a
+    // path other than tool_result (e.g. inlined into the next assistant
+    // message). flushing here is best-effort attribution — the durations
+    // reported are upper bounds (the subagent could have finished any time
+    // between dispatch and run-end), but the labels and ordering are exact.
+    //
+    // NB: the `result` event handler is dead in opencode (opencode never
+    // emits a `result`-typed event), which is why this flush lives here in
+    // the post-subprocess block instead.
+    if (pendingTaskDispatches.length > 0) {
+      for (const dispatch of [...pendingTaskDispatches]) {
+        const elapsed = performance.now() - dispatch.startedAt;
+        log.info(
+          `» subagent finished (inferred at run-end): ${dispatch.label} (≤${(elapsed / 1000).toFixed(1)}s) — no matching tool_result observed; subagent reply likely arrived via assistant message`
+        );
+      }
+      pendingTaskDispatches.length = 0;
+      taskDispatchByCallID.clear();
     }
 
     const duration = performance.now() - startTime;
