@@ -15,6 +15,7 @@ export interface RepoSettings {
   setupScript: string | null;
   postCheckoutScript: string | null;
   prepushScript: string | null;
+  stopScript: string | null;
   push: PushPermission;
   shell: ShellPermission;
   prApproveEnabled: boolean;
@@ -37,6 +38,7 @@ const defaultSettings: RepoSettings = {
   setupScript: null,
   postCheckoutScript: null,
   prepushScript: null,
+  stopScript: null,
   push: "restricted",
   shell: "restricted",
   prApproveEnabled: false,
@@ -106,6 +108,7 @@ export async function fetchRunContext(params: {
         setupScript: data.settings?.setupScript ?? null,
         postCheckoutScript: data.settings?.postCheckoutScript ?? null,
         prepushScript: data.settings?.prepushScript ?? null,
+        stopScript: data.settings?.stopScript ?? null,
       },
       apiToken: data.apiToken,
       oss: data.oss ?? false,

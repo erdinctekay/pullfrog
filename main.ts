@@ -458,6 +458,7 @@ export async function main(): Promise<MainResult> {
       tmpdir,
       instructions,
       todoTracker,
+      stopScript: runContext.repoSettings.stopScript,
       onActivityTimeout: onInnerActivityTimeout,
       onToolUse: (event) => {
         const wasTracked = recordDiffReadFromToolUse({

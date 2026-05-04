@@ -4,7 +4,7 @@
 # outputs a JSON array of agent names to stdout.
 #
 # only agents whose harness file changed AND are exported from index.ts are included.
-# shared.ts/index.ts and other non-harness action changes fall back to opencode as a canary.
+# shared.ts/index.ts/postRun.ts and other non-harness action changes fall back to opencode as a canary.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +39,7 @@ has_non_agent_change=false
 while IFS= read -r file; do
   [[ -z "$file" ]] && continue
   case "$file" in
-    action/agents/shared.ts|action/agents/index.ts)
+    action/agents/shared.ts|action/agents/index.ts|action/agents/postRun.ts)
       has_non_agent_change=true
       ;;
     action/agents/*.ts)

@@ -8,9 +8,13 @@ import type { TodoTracker } from "../utils/todoTracking.ts";
 // maximum number of stderr lines to keep in the rolling buffer during agent execution
 export const MAX_STDERR_LINES = 20;
 
-// ── post-run commit enforcement ─────────────────────────────────────────────────
+// ── post-run retry loop ────────────────────────────────────────────────────────
 
-export const MAX_COMMIT_RETRIES = 3;
+/**
+ * how many times the post-run loop may resume the agent to fix a dirty tree
+ * or a failing stop hook before giving up.
+ */
+export const MAX_POST_RUN_RETRIES = 3;
 
 export function getGitStatus(): string {
   try {
@@ -23,7 +27,7 @@ export function getGitStatus(): string {
   }
 }
 
-export function buildCommitPrompt(_agentId: AgentId, status: string): string {
+export function buildCommitPrompt(status: string): string {
   return [
     `UNCOMMITTED CHANGES — the working tree is dirty. push all changes to a pull request (new or existing). \`git status\` must be clean before you finish.`,
     "",
@@ -31,6 +35,20 @@ export function buildCommitPrompt(_agentId: AgentId, status: string): string {
     status,
     "```",
   ].join("\n");
+}
+
+export interface StopHookFailure {
+  exitCode: number;
+  output: string;
+}
+
+export interface PostRunIssues {
+  stopHook?: StopHookFailure;
+  dirtyTree?: string;
+}
+
+export function hasPostRunIssues(issues: PostRunIssues): boolean {
+  return issues.stopHook !== undefined || issues.dirtyTree !== undefined;
 }
 
 /**
@@ -83,6 +101,12 @@ export interface AgentRunContext {
   instructions: ResolvedInstructions;
   todoTracker?: TodoTracker | undefined;
   /**
+   * user-configured stop hook script. runs after the agent finishes each
+   * attempt; non-zero exit resumes the agent with the hook output as
+   * guidance. null when the repo has no stop hook configured.
+   */
+  stopScript?: string | null | undefined;
+  /**
    * called synchronously when the agent subprocess is killed for inner
    * activity timeout. lets main.ts tear down shared resources (MCP HTTP
    * server) so lingering SSE reconnects don't keep the outer timer alive.
@@ -116,7 +140,7 @@ export function formatCostUsd(costUsd: number): string {
  * merge two AgentUsage snapshots into one running total.
  *
  * both agent harnesses invoke their runner multiple times per `run()` when the
- * post-run dirty-tree loop kicks in (MAX_COMMIT_RETRIES). each invocation
+ * post-run retry loop kicks in (MAX_POST_RUN_RETRIES). each invocation
  * produces its own AgentUsage; we sum them so downstream callers (usage
  * summary, WorkflowRun persistence) see the whole session — not just the
  * final retry's slice.

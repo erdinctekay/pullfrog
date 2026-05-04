@@ -26,17 +26,14 @@ import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import { buildLearningsReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import {
   type AgentResult,
   type AgentRunContext,
   type AgentUsage,
   agent,
-  buildCommitPrompt,
-  getGitStatus,
   logTokenTable,
-  MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
-  mergeAgentUsage,
 } from "./shared.ts";
 
 async function installOpencodeCli(): Promise<string> {
@@ -701,29 +698,26 @@ export const opencode = agent({
       onToolUse: ctx.onToolUse,
     };
 
-    let result = await runOpenCode({
+    const result = await runOpenCode({
       ...runParams,
       args: [...baseArgs, ctx.instructions.full],
     });
-    // usage needs to aggregate across the initial run + every commit retry.
-    // each runOpenCode() returns only its own iteration's usage, so without
-    // merging the caller sees only the final retry's slice and undercounts.
-    let aggregatedUsage = result.usage;
 
-    // post-run: if the working tree is dirty, continue the session and ask the agent to commit
-    for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
-      if (!result.success) break;
-      const status = getGitStatus();
-      if (!status) break;
-
-      log.info(`» dirty working tree (attempt ${attempt + 1}/${MAX_COMMIT_RETRIES}):\n${status}`);
-      result = await runOpenCode({
-        ...runParams,
-        args: [...baseArgs, "--continue", buildCommitPrompt("opencode", status)],
-      });
-      aggregatedUsage = mergeAgentUsage(aggregatedUsage, result.usage);
-    }
-
-    return { ...result, usage: aggregatedUsage };
+    // post-run retry loop aggregates usage across the initial run + every
+    // resume, so the caller sees the whole session — not just the final
+    // slice. opencode always accepts `--continue`, so no canResume guard.
+    // the reflection prompt fires once after gates go clean, as a dedicated
+    // turn that nudges the agent to persist learnings.
+    return runPostRunRetryLoop({
+      initialResult: result,
+      initialUsage: result.usage,
+      stopScript: ctx.stopScript,
+      reflectionPrompt: buildLearningsReflectionPrompt("opencode"),
+      resume: async (c) =>
+        runOpenCode({
+          ...runParams,
+          args: [...baseArgs, "--continue", c.prompt],
+        }),
+    });
   },
 });

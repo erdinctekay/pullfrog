@@ -26,17 +26,14 @@ import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import { buildLearningsReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import {
   type AgentResult,
   type AgentRunContext,
   type AgentUsage,
   agent,
-  buildCommitPrompt,
-  getGitStatus,
   logTokenTable,
-  MAX_COMMIT_RETRIES,
   MAX_STDERR_LINES,
-  mergeAgentUsage,
 } from "./shared.ts";
 
 async function installClaudeCli(): Promise<string> {
@@ -652,35 +649,31 @@ export const claude = agent({
       onToolUse: ctx.onToolUse,
     };
 
-    let result = await runClaude({
+    const result = await runClaude({
       ...runParams,
       args: [...baseArgs, "-p", ctx.instructions.full],
     });
-    // usage needs to aggregate across the initial run + every commit retry.
-    // each runClaude() returns only its own iteration's usage, so without
-    // merging the caller sees only the final retry's slice and undercounts.
-    let aggregatedUsage = result.usage;
 
-    // post-run: if the working tree is dirty, resume the session and ask the agent to commit
-    for (let attempt = 0; attempt < MAX_COMMIT_RETRIES; attempt++) {
-      if (!result.success || !result.sessionId) break;
-      const status = getGitStatus();
-      if (!status) break;
-
-      log.info(`» dirty working tree (attempt ${attempt + 1}/${MAX_COMMIT_RETRIES}):\n${status}`);
-      result = await runClaude({
-        ...runParams,
-        args: [
-          ...baseArgs,
-          "-p",
-          buildCommitPrompt("claude", status),
-          "--resume",
-          result.sessionId,
-        ],
-      });
-      aggregatedUsage = mergeAgentUsage(aggregatedUsage, result.usage);
-    }
-
-    return { ...result, usage: aggregatedUsage };
+    // post-run retry loop aggregates usage across the initial run + every
+    // resume, so the caller sees the whole session — not just the final
+    // slice. claude needs a sessionId to `--resume`; if it's missing the
+    // loop bails (checks still ran, so persistent hook failures still fail
+    // the run). the reflection prompt fires once after gates go clean, as a
+    // dedicated turn that nudges the agent to persist learnings.
+    return runPostRunRetryLoop({
+      initialResult: result,
+      initialUsage: result.usage,
+      stopScript: ctx.stopScript,
+      reflectionPrompt: buildLearningsReflectionPrompt("claude"),
+      canResume: (r) => Boolean(r.sessionId),
+      resume: async (c) => {
+        const sessionId = c.previousResult.sessionId;
+        if (!sessionId) throw new Error("unreachable: canResume gated on sessionId");
+        return runClaude({
+          ...runParams,
+          args: [...baseArgs, "-p", c.prompt, "--resume", sessionId],
+        });
+      },
+    });
   },
 });
