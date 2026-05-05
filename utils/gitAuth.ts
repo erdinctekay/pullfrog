@@ -154,8 +154,19 @@ export async function $git(
 
     if (result.exitCode !== 0) {
       const stderr = result.stderr.trim();
-      log.info(`git ${subcommand} failed: ${stderr}`);
-      throw new Error(`git ${subcommand} failed: ${stderr}`);
+      const stdout = result.stdout.trim();
+      // stderr is the primary channel for git diagnostics, but in rare cases
+      // (e.g. some HTTPS smart-protocol failures) the only useful detail is
+      // on stdout — without it the agent / operator sees an empty error.
+      // include exit code so we can distinguish e.g. signal-killed (1 with
+      // empty output) from a genuine git-level rejection.
+      const detail =
+        stderr && stdout
+          ? `${stderr}\n--- stdout ---\n${stdout}`
+          : stderr || stdout || "(no output)";
+      const message = `git ${subcommand} failed (exit ${result.exitCode}): ${detail}`;
+      log.info(message);
+      throw new Error(message);
     }
 
     return {

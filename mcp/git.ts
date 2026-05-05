@@ -153,6 +153,62 @@ export const PushBranch = type({
   force: type.boolean.describe("Force push (use with caution)").default(false),
 });
 
+// classify an error from `$git("push", ...)` to decide retry vs. recovery
+// vs. rethrow. exported for tests.
+//
+// - `concurrent-push`: server-side compare-and-swap failed because the ref
+//   advanced between fetch and push. recovery is fetch + integrate + retry.
+//   matches both the client-side detection (`fetch first` /
+//   `non-fast-forward`) and the server-side detection (`cannot lock ref`
+//   with `is at <SHA1> but expected <SHA2>`).
+// - `transient`: network or upstream server hiccup (RPC failed mid-stream,
+//   HTTP 5xx, early EOF, reset, timeout, dns flake). push is idempotent so
+//   verbatim retry with backoff is safe.
+// - `unknown`: anything else (including auth/permission/protected-branch
+//   rejections). retrying these wastes time; surface to the caller.
+//
+// kept conservative: a misclassification of `unknown` -> `transient` would
+// cause two extra round-trips on a permanently-failing push, while the
+// reverse (true transient labeled `unknown`) just falls back to current
+// behavior. so we only mark as transient when the error string is
+// unambiguously a network/server-side fault, not a refusal.
+export type PushErrorKind = "concurrent-push" | "transient" | "unknown";
+
+const CONCURRENT_PUSH_PATTERNS = ["fetch first", "non-fast-forward", "cannot lock ref"] as const;
+
+const TRANSIENT_PATTERNS: RegExp[] = [
+  /RPC failed/i,
+  /early EOF/,
+  /the remote end hung up unexpectedly/,
+  /Connection reset/i,
+  /Could not resolve host/i,
+  /Operation timed out/i,
+  /HTTP\/2 stream \d+ was not closed cleanly/i,
+  /unexpected disconnect while reading sideband packet/i,
+  // libcurl HTTP 5xx surfaced by git over https. matches both the
+  // libcurl-style "The requested URL returned error: 502" and the more
+  // recent "HTTP 502" wording. most 4xx is intentionally excluded —
+  // 401/403/404 indicate auth/permission problems that are not
+  // retry-safe — but 429 (rate-limited / abuse detection) IS retry-safe
+  // and GitHub occasionally surfaces it on git push, so it's included
+  // explicitly below.
+  /HTTP 5\d\d/,
+  /returned error: 5\d\d/i,
+  /HTTP 429/,
+  /returned error: 429/i,
+];
+
+export function classifyPushError(msg: string): PushErrorKind {
+  if (CONCURRENT_PUSH_PATTERNS.some((p) => msg.includes(p))) return "concurrent-push";
+  if (TRANSIENT_PATTERNS.some((p) => p.test(msg))) return "transient";
+  return "unknown";
+}
+
+// backoff delays before retry attempts 2 and 3. attempt 1 is the original
+// push. total worst-case added latency: ~7s. small enough that the agent
+// rarely notices, large enough to ride out most upstream hiccups.
+const TRANSIENT_RETRY_DELAYS_MS = [2000, 5000];
+
 export function PushBranchTool(ctx: ToolContext) {
   const defaultBranch = ctx.repo.data.default_branch || "main";
   const pushPermission = ctx.payload.push;
@@ -234,30 +290,65 @@ export function PushBranchTool(ctx: ToolContext) {
         log.warning(`force pushing - this will overwrite remote history`);
       }
 
-      try {
-        await $git("push", pushArgs, {
-          token: ctx.gitToken,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("fetch first") || msg.includes("non-fast-forward")) {
-          // git rebase is blocked through the MCP tool when shell is disabled
-          // (rebase --exec can execute arbitrary code). merge always works and
-          // integrates remote changes cleanly, so suggest it as the default.
-          const integrateStep =
-            ctx.payload.shell === "disabled"
-              ? `2. use the git tool to merge the remote branch into yours: git({ command: "merge", args: ["origin/${pushDest.remoteBranch}"] })`
-              : `2. use the git tool to rebase or merge your changes on top: git({ command: "merge", args: ["origin/${pushDest.remoteBranch}"] }) (or 'rebase')`;
-          throw new Error(
-            `push rejected: the remote branch '${pushDest.remoteBranch}' has new commits you don't have locally.\n\n` +
-              `to resolve this:\n` +
-              `1. use git_fetch to fetch the remote branch: git_fetch({ ref: "${pushDest.remoteBranch}" })\n` +
-              `${integrateStep}\n` +
-              `3. resolve any merge conflicts if needed\n` +
-              `4. retry push_branch`
-          );
+      // retry transient network/server errors (RPC failed, early EOF, 5xx,
+      // connection reset, etc) with backoff. push is idempotent: if the remote
+      // never received the pack, retry creates the ref; if it did, the retry
+      // is a no-op fast-forward to the same SHA. concurrent-push rejections
+      // and permission errors are NOT retried — they need user intervention.
+      let lastErr: unknown;
+      let pushed = false;
+      for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+        try {
+          await $git("push", pushArgs, {
+            token: ctx.gitToken,
+          });
+          if (attempt > 0) {
+            log.info(`push succeeded on attempt ${attempt + 1}`);
+          }
+          pushed = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          const kind = classifyPushError(msg);
+
+          if (kind === "concurrent-push") {
+            // git rebase is blocked through the MCP tool when shell is disabled
+            // (rebase --exec can execute arbitrary code). merge always works and
+            // integrates remote changes cleanly, so suggest it as the default.
+            const integrateStep =
+              ctx.payload.shell === "disabled"
+                ? `2. use the git tool to merge the remote branch into yours: git({ command: "merge", args: ["origin/${pushDest.remoteBranch}"] })`
+                : `2. use the git tool to rebase or merge your changes on top: git({ command: "merge", args: ["origin/${pushDest.remoteBranch}"] }) (or 'rebase')`;
+            throw new Error(
+              `push rejected: the remote branch '${pushDest.remoteBranch}' has new commits you don't have locally (often a concurrent push to the same branch).\n\n` +
+                `to resolve this:\n` +
+                `1. use git_fetch to fetch the remote branch: git_fetch({ ref: "${pushDest.remoteBranch}" })\n` +
+                `${integrateStep}\n` +
+                `3. resolve any merge conflicts if needed\n` +
+                `4. retry push_branch`
+            );
+          }
+
+          if (kind === "transient" && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+            // jitter avoids lockstep retries when several agents are hit by the
+            // same upstream blip simultaneously — without it, all retries land
+            // on the same recovering server at the same instant.
+            const baseDelay = TRANSIENT_RETRY_DELAYS_MS[attempt] ?? 5000;
+            const delay = Math.round(baseDelay * (0.75 + Math.random() * 0.5));
+            log.info(
+              `push attempt ${attempt + 1} failed (transient), retrying in ${delay}ms: ${msg.slice(0, 300)}`
+            );
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+
+          throw err;
         }
-        throw err;
+      }
+      if (!pushed) {
+        // safety net — loop should always either break with success or throw.
+        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
       }
 
       return {
