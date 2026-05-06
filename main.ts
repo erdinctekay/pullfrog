@@ -319,12 +319,12 @@ export async function main(): Promise<MainResult> {
   let activityTimeout: ActivityTimeout | null = null;
   let safetyNetTimer: NodeJS.Timeout | undefined;
 
-  // parse prompt early to extract progressCommentId for toolState
+  // parse prompt early to extract progressComment for toolState
   const resolvedPromptInput = resolvePromptInput();
 
   const toolState = initToolState({
-    progressCommentId:
-      typeof resolvedPromptInput !== "string" ? resolvedPromptInput.progressCommentId : undefined,
+    progressComment:
+      typeof resolvedPromptInput !== "string" ? resolvedPromptInput.progressComment : undefined,
   });
 
   // resolve and fingerprint git binary before any agent code runs
@@ -577,6 +577,15 @@ export async function main(): Promise<MainResult> {
     });
     toolState.todoTracker = todoTracker;
 
+    // on cancellation, stop scheduling new tracker writes immediately. without this, a
+    // debounced write queued just before SIGTERM could land at GitHub *after* the post-step
+    // writes its "This run was cancelled" message, clobbering it back to the task list.
+    // we can't await in-flight writes (the process is exiting), but cancelling the timer
+    // shrinks the race window. post-cleanup has its own verify-retry loop for the rest.
+    onExitSignal(() => {
+      todoTracker?.cancel();
+    });
+
     // when the agent subprocess is killed for inner activity timeout, stop
     // the MCP HTTP server so mcp-proxy's SSE reconnect attempts don't keep
     // the outer activity timer alive. start a short safety-net timer — if
@@ -707,7 +716,7 @@ export async function main(): Promise<MainResult> {
     const trackerWasLastWriter = todoTracker?.hasPublished && !toolState.finalSummaryWritten;
     if (
       toolContext &&
-      toolState.progressCommentId &&
+      toolState.progressComment &&
       (!toolState.wasUpdated || trackerWasLastWriter)
     ) {
       await deleteProgressComment(toolContext).catch((error) => {

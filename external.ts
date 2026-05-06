@@ -279,8 +279,8 @@ export interface WriteablePayload {
   timeout?: string | undefined;
   /** working directory for the agent */
   cwd?: string | undefined;
-  /** pre-created progress comment ID for updating status */
-  progressCommentId?: string | undefined;
+  /** pre-created progress comment (ID + type) for updating status */
+  progressComment?: { id: string; type: "issue" | "review" } | undefined;
 }
 
 // immutable payload type for agent execution

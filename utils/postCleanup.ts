@@ -4,6 +4,12 @@ import { buildPullfrogFooter } from "./buildPullfrogFooter.ts";
 import { log } from "./cli.ts";
 import { createOctokit, parseRepoContext } from "./github.ts";
 import { type ResolvedPromptInput, resolvePromptInput } from "./payload.ts";
+import {
+  getProgressComment,
+  type ProgressComment,
+  parseProgressComment,
+  updateProgressComment,
+} from "./progressComment.ts";
 import { getJobToken } from "./token.ts";
 
 type JsonPromptInput = Extract<ResolvedPromptInput, object>; // not string
@@ -50,41 +56,47 @@ function buildErrorCommentBody(ctx: PostCleanupContext, isCancellation: boolean)
   return `${errorMessage}${footer}`;
 }
 
-async function validateStuckProgressComment(ctx: PostCleanupContext): Promise<number | null> {
-  if (!ctx.promptInput?.progressCommentId) {
-    log.info("[post] no progressCommentId in prompt input, skipping cleanup");
+async function validateStuckProgressComment(
+  ctx: PostCleanupContext
+): Promise<ProgressComment | null> {
+  const promptComment = ctx.promptInput?.progressComment;
+  if (!promptComment) {
+    log.info("[post] no progressComment in prompt input, skipping cleanup");
     return null;
   }
 
-  const commentId = parseInt(ctx.promptInput.progressCommentId, 10);
-  log.info(`[post] validating progressCommentId from prompt input: ${commentId}`);
+  const comment = parseProgressComment(promptComment);
+  if (!comment) {
+    log.info(`[post] progressComment.id is not a positive integer: ${promptComment.id}`);
+    return null;
+  }
+  log.info(`[post] validating progressComment from prompt input: ${comment.id} (${comment.type})`);
 
   try {
-    const commentResult = await ctx.octokit.rest.issues.getComment({
-      owner: ctx.repoContext.owner,
-      repo: ctx.repoContext.name,
-      comment_id: commentId,
-    });
+    const fetched = await getProgressComment(
+      { octokit: ctx.octokit, owner: ctx.repoContext.owner, repo: ctx.repoContext.name },
+      comment
+    );
 
-    const body = commentResult.data.body ?? "";
+    const body = fetched.body ?? "";
 
     if (isLeapingIntoActionCommentBody(body)) {
-      log.info(`[post] comment ${commentId} is stuck on "Leaping into action"`);
-      return commentId;
+      log.info(`[post] comment ${comment.id} is stuck on "Leaping into action"`);
+      return comment;
     }
 
     // detect stranded todo checklists left by the tracker when the process was killed
     // before the agent could call report_progress with a final summary
     if (/^- \[[ x]\] |^- \*\*→\*\* |^- ~~/.test(body)) {
-      log.info(`[post] comment ${commentId} is stuck on a todo checklist`);
-      return commentId;
+      log.info(`[post] comment ${comment.id} is stuck on a todo checklist`);
+      return comment;
     }
 
-    log.info(`[post] comment ${commentId} is not stuck (already updated or different content)`);
+    log.info(`[post] comment ${comment.id} is not stuck (already updated or different content)`);
     return null;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.info(`[post] failed to get comment ${commentId}: ${errorMessage}`);
+    log.info(`[post] failed to get comment ${comment.id}: ${errorMessage}`);
     return null;
   }
 }
@@ -158,11 +170,13 @@ export async function runPostCleanup(): Promise<void> {
 
   const ctx: PostCleanupContext = { repoContext, octokit, runId, promptInput };
 
-  const commentId = await validateStuckProgressComment(ctx);
+  const stuck = await validateStuckProgressComment(ctx);
 
-  if (!commentId) return log.info("» [post] no stuck progress comment to update, skipping cleanup");
+  if (!stuck) return log.info("» [post] no stuck progress comment to update, skipping cleanup");
 
-  log.info(`» [post] validated stuck comment: ${commentId}, updating with error message`);
+  log.info(
+    `» [post] validated stuck comment: ${stuck.id} (${stuck.type}), updating with error message`
+  );
 
   try {
     const body = buildErrorCommentBody(
@@ -170,16 +184,63 @@ export async function runPostCleanup(): Promise<void> {
       SHOULD_CHECK_REASON ? await getIsCancelled(ctx) : false
     );
 
-    await ctx.octokit.rest.issues.updateComment({
-      owner: ctx.repoContext.owner,
-      repo: ctx.repoContext.name,
-      comment_id: commentId,
-      body,
-    });
-
-    log.info("» [post] successfully updated progress comment");
+    await writeAndVerify(ctx, stuck, body);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log.info(`[post] failed to update comment: ${errorMessage}`);
   }
+}
+
+// post-cleanup runs in a separate process from the cancelled action, so any in-flight
+// HTTP write the action's todoTracker had on the wire when SIGTERM landed can still get
+// processed by GitHub *after* our update — clobbering the cancellation message back to
+// the stale task list. (action-side mitigation: SIGTERM handler cancels the tracker; here
+// we close the remaining race by reading back our write and re-issuing if it lost.)
+const VERIFY_DELAY_MS = 3000;
+const MAX_WRITE_ATTEMPTS = 3;
+
+async function writeAndVerify(
+  ctx: PostCleanupContext,
+  comment: ProgressComment,
+  body: string
+): Promise<void> {
+  const apiCtx = {
+    octokit: ctx.octokit,
+    owner: ctx.repoContext.owner,
+    repo: ctx.repoContext.name,
+  };
+  for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt++) {
+    await updateProgressComment(apiCtx, comment, body);
+    await new Promise((resolve) => setTimeout(resolve, VERIFY_DELAY_MS));
+
+    let fetched: Awaited<ReturnType<typeof getProgressComment>>;
+    try {
+      fetched = await getProgressComment(apiCtx, comment);
+    } catch (error) {
+      // verify GET failed (5xx, secondary rate limit, network blip). the PUT itself
+      // returned 200, so we trust it landed; another write-and-verify pass would just
+      // amplify writes against a flaky GitHub. log and exit — if a stale tracker write
+      // does clobber us, the comment will be wrong but the agent's commit + replies
+      // already conveyed the substance of the run.
+      log.warning(
+        `[post] verify GET failed after attempt ${attempt} — trusting our PUT landed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return;
+    }
+
+    if (fetched.body === body) {
+      log.info(
+        `» [post] successfully updated progress comment (attempt ${attempt}/${MAX_WRITE_ATTEMPTS})`
+      );
+      return;
+    }
+    log.info(
+      `[post] body was overwritten after our write (attempt ${attempt}/${MAX_WRITE_ATTEMPTS}), retrying`
+    );
+  }
+  log.warning(
+    `[post] gave up after ${MAX_WRITE_ATTEMPTS} attempts — comment may be stale (in-flight writes from the cancelled run kept clobbering us)`
+  );
 }

@@ -2,6 +2,7 @@ import type { ToolState } from "../mcp/server.ts";
 import { getApiUrl } from "./apiUrl.ts";
 import { buildPullfrogFooter } from "./buildPullfrogFooter.ts";
 import { createOctokit, parseRepoContext } from "./github.ts";
+import { updateProgressComment } from "./progressComment.ts";
 import { getGitHubInstallationToken } from "./token.ts";
 
 interface ReportErrorParams {
@@ -13,8 +14,8 @@ interface ReportErrorParams {
 export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void> {
   const formattedError = ctx.title ? `${ctx.title}\n\n${ctx.error}` : ctx.error;
 
-  const commentId = ctx.toolState.progressCommentId;
-  if (!commentId) {
+  const comment = ctx.toolState.progressComment;
+  if (!comment) {
     return;
   }
 
@@ -39,12 +40,11 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
     model: ctx.toolState.model,
   });
 
-  await octokit.rest.issues.updateComment({
-    owner: repoContext.owner,
-    repo: repoContext.name,
-    comment_id: commentId,
-    body: `${formattedError}${footer}`,
-  });
+  await updateProgressComment(
+    { octokit, owner: repoContext.owner, repo: repoContext.name },
+    comment,
+    `${formattedError}${footer}`
+  );
 
   // mark as updated so exit handler doesn't try to update again
   ctx.toolState.wasUpdated = true;

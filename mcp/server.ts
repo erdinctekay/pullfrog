@@ -12,6 +12,11 @@ import { log } from "../utils/cli.ts";
 import type { DiffCoverageState } from "../utils/diffCoverage.ts";
 import type { OctokitWithPlugins } from "../utils/github.ts";
 import type { ResolvedPayload } from "../utils/payload.ts";
+import {
+  type ProgressComment,
+  type ProgressCommentType,
+  parseProgressComment,
+} from "../utils/progressComment.ts";
 import type { AccountPlan } from "../utils/runContext.ts";
 import type { RunContextData } from "../utils/runContextData.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
@@ -110,8 +115,8 @@ export interface ToolState {
     promise: Promise<PrepResult[]> | undefined;
     results: PrepResult[] | undefined;
   };
-  // undefined = no comment yet, number = active comment, null = deliberately deleted
-  progressCommentId: number | null | undefined;
+  // undefined = no comment yet, object = active comment, null = deliberately deleted
+  progressComment: ProgressComment | null | undefined;
   // immutable snapshot: true if a progress comment was pre-created at init time.
   // survives deleteProgressComment so handleAgentResult can still detect "expected but never reported".
   hadProgressComment: boolean;
@@ -133,20 +138,19 @@ export interface ToolState {
 }
 
 interface InitToolStateParams {
-  progressCommentId: string | undefined;
+  progressComment: { id: string; type: ProgressCommentType } | undefined;
 }
 
 export function initToolState(params: InitToolStateParams): ToolState {
-  const parsed = params.progressCommentId ? parseInt(params.progressCommentId, 10) : NaN;
-  const resolvedId = Number.isNaN(parsed) || parsed <= 0 ? undefined : parsed;
+  const resolved = parseProgressComment(params.progressComment);
 
-  if (resolvedId) {
-    log.info(`» using pre-created progress comment: ${resolvedId}`);
+  if (resolved) {
+    log.info(`» using pre-created progress comment: ${resolved.id} (${resolved.type})`);
   }
 
   return {
-    progressCommentId: resolvedId,
-    hadProgressComment: !!resolvedId,
+    progressComment: resolved,
+    hadProgressComment: !!resolved,
     backgroundProcesses: new Map(),
     usageEntries: [],
   };

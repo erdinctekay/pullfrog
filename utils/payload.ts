@@ -23,7 +23,10 @@ export const JsonPayload = type({
   "eventInstructions?": "string",
   "event?": "object",
   "timeout?": "string | undefined",
-  "progressCommentId?": "string | undefined",
+  "progressComment?": type({
+    id: "string",
+    type: "'issue' | 'review'",
+  }).or("undefined"),
 });
 
 // permission levels that indicate collaborator status (have push access)
@@ -156,7 +159,7 @@ export function resolvePayload(
     event,
     timeout: inputs.timeout ?? jsonPayload?.timeout,
     cwd: resolveCwd(inputs.cwd),
-    progressCommentId: jsonPayload?.progressCommentId,
+    progressComment: jsonPayload?.progressComment,
 
     // permissions: inputs > repoSettings > fallbacks
     push: inputs.push ?? repoSettings.push ?? "restricted",

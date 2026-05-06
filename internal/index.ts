@@ -40,6 +40,17 @@ export {
   stripExistingFooter,
 } from "../utils/buildPullfrogFooter.ts";
 export type { ResourceUsage, UsageSummary } from "../utils/github.ts";
+export type {
+  CreateProgressCommentTarget,
+  ProgressComment,
+  ProgressCommentType,
+} from "../utils/progressComment.ts";
+export {
+  createLeapingProgressComment,
+  deleteProgressCommentApi,
+  getProgressComment,
+  updateProgressComment,
+} from "../utils/progressComment.ts";
 export {
   isValidTimeString,
   parseTimeString,

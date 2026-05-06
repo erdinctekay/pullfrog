@@ -4,6 +4,11 @@ import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrog
 import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
+import {
+  createLeapingProgressComment,
+  deleteProgressCommentApi,
+  updateProgressComment,
+} from "../utils/progressComment.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -184,12 +189,15 @@ export const ReportProgress = type({
 /**
  * Report progress to a GitHub comment.
  *
- * progressCommentId has three states:
+ * progressComment has three states:
  *   - undefined: no comment yet — will create one if an issue/PR target exists
- *   - number:    active comment — will update it in place
+ *   - object:    active comment — will update it in place via the right REST endpoint for its type
  *   - null:      deliberately deleted (e.g. after submitting a PR review) — skips silently
  *
  * The body is always tracked in lastProgressBody for the job summary regardless of comment state.
+ *
+ * The "existing plan comment" path always targets a top-level issue comment (plan comments are
+ * created by create_issue_comment with type:"Plan", never as review-thread replies).
  */
 export async function reportProgress(
   ctx: ToolContext,
@@ -212,6 +220,7 @@ export async function reportProgress(
 
   const issueNumber = ctx.payload.event.issue_number ?? ctx.toolState.issueNumber;
   const isPlanMode = ctx.toolState.selectedMode === "Plan";
+  const apiCtx = { octokit: ctx.octokit, owner: ctx.repo.owner, repo: ctx.repo.name };
 
   // when editing existing plan: update the plan comment from tool state (set by select_mode)
   if (target_plan_comment === true && ctx.toolState.existingPlanCommentId === undefined) {
@@ -225,63 +234,57 @@ export async function reportProgress(
     const footer = buildCommentFooter(ctx, customParts);
     const bodyWithFooter = `${bodyWithoutFooter}${footer}`;
 
-    const result = await ctx.octokit.rest.issues.updateComment({
-      owner: ctx.repo.owner,
-      repo: ctx.repo.name,
-      comment_id: commentId,
-      body: bodyWithFooter,
-    });
+    const result = await updateProgressComment(
+      apiCtx,
+      { id: commentId, type: "issue" },
+      bodyWithFooter
+    );
 
     ctx.toolState.wasUpdated = true;
 
-    if (isPlanMode && result.data.node_id) {
-      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });
+    if (isPlanMode && result.node_id) {
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.node_id });
     }
 
     return {
-      commentId: result.data.id,
-      url: result.data.html_url,
-      body: result.data.body || "",
+      commentId: result.id,
+      url: result.html_url,
+      body: result.body || "",
       action: "updated",
     };
   }
 
-  const existingCommentId = ctx.toolState.progressCommentId;
+  const existingComment = ctx.toolState.progressComment;
 
   // if we already have a progress comment, update it
-  if (existingCommentId) {
+  if (existingComment) {
     const customParts =
       isPlanMode && issueNumber !== undefined
-        ? [buildImplementPlanLink(ctx, issueNumber, existingCommentId)]
+        ? [buildImplementPlanLink(ctx, issueNumber, existingComment.id)]
         : undefined;
 
     const bodyWithoutFooter = stripExistingFooter(body);
     const footer = buildCommentFooter(ctx, customParts);
     const bodyWithFooter = `${bodyWithoutFooter}${footer}`;
 
-    const result = await ctx.octokit.rest.issues.updateComment({
-      owner: ctx.repo.owner,
-      repo: ctx.repo.name,
-      comment_id: existingCommentId,
-      body: bodyWithFooter,
-    });
+    const result = await updateProgressComment(apiCtx, existingComment, bodyWithFooter);
 
     ctx.toolState.wasUpdated = true;
 
-    if (isPlanMode && result.data.node_id) {
-      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });
+    if (isPlanMode && result.node_id) {
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: result.node_id });
     }
 
     return {
-      commentId: result.data.id,
-      url: result.data.html_url,
-      body: result.data.body || "",
+      commentId: result.id,
+      url: result.html_url,
+      body: result.body || "",
       action: "updated",
     };
   }
 
   // null = progress comment was deleted by stranded-comment cleanup in main.ts
-  if (existingCommentId === null) {
+  if (existingComment === null) {
     return { body, action: "skipped" };
   }
 
@@ -294,49 +297,43 @@ export async function reportProgress(
   }
 
   // for new comments, we need to create first, then update with Plan link if in Plan mode
+  // self-created progress comments are always top-level issue comments — review-reply
+  // progress comments only originate from the dispatch path and arrive pre-created.
   const initialBody = addFooter(ctx, body);
+  const created = await createLeapingProgressComment(
+    apiCtx,
+    { kind: "issue", issueNumber },
+    initialBody
+  );
 
-  const result = await ctx.octokit.rest.issues.createComment({
-    owner: ctx.repo.owner,
-    repo: ctx.repo.name,
-    issue_number: issueNumber,
-    body: initialBody,
-  });
-
-  // store the comment ID for future updates
-  ctx.toolState.progressCommentId = result.data.id;
+  ctx.toolState.progressComment = created.comment;
   ctx.toolState.wasUpdated = true;
 
   // if Plan mode, update the comment to add the "Implement plan" link
   if (isPlanMode) {
-    const customParts = [buildImplementPlanLink(ctx, issueNumber, result.data.id)];
+    const customParts = [buildImplementPlanLink(ctx, issueNumber, created.comment.id)];
     const bodyWithoutFooter = stripExistingFooter(body);
     const footer = buildCommentFooter(ctx, customParts);
     const bodyWithPlanLink = `${bodyWithoutFooter}${footer}`;
 
-    const updateResult = await ctx.octokit.rest.issues.updateComment({
-      owner: ctx.repo.owner,
-      repo: ctx.repo.name,
-      comment_id: result.data.id,
-      body: bodyWithPlanLink,
-    });
+    const updateResult = await updateProgressComment(apiCtx, created.comment, bodyWithPlanLink);
 
-    if (updateResult.data.node_id) {
-      await patchWorkflowRunFields(ctx, { planCommentNodeId: updateResult.data.node_id });
+    if (updateResult.node_id) {
+      await patchWorkflowRunFields(ctx, { planCommentNodeId: updateResult.node_id });
     }
 
     return {
-      commentId: updateResult.data.id,
-      url: updateResult.data.html_url,
-      body: updateResult.data.body || "",
+      commentId: updateResult.id,
+      url: updateResult.html_url,
+      body: updateResult.body || "",
       action: "created",
     };
   }
 
   return {
-    commentId: result.data.id,
-    url: result.data.html_url,
-    body: result.data.body || "",
+    commentId: created.comment.id,
+    url: created.html_url,
+    body: created.body || "",
     action: "created",
   };
 }
@@ -393,20 +390,19 @@ export function ReportProgressTool(ctx: ToolContext) {
  * Delete the progress comment if it exists.
  * Used by main.ts for stranded-comment cleanup (orphaned "Leaping into action" or
  * checklist left by the todo tracker when the agent didn't call report_progress).
- * Sets progressCommentId to null so subsequent report_progress calls are no-ops.
+ * Sets progressComment to null so subsequent report_progress calls are no-ops.
  */
 export async function deleteProgressComment(ctx: ToolContext): Promise<boolean> {
-  const existingCommentId = ctx.toolState.progressCommentId;
-  if (!existingCommentId) {
+  const existing = ctx.toolState.progressComment;
+  if (!existing) {
     return false;
   }
 
   try {
-    await ctx.octokit.rest.issues.deleteComment({
-      owner: ctx.repo.owner,
-      repo: ctx.repo.name,
-      comment_id: existingCommentId,
-    });
+    await deleteProgressCommentApi(
+      { octokit: ctx.octokit, owner: ctx.repo.owner, repo: ctx.repo.name },
+      existing
+    );
   } catch (error) {
     // ignore 404 - comment already deleted
     if (error instanceof Error && error.message.includes("Not Found")) {
@@ -417,7 +413,7 @@ export async function deleteProgressComment(ctx: ToolContext): Promise<boolean> 
   }
 
   // set to null (not undefined) so report_progress skips instead of creating a new comment
-  ctx.toolState.progressCommentId = null;
+  ctx.toolState.progressComment = null;
 
   return true;
 }
