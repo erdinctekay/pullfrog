@@ -19,14 +19,14 @@ export async function handleAgentResult(ctx: HandleAgentResultParams): Promise<M
     };
   }
 
-  // Review and IncrementalReview modes intentionally never set wasUpdated:
-  // the prompt forbids report_progress (the review IS the durable record),
-  // and IncrementalReview's non-substantive path produces no review at
-  // all by design. wasUpdated staying false is also load-bearing for the
-  // stranded-comment cleanup in main.ts which deletes the "Leaping into
-  // action" orphan via `(!wasUpdated || trackerWasLastWriter)`. Skip the
-  // strict completion check for these modes — the agent's exit code is
-  // the completion signal, not a progress-comment write.
+  // IncrementalReview's non-substantive path exits cleanly without
+  // submitting any review, so no MCP write tool flips wasUpdated and the
+  // strict completion check below would otherwise fail the run. The
+  // isReviewMode skip is load-bearing for that path: the agent's exit
+  // code is the completion signal, not a progress-comment write.
+  // (Review mode that submits a real review now flips wasUpdated via
+  // create_pull_request_review, so the skip is redundant for the
+  // substantive-review path but kept for symmetry with IncrementalReview.)
   // See plans/review_progress_comment_cleanup_b0120f6c.plan.md.
   const mode = ctx.toolState.selectedMode;
   const isReviewMode = mode === "Review" || mode === "IncrementalReview";

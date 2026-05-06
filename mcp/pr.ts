@@ -49,6 +49,8 @@ export function UpdatePullRequestBodyTool(ctx: ToolContext) {
         body: bodyWithFooter,
       });
 
+      ctx.toolState.wasUpdated = true;
+
       return {
         success: true,
         number: result.data.number,

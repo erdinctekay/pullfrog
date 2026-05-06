@@ -537,6 +537,8 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
         reviewedSha: actuallyReviewedSha,
       };
 
+      ctx.toolState.wasUpdated = true;
+
       // a submitted review obsoletes the progress comment — the review IS the
       // durable artifact. owned here (not in main.ts) so cleanup is atomic with
       // submission and survives any path out of the run (success, timeout,

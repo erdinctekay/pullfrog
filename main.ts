@@ -705,20 +705,21 @@ export async function main(): Promise<MainResult> {
       });
     }
 
-    // clean up stranded progress comments. two cases:
-    // 1. wasUpdated=false: nothing wrote to the comment ("Leaping into action" orphan)
-    // 2. tracker published a checklist but the agent never wrote a final summary
-    //    (hasPublished=true, finalSummaryWritten=false).
-    // in both cases, delete the comment so it doesn't linger with stale content.
-    // wasUpdated is intentionally NOT set here — cleanup is not a real progress update.
-    // uses finalSummaryWritten (not todoTracker.enabled) so cleanup survives API failures
-    // in report_progress where cancel() ran but the write didn't succeed.
-    const trackerWasLastWriter = todoTracker?.hasPublished && !toolState.finalSummaryWritten;
-    if (
-      toolContext &&
-      toolState.progressComment &&
-      (!toolState.wasUpdated || trackerWasLastWriter)
-    ) {
+    // clean up stranded progress comments. the comment is stale unless
+    // report_progress wrote a final summary to it — three sub-cases all reduce
+    // to !finalSummaryWritten:
+    // 1. nothing wrote to the comment ("Leaping into action" orphan)
+    // 2. tracker published a checklist but the agent never finalized it
+    // 3. the agent produced a substantive artifact via another MCP write tool
+    //    (create_issue_comment, update_pull_request_body, reply_to_review_comment)
+    //    and skipped report_progress — wasUpdated is true, but the progress
+    //    comment itself was never touched.
+    // create_pull_request_review owns its own deletion (see action/mcp/review.ts),
+    // so progressComment is already null by the time we get here for that path.
+    // uses finalSummaryWritten (not todoTracker.enabled or wasUpdated) so cleanup
+    // survives API failures in report_progress where cancel() ran but the write
+    // didn't succeed, and isn't fooled by writes to *other* artifacts.
+    if (toolContext && toolState.progressComment && !toolState.finalSummaryWritten) {
       await deleteProgressComment(toolContext).catch((error) => {
         log.debug(`stranded progress comment cleanup failed: ${error}`);
       });

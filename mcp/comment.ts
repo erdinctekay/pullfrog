@@ -91,6 +91,8 @@ export function CreateCommentTool(ctx: ToolContext) {
           body: bodyWithFooter,
         });
 
+        ctx.toolState.wasUpdated = true;
+
         if (result.data.node_id) {
           await patchWorkflowRunFields(ctx, { summaryCommentNodeId: result.data.node_id });
         }
@@ -109,6 +111,8 @@ export function CreateCommentTool(ctx: ToolContext) {
         issue_number: issueNumber,
         body: bodyWithFooter,
       });
+
+      ctx.toolState.wasUpdated = true;
 
       if (commentType === "Plan") {
         if (result.data.node_id) {
@@ -366,16 +370,16 @@ export function ReportProgressTool(ctx: ToolContext) {
       }
       const result = await reportProgress(ctx, reportParams);
 
-      if (!params.target_plan_comment) {
-        ctx.toolState.finalSummaryWritten = true;
-      }
-
       if (result.action === "skipped") {
         return {
           success: true,
           message:
             "progress recorded (no GitHub comment created - this may occur for workflow_dispatch events or when there is no associated issue/PR)",
         };
+      }
+
+      if (!params.target_plan_comment) {
+        ctx.toolState.finalSummaryWritten = true;
       }
 
       return {
