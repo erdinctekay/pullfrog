@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
@@ -275,6 +275,39 @@ type CheckoutPrBranchParams = GitContext & {
   beforeSha?: string | undefined;
 };
 
+// stale lock files left over from a crashed/cancelled prior git process block
+// every subsequent fetch with `Unable to create '<path>': File exists`. only
+// sweep locks older than this threshold so we never race a concurrent
+// legitimate git op that's holding the lock.
+const STALE_LOCK_AGE_MS = 30_000;
+
+const GIT_LOCK_PATHS = [
+  ".git/shallow.lock",
+  ".git/index.lock",
+  ".git/objects/maintenance.lock",
+] as const;
+
+function cleanupStaleGitLocks(): void {
+  const now = Date.now();
+  for (const relPath of GIT_LOCK_PATHS) {
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(relPath).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (now - mtimeMs < STALE_LOCK_AGE_MS) continue;
+    try {
+      unlinkSync(relPath);
+      log.warning(`» removed stale ${relPath} from prior run`);
+    } catch (e) {
+      log.debug(
+        `» failed to remove stale ${relPath}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+}
+
 /**
  * Shared helper to checkout a PR branch and configure fork remotes.
  * Assumes origin remote is already configured with authentication.
@@ -295,6 +328,12 @@ export async function checkoutPrBranch(
   // a flag, not a refspec.
   rejectIfLeadingDash(pr.baseRef, "PR base ref");
   rejectIfLeadingDash(pr.headRef, "PR head ref");
+
+  // self-hosted runners and cancelled jobs frequently leave stale .git/*.lock
+  // files behind. without this sweep, the first fetch below aborts with
+  // `Unable to create '.git/shallow.lock': File exists` and the agent has to
+  // shell out to `rm -f` (issue #564).
+  cleanupStaleGitLocks();
 
   const isFork = pr.headRepoFullName !== pr.baseRepoFullName;
 
