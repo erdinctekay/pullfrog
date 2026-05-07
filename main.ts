@@ -160,55 +160,91 @@ class TransientError extends Error {
 }
 
 /**
- * Render a BillingError as user-facing markdown (shared between GH job summary
- * and the PR progress comment). Branches:
- *
- *   - `router_requires_card`: the user is on Router mode with no card AND
- *     no wallet balance. Points at the add-card flow in the console.
- *   - `needsReauthentication` (Stripe `authentication_required` decline): the
- *     issuer requires a 3D Secure challenge on each off-session charge —
- *     re-adding the card won't help because the issuer's policy persists
- *     across credentials. The escape valve is a manual top-up from the
- *     dashboard, where 3DS runs interactively inside Stripe Checkout.
- *   - default: generic "manage billing" with the declineCode appended if
- *     classified (insufficient_funds, lost_card, generic_decline, etc).
+ * Deep link into the right console section for the failing account. Anchors
+ * are defined in `app/console/[owner]/page.tsx` (`#billing`, `#model-access`).
+ * `owner` is the GitHub login of the repo's account — i.e. the org or user
+ * that pays for this repo's runs, which is the right scope for billing.
  */
-function formatBillingErrorSummary(error: BillingError): string {
+function billingConsoleUrl(owner: string, anchor: "billing" | "model-access"): string {
+  return `https://pullfrog.com/console/${encodeURIComponent(owner)}#${anchor}`;
+}
+
+/**
+ * Render a BillingError as user-facing markdown (shared between GH job summary
+ * and the PR progress comment). Goals:
+ *
+ *   - quiet, not alarmist — bold first line instead of an `### ❌` H3, since
+ *     the comment already has Pullfrog branding in the footer
+ *   - actionable — every branch ends in a single CTA deep-linked to the
+ *     correct section of the owner's console
+ *   - honest — say what actually went wrong (card declined vs. balance
+ *     empty vs. 3DS required), don't lump them under "billing error"
+ *
+ * Branches:
+ *   - `router_requires_card`: user is on Router mode with no card AND no
+ *     wallet balance. Lead with the carrot ($20 free credit), link to
+ *     `#model-access` where the Add Card flow lives.
+ *   - `needsReauthentication`: issuer requires 3DS on every off-session
+ *     charge. Re-adding the card won't help — the only escape is a manual
+ *     top-up where 3DS runs interactively in Stripe Checkout.
+ *   - `declineCode` set: Stripe declined a real charge. Show the sub-code
+ *     so support can act on it; tell the user we'll retry on next dispatch.
+ *   - default: balance hit zero with no in-flight charge (auto-reload off
+ *     or amount below threshold). Direct them to top up or enable auto-reload.
+ */
+function formatBillingErrorSummary(error: BillingError, owner: string): string {
   if (error.code === "router_requires_card") {
     return [
-      "### ⛔ Pullfrog Router requires a card",
+      "**Add a card to start using Pullfrog Router.**",
       "",
-      "This run was going to use Pullfrog Router, which bills at raw OpenRouter cost and needs a card on file. Runs won't proceed until a card is added.",
+      "Router proxies OpenRouter at raw cost — no platform markup, and your first $20 of usage is on us.",
       "",
-      "[Add a card →](https://pullfrog.com/console#model-access) — your first $20 of Router usage is free.",
+      `[Add a card →](${billingConsoleUrl(owner, "model-access")})`,
     ].join("\n");
   }
 
   if (error.needsReauthentication) {
+    const code = error.declineCode ?? "authentication_required";
     return [
-      "### ❌ Pullfrog billing error — card requires 3DS on every charge",
+      `**Your card issuer requires 3D Secure on every charge** (\`${code}\`).`,
       "",
-      `Your card issuer requires a 3D Secure challenge on each off-session charge (\`${error.declineCode ?? "authentication_required"}\`), which we can't run from the agent. Top up your Router credit balance manually — 3DS runs interactively in Stripe Checkout, and subsequent runs draw from the prepaid balance without triggering another off-session charge.`,
+      "Pullfrog can't complete a 3DS challenge from inside a workflow. Top up your Router balance once in Stripe Checkout — subsequent runs draw from the prepaid balance without re-triggering 3DS.",
       "",
-      "[Top up your Router credit balance →](https://pullfrog.com/console)",
+      `[Top up balance →](${billingConsoleUrl(owner, "billing")})`,
     ].join("\n");
   }
 
-  const codeSuffix = error.declineCode ? ` (\`${error.declineCode}\`)` : "";
-  return `### ❌ Pullfrog billing error\n\n${error.message}${codeSuffix}\n\n[Manage billing →](https://pullfrog.com/console)`;
+  if (error.declineCode) {
+    return [
+      `**Your card was declined** (\`${error.declineCode}\`).`,
+      "",
+      "Update your payment method and Pullfrog will retry on the next run.",
+      "",
+      `[Update payment method →](${billingConsoleUrl(owner, "billing")})`,
+    ].join("\n");
+  }
+
+  return [
+    "**Your Pullfrog balance is empty.**",
+    "",
+    "Top up your balance or enable auto-reload to keep runs flowing.",
+    "",
+    `[Manage billing →](${billingConsoleUrl(owner, "billing")})`,
+  ].join("\n");
 }
 
 /**
  * Render a TransientError as user-facing markdown. Distinct framing from
- * BillingError so the user doesn't read "❌" and assume their card failed.
+ * BillingError so the user doesn't read an alarm and assume their card
+ * failed — this branch is "our fault, retry shortly", not theirs.
  */
-function formatTransientErrorSummary(error: TransientError): string {
+function formatTransientErrorSummary(error: TransientError, owner: string): string {
   return [
-    "### ⚠️ Pullfrog temporarily unavailable",
+    "**Pullfrog billing is temporarily unavailable.**",
     "",
     error.message,
     "",
-    "This is typically transient — the next dispatch should succeed. If it persists, check [status.pullfrog.com](https://status.pullfrog.com).",
+    `Usually transient — the next dispatch should succeed. If it persists, check [status.pullfrog.com](https://status.pullfrog.com) or [your console](${billingConsoleUrl(owner, "billing")}).`,
   ].join("\n");
 }
 
@@ -395,7 +431,7 @@ export async function main(): Promise<MainResult> {
     });
   } catch (error) {
     if (error instanceof BillingError) {
-      const summary = formatBillingErrorSummary(error);
+      const summary = formatBillingErrorSummary(error, runContext.repo.owner);
       await writeSummary(summary).catch(() => {});
       // Mirror to the PR progress comment if the trigger created one
       // (mention / PR event). Without this, auto-reload declines are only
@@ -405,7 +441,7 @@ export async function main(): Promise<MainResult> {
       throw error;
     }
     if (error instanceof TransientError) {
-      const summary = formatTransientErrorSummary(error);
+      const summary = formatTransientErrorSummary(error, runContext.repo.owner);
       await writeSummary(summary).catch(() => {});
       await reportErrorToComment({ toolState, error: summary }).catch(() => {});
       throw error;
