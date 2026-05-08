@@ -1,4 +1,4 @@
-import { resolveDisplayAlias } from "../models.ts";
+import { modelAliases, resolveDisplayAlias } from "../models.ts";
 
 export const PULLFROG_DIVIDER = "<!-- PULLFROG_DIVIDER_DO_NOT_REMOVE_PLZ -->";
 
@@ -28,7 +28,13 @@ export interface BuildPullfrogFooterParams {
 function formatModelLabel(slug: string): string {
   // walk the fallback chain so a deprecated stored slug shows the model the
   // run actually executed against (e.g. "GPT", not "GPT Codex").
-  const alias = resolveDisplayAlias(slug);
+  const alias =
+    resolveDisplayAlias(slug) ??
+    // reverse-lookup: when the caller passes an effective model (proxy or
+    // resolved target like "openrouter/anthropic/claude-opus-4.7") instead of
+    // a stored alias slug, find the alias whose resolve target matches so we
+    // still render a friendly display name.
+    modelAliases.find((a) => a.resolve === slug || a.openRouterResolve === slug);
   if (!alias) return `\`${slug}\``;
   return alias.isFree ? `\`${alias.displayName}\` (free)` : `\`${alias.displayName}\``;
 }

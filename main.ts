@@ -578,6 +578,12 @@ export async function main(): Promise<MainResult> {
     const resolvedModel = payload.proxyModel ? undefined : resolveModel({ slug: payload.model });
     const agent = resolveAgent({ model: resolvedModel });
 
+    // surface the effective model in comment/review footers. payload.model is
+    // just the stored slug (often undefined for router/oss runs that derive
+    // the target from proxyModel). matching priority with resolveModelForLog
+    // so the "Using `…`" badge reflects what actually ran.
+    toolState.model = payload.proxyModel ?? resolvedModel ?? payload.model;
+
     validateAgentApiKey({
       agent,
       model: payload.proxyModel ?? resolvedModel ?? payload.model,
