@@ -79,49 +79,6 @@ describe("spawn error path", () => {
     expect(elapsed).toBeLessThan(10_000);
   }, 20_000);
 
-  it("isPausedExternally suspends the activity timer while it returns true", async () => {
-    // opencode's `task` tool encapsulates subagent execution in-process —
-    // subagent-internal events don't reach our parent NDJSON stream. this
-    // means the child's stdout falls silent for the full subagent duration
-    // even when real work is happening. opencode passes a predicate keyed
-    // off its in-flight task dispatch tracker; while it returns true, the
-    // activity timer must skip the kill decision and reset its baseline.
-    const result = await spawn({
-      cmd: "bash",
-      args: ["-c", "sleep 8; echo done"],
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
-      activityTimeout: 1000,
-      isPausedExternally: () => true,
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("done");
-  }, 20_000);
-
-  it("isPausedExternally fires normally once it returns false again", async () => {
-    // verifies suspend/resume rather than unconditional bypass: the predicate
-    // flips to false after a few hundred ms, so the timer should resume from
-    // a fresh baseline (advanced during the paused window) and fire after
-    // activityTimeout idle time. critical that lastActivityTime is reset
-    // while paused — otherwise the resume tick would see a stale baseline
-    // and kill instantly.
-    let paused = true;
-    setTimeout(() => {
-      paused = false;
-    }, 500);
-
-    const result = await spawn({
-      cmd: "sleep",
-      args: ["30"],
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
-      activityTimeout: 1000,
-      isPausedExternally: () => paused,
-    }).catch((err) => err);
-
-    expect(result).toBeInstanceOf(Error);
-    expect(String(result)).toMatch(/activity timeout/i);
-  }, 20_000);
-
   it("reports signal-killed subprocesses as failures, not success", async () => {
     // regression: before the fix, `child.on("close", (exitCode) => ...)`
     // discarded the signal parameter and `exitCode || 0` coerced the

@@ -115,16 +115,6 @@ export interface SpawnOptions {
   // open, keeps emitting NDJSON, and `child.on("close")` never fires —
   // producing zombie runs that hang until the GitHub Actions job timeout).
   killGroup?: boolean;
-  // optional pause predicate consulted on every activity check. when it
-  // returns true the activity timer skips the kill decision *and* resets
-  // its idle baseline so a clean unpause can't immediately fire on a stale
-  // lastActivityTime. opencode uses this because its `task` tool encapsulates
-  // subagent execution in-process — subagent-internal events don't surface
-  // on the parent's NDJSON stream, so the local stdout-only signal would
-  // falsely fire mid-subagent. preferred over fake-activity heartbeats
-  // because there's no race window between a heartbeat tick and a subagent
-  // that finishes between ticks.
-  isPausedExternally?: () => boolean;
 }
 
 export interface SpawnResult {
@@ -216,16 +206,6 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
         `spawn activity timer: pid=${child.pid} cmd=${options.cmd} timeout=${activityTimeoutMs}ms`
       );
       activityCheckIntervalId = setInterval(() => {
-        // when an external pause predicate says we're suspended (e.g.
-        // opencode in a long-running task subagent whose internal events
-        // don't surface on stdout), advance lastActivityTime to "now" so a
-        // clean unpause doesn't immediately fire on a stale baseline, and
-        // skip the kill decision for this tick.
-        if (options.isPausedExternally?.()) {
-          lastActivityTime = performance.now();
-          log.debug(`spawn activity check: pid=${child.pid} paused externally`);
-          return;
-        }
         const idleMs = performance.now() - lastActivityTime;
         log.debug(
           `spawn activity check: pid=${child.pid} idle=${Math.round(idleMs)}ms / ${activityTimeoutMs}ms`

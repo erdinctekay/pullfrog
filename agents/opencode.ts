@@ -12,7 +12,7 @@
  * security is enforced at the tool layer, not the process layer.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
@@ -26,6 +26,11 @@ import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import {
+  PULLFROG_BUS_EVENT_TYPE,
+  PULLFROG_OPENCODE_PLUGIN_FILENAME,
+  PULLFROG_OPENCODE_PLUGIN_SOURCE,
+} from "./opencodePlugin.ts";
 import { buildLearningsReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME, REVIEWER_SYSTEM_PROMPT } from "./reviewer.ts";
 import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
@@ -280,6 +285,36 @@ interface OpenCodeErrorEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Envelope event emitted by our `.opencode/plugin/pullfrog-events.ts` (the
+ * source lives in `opencodePlugin.ts`). The plugin subscribes to opencode's
+ * bus via `bus.subscribeAll()` and re-emits non-orchestrator
+ * `message.part.updated` events on stdout so subagent activity surfaces here.
+ *
+ * `bus_event.properties.part` matches the same `Part` shape that opencode's
+ * `cli/cmd/run.ts` uses to drive its own emit() calls, so we can route the
+ * inner part through the existing `tool_use` / `step_start` / `step_finish`
+ * / `text` handlers by synthesizing the equivalent OpenCode-style event.
+ */
+interface OpenCodeBusEnvelopeEvent {
+  type: "pullfrog_bus_event";
+  bus_event?: {
+    type?: string;
+    properties?: {
+      part?: {
+        sessionID?: string;
+        type?: string;
+        time?: { end?: number | string };
+        state?: { status?: string };
+        [key: string]: unknown;
+      };
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 type OpenCodeEvent =
   | OpenCodeInitEvent
   | OpenCodeMessageEvent
@@ -289,7 +324,8 @@ type OpenCodeEvent =
   | OpenCodeToolUseEvent
   | OpenCodeToolResultEvent
   | OpenCodeResultEvent
-  | OpenCodeErrorEvent;
+  | OpenCodeErrorEvent
+  | OpenCodeBusEnvelopeEvent;
 
 // ── runner ──────────────────────────────────────────────────────────────────────
 
@@ -324,15 +360,12 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   // per-session labeler so parallel subagent log lines can be differentiated.
   // the orchestrator's task tool_use events seed the labeler; the next
   // previously-unseen sessionID consumes the head of the pending-label queue.
-  // NB: opencode's runtime currently encapsulates subagent execution inside
-  // the `task` tool — subagent-internal tool_use/tool_result events do not
-  // surface on the parent's NDJSON stream. The labeler is therefore mostly
-  // dormant in practice for opencode (no per-event session differentiation
-  // is needed because there are no per-subagent events). The orchestrator's
-  // `task` dispatch log (with `description: <lens>`) and the per-task
-  // duration log below are the actual attribution surface available today.
-  // The labeler is kept in place defensively so that if/when opencode begins
-  // streaming subagent sessions, attribution flips on with no further work.
+  // upstream opencode's `cli/cmd/run.ts` filters subagent events out of its
+  // NDJSON stream (`part.sessionID !== sessionID`), so we ship a per-run
+  // plugin (`action/agents/opencodePlugin.ts`, written into the tmpdir at
+  // setup) that re-emits non-orchestrator `message.part.updated` events. those
+  // arrive here as `pullfrog_bus_event` envelopes and feed the labeler with
+  // real data per subagent session.
   const labeler = new SessionLabeler();
   function eventLabel(event: Record<string, unknown>): string {
     const sid = event.sessionID ?? event.session_id;
@@ -367,16 +400,6 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   // a long-output result is a strong "this is probably a task result with a
   // mismatched callID" signal).
   const knownNonTaskCallIDs = new Set<string>();
-
-  // a subagent is "in flight" while at least one `task` tool_use is awaiting
-  // its tool_result. used to suspend spawn's activity timer (which only sees
-  // opencode's stdout) so a long-running subagent — whose internal events
-  // don't surface on the parent NDJSON stream — can't trip the 5min timeout.
-  // boolean state instead of a heartbeat so there's no race window between a
-  // periodic tick and a subagent that finishes between ticks.
-  function isSubagentInFlight(): boolean {
-    return taskDispatchByCallID.size > 0 || pendingTaskDispatches.length > 0;
-  }
 
   function emitSubagentFinished(
     dispatch: TaskDispatch,
@@ -532,25 +555,31 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // label is already bound); the dispatch label is for the next new
       // sessionID that appears.
       if (toolName === "task") {
-        const taskInput = (event.part?.state?.input ?? {}) as {
-          description?: string;
-          subagent_type?: string;
-          prompt?: string;
-        };
-        const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
-        // dual-index by callID (fast path) AND in a FIFO queue (fallback path
-        // for when opencode's task tool_result carries a different callID).
-        const dispatch: TaskDispatch = {
-          label: dispatchedLabel,
-          startedAt: performance.now(),
-          toolUseCallID: toolId,
-        };
-        taskDispatchByCallID.set(toolId, dispatch);
-        pendingTaskDispatches.push(dispatch);
-        log.info(
-          `» dispatching subagent: ${dispatchedLabel}` +
-            (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
-        );
+        // may have been pre-registered via the plugin's early task-dispatch
+        // announcement (`pullfrog_bus_event` handler). dedupe on callID so
+        // we don't record the same dispatch twice (which would corrupt the
+        // FIFO label queue).
+        if (!taskDispatchByCallID.has(toolId)) {
+          const taskInput = (event.part?.state?.input ?? {}) as {
+            description?: string;
+            subagent_type?: string;
+            prompt?: string;
+          };
+          const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
+          // dual-index by callID (fast path) AND in a FIFO queue (fallback path
+          // for when opencode's task tool_result carries a different callID).
+          const dispatch: TaskDispatch = {
+            label: dispatchedLabel,
+            startedAt: performance.now(),
+            toolUseCallID: toolId,
+          };
+          taskDispatchByCallID.set(toolId, dispatch);
+          pendingTaskDispatches.push(dispatch);
+          log.info(
+            `» dispatching subagent: ${dispatchedLabel}` +
+              (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
+          );
+        }
       } else {
         // remember non-task callIDs so a later tool_result with that callID
         // is correctly identified as not-a-task (and we don't FIFO-pop a
@@ -579,6 +608,16 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
 
       if (event.part?.state?.status === "completed" && event.part.state.output) {
         log.debug(withLabel(label, `  output: ${event.part.state.output}`));
+      }
+      // surface tool errors at info level. opencode emits tool parts at
+      // status="error" through the same `tool_use` event the CLI's run-loop
+      // (and our injected plugin for subagent parts) emits — without this
+      // branch the only signal in the user's logs is `» <tool>(...)` with
+      // no indication the call failed. error info lives in `state.output`
+      // (an error string set by the tool layer).
+      if (event.part?.state?.status === "error") {
+        const errorMsg = event.part.state.output ?? "(no error message)";
+        log.info(withLabel(label, `» tool call failed: ${errorMsg}`));
       }
 
       // agent's explicit MCP report_progress takes priority over todo tracking
@@ -700,6 +739,98 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         }
       }
     },
+    [PULLFROG_BUS_EVENT_TYPE]: async (event: OpenCodeBusEnvelopeEvent) => {
+      // surface subagent activity that opencode's CLI run-loop discards (it
+      // filters `part.sessionID !== sessionID`). our injected plugin
+      // (action/agents/opencodePlugin.ts) re-emits non-orchestrator
+      // `message.part.updated` bus events; here we synthesize the equivalent
+      // CLI-style event for each known part type and dispatch through the
+      // existing handlers so labeling, attribution, and logging all reuse the
+      // same code path as the orchestrator's events. mirrors the dispatch
+      // logic in opencode-ai's `cli/cmd/run.ts` `loop()` function.
+      const busEvent = event.bus_event;
+      if (!busEvent || busEvent.type !== "message.part.updated") return;
+      const part = busEvent.properties?.part;
+      if (!part || typeof part.sessionID !== "string") return;
+      const sessionID = part.sessionID;
+      const partType = part.type;
+
+      // early task dispatch: the orchestrator's task tool fires bus events at
+      // status=running BEFORE the subagent's first message.part.updated, but
+      // the CLI's run-loop only emits the matching tool_use NDJSON event at
+      // status=completed (after the subagent finishes). without
+      // pre-registering the dispatch label here, the labeler binds the
+      // subagent's sessionID to a generic `subagent#N` fallback before the
+      // CLI's tool_use ever fires recordTaskDispatch. dedupe against
+      // taskDispatchByCallID so the late tool_use handler doesn't double-add.
+      if (partType === "tool") {
+        const status = part.state?.status;
+        const partWithToolFields = part as {
+          tool?: string;
+          callID?: string;
+          state?: { status?: string; input?: unknown };
+        };
+        // only running (not pending) — at pending state.input is still {}.
+        // by running, the LLM has filled in description/subagent_type/prompt.
+        // mirrors the same check in the plugin source.
+        const isOrchestratorTaskDispatch =
+          partWithToolFields.tool === "task" && status === "running";
+        if (isOrchestratorTaskDispatch) {
+          const callID = partWithToolFields.callID;
+          if (typeof callID === "string" && !taskDispatchByCallID.has(callID)) {
+            const taskInput = (partWithToolFields.state?.input ?? {}) as {
+              description?: string;
+              subagent_type?: string;
+              prompt?: string;
+            };
+            const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
+            const dispatch: TaskDispatch = {
+              label: dispatchedLabel,
+              startedAt: performance.now(),
+              toolUseCallID: callID,
+            };
+            taskDispatchByCallID.set(callID, dispatch);
+            pendingTaskDispatches.push(dispatch);
+            log.info(
+              `» dispatching subagent: ${dispatchedLabel}` +
+                (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
+            );
+          }
+          return;
+        }
+        if (status !== "completed" && status !== "error") return;
+        await handlers.tool_use({
+          type: "tool_use",
+          sessionID,
+          part,
+        } as OpenCodeToolUseEvent);
+        return;
+      }
+      // intentionally NOT routing subagent step_start / step_finish through
+      // the orchestrator's handlers:
+      //   - step_finish carries `tokens` and `cost` and the handler folds
+      //     them into the run-wide accumulators. surfacing subagent steps
+      //     here would inflate the orchestrator's usage telemetry — and
+      //     either double-count (if opencode also bills child tokens back
+      //     up to the parent session) or just over-report. the existing
+      //     init/message/text handlers all gate on ORCHESTRATOR_LABEL for
+      //     the same reason.
+      //   - step_start mutates `currentStepId` / `currentStepType` /
+      //     `stepHistory`, which are orchestrator-scoped — using them to
+      //     attribute subagent activity in the orchestrator's tool-use
+      //     timing log would be wrong.
+      // the subagent's tool calls and text still surface (handled below)
+      // — that's the user-visible activity.
+      if (partType === "step-start" || partType === "step-finish") return;
+      if (partType === "text" && part.time?.end !== undefined) {
+        await handlers.text({
+          type: "text",
+          sessionID,
+          part,
+        } as OpenCodeTextEvent);
+        return;
+      }
+    },
   };
 
   const recentStderr: string[] = [];
@@ -726,13 +857,13 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // never fires — producing zombie runs. detached + killGroup nukes the
       // whole tree.
       killGroup: true,
-      // suspend the inner activity timer while a `task` subagent is in flight.
-      // opencode's task tool encapsulates subagent execution in-process — the
-      // subagent's internal events don't surface on the parent NDJSON stream,
-      // so without this the 5min timeout would falsely fire mid-subagent.
-      // suspend/resume is preferable to a heartbeat because there's no race
-      // between a periodic tick and a subagent finishing between ticks.
-      isPausedExternally: isSubagentInFlight,
+      // NB: we used to pass `isPausedExternally: isSubagentInFlight` to suspend
+      // the activity timer during subagent dispatches. unnecessary now that
+      // our injected plugin (action/agents/opencodePlugin.ts) re-emits
+      // subagent `message.part.updated` events on opencode's stdout — those
+      // arrive at child.stdout here, fire updateActivity(), and reset
+      // lastActivityTime naturally. verified empirically in PR #634
+      // (~3.3 plugin events/sec during a typical subagent run).
       onStdout: async (chunk) => {
         const text = chunk.toString();
         output += text;
@@ -943,6 +1074,20 @@ export const opencode = agent({
     };
 
     mkdirSync(join(homeEnv.XDG_CONFIG_HOME, "opencode"), { recursive: true });
+
+    // drop our bus-event surfacing plugin into opencode's global config dir
+    // (which we've redirected to the per-run tmpdir via XDG_CONFIG_HOME).
+    // opencode auto-discovers plugins from `<Global.Path.config>/{plugin,plugins}/*.{ts,js}`
+    // (see `packages/opencode/src/config/config.ts:633` calling
+    // `ConfigPlugin.load(dir)`), so this lands in the loader without any
+    // config wiring. critically: this MUST be inside the tmpdir, never the
+    // user's repo working tree — see AGENTS.md.
+    const opencodePluginDir = join(homeEnv.XDG_CONFIG_HOME, "opencode", "plugin");
+    mkdirSync(opencodePluginDir, { recursive: true });
+    writeFileSync(
+      join(opencodePluginDir, PULLFROG_OPENCODE_PLUGIN_FILENAME),
+      PULLFROG_OPENCODE_PLUGIN_SOURCE
+    );
 
     const agentBrowserVersion = getDevDependencyVersion("agent-browser");
     addSkill({
