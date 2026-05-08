@@ -68,7 +68,7 @@ export function installBundledSkills(params: { home: string }): void {
       writeFileSync(join(skillDir, "SKILL.md"), content);
     }
   }
-  log.info(`installed bundled skills: ${BUNDLED_SKILL_NAMES.join(", ")}`);
+  log.success(`installed bundled skills: ${BUNDLED_SKILL_NAMES.join(", ")}`);
 }
 
 /**
@@ -108,7 +108,7 @@ export function addSkill(params: {
     }
   );
   if (result.status === 0) {
-    log.info(`installed ${params.skill} skill (${params.agent})`);
+    log.success(`installed ${params.skill} skill (${params.agent})`);
   } else {
     const stderr = (result.stderr?.toString() || "").trim();
     const errorMsg = result.error ? result.error.message : stderr;
