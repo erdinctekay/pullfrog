@@ -106,6 +106,25 @@ export interface SpawnOptions {
   stdio?: ("pipe" | "ignore" | "inherit")[];
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  // when true, spawn the child detached (its own process group) and route all
+  // kill paths (timeout, activity timeout, ctrl-c) through `process.kill(-pid, ...)`
+  // so signals reach grandchildren too. critical for binaries that fork through
+  // a shim (e.g. node_modules/opencode-ai/bin/opencode is a Node shim that
+  // spawnSync's the native binary; without killGroup, SIGKILL only hits the
+  // shim and the native binary is reparented to PID 1, holds our stdout pipe
+  // open, keeps emitting NDJSON, and `child.on("close")` never fires —
+  // producing zombie runs that hang until the GitHub Actions job timeout).
+  killGroup?: boolean;
+  // optional pause predicate consulted on every activity check. when it
+  // returns true the activity timer skips the kill decision *and* resets
+  // its idle baseline so a clean unpause can't immediately fire on a stale
+  // lastActivityTime. opencode uses this because its `task` tool encapsulates
+  // subagent execution in-process — subagent-internal events don't surface
+  // on the parent's NDJSON stream, so the local stdout-only signal would
+  // falsely fire mid-subagent. preferred over fake-activity heartbeats
+  // because there's no race window between a heartbeat tick and a subagent
+  // that finishes between ticks.
+  isPausedExternally?: () => boolean;
 }
 
 export interface SpawnResult {
@@ -127,6 +146,8 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
   let stdoutBuffer = "";
   let stderrBuffer = "";
 
+  const killGroup = options.killGroup ?? false;
+
   return new Promise((resolve, reject) => {
     // security: caller must provide complete env object, not merged with process.env
     const child = nodeSpawn(options.cmd, options.args, {
@@ -136,10 +157,28 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       },
       stdio: options.stdio || ["pipe", "pipe", "pipe"],
       cwd: options.cwd || process.cwd(),
+      detached: killGroup,
     });
 
+    // sends `signal` to the entire process group when killGroup is set, so
+    // grandchildren (e.g. the native opencode binary spawned by the
+    // opencode-ai Node shim) die with the parent. falls back to a direct
+    // child kill if the process-group send fails (common when the child
+    // already exited or was never made a process group leader).
+    const killSelf = (signal: NodeJS.Signals): void => {
+      if (killGroup && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // fall through to direct kill
+        }
+      }
+      child.kill(signal);
+    };
+
     // track child for cleanup on Ctrl+C
-    trackChild({ child });
+    trackChild({ child, killGroup });
 
     let timeoutId: NodeJS.Timeout | undefined;
     let sigkillEscalatorId: NodeJS.Timeout | undefined;
@@ -157,7 +196,7 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
     if (options.timeout) {
       timeoutId = setTimeout(() => {
         isTimedOut = true;
-        child.kill("SIGTERM");
+        killSelf("SIGTERM");
 
         // track the escalator so a graceful SIGTERM response (close fires
         // before the 5s elapses) can clear it. without capture, this timer
@@ -165,7 +204,7 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
         // past a timed-out subprocess's clean exit.
         sigkillEscalatorId = setTimeout(() => {
           if (!child.killed) {
-            child.kill("SIGKILL");
+            killSelf("SIGKILL");
           }
         }, 5000);
       }, options.timeout);
@@ -177,6 +216,16 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
         `spawn activity timer: pid=${child.pid} cmd=${options.cmd} timeout=${activityTimeoutMs}ms`
       );
       activityCheckIntervalId = setInterval(() => {
+        // when an external pause predicate says we're suspended (e.g.
+        // opencode in a long-running task subagent whose internal events
+        // don't surface on stdout), advance lastActivityTime to "now" so a
+        // clean unpause doesn't immediately fire on a stale baseline, and
+        // skip the kill decision for this tick.
+        if (options.isPausedExternally?.()) {
+          lastActivityTime = performance.now();
+          log.debug(`spawn activity check: pid=${child.pid} paused externally`);
+          return;
+        }
         const idleMs = performance.now() - lastActivityTime;
         log.debug(
           `spawn activity check: pid=${child.pid} idle=${Math.round(idleMs)}ms / ${activityTimeoutMs}ms`
@@ -186,9 +235,9 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
           killedAtIdleMs = idleMs;
           const idleSec = Math.round(idleMs / 1000);
           log.info(
-            `no output for ${idleSec}s from pid=${child.pid} (${options.cmd}), killing process`
+            `no output for ${idleSec}s from pid=${child.pid} (${options.cmd}), killing process${killGroup ? " group" : ""}`
           );
-          child.kill("SIGKILL");
+          killSelf("SIGKILL");
           clearInterval(activityCheckIntervalId);
           try {
             options.onActivityTimeout?.();

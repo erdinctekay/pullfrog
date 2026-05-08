@@ -407,6 +407,12 @@ async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       activityTimeout: 300_000,
       onActivityTimeout: params.onActivityTimeout,
       stdio: ["ignore", "pipe", "pipe"],
+      // run claude in its own process group so SIGKILL on activity timeout /
+      // outer cancellation reaches any subprocesses it spawns (rg, file
+      // watchers, mcp transports, etc). claude itself is a node bundle so
+      // there's no shim-orphan issue like opencode-ai/bin/opencode, but
+      // detached + killGroup is the right default for any agent runtime.
+      killGroup: true,
       onStdout: async (chunk) => {
         const text = chunk.toString();
         output += text;

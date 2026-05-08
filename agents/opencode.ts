@@ -368,6 +368,16 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   // mismatched callID" signal).
   const knownNonTaskCallIDs = new Set<string>();
 
+  // a subagent is "in flight" while at least one `task` tool_use is awaiting
+  // its tool_result. used to suspend spawn's activity timer (which only sees
+  // opencode's stdout) so a long-running subagent — whose internal events
+  // don't surface on the parent NDJSON stream — can't trip the 5min timeout.
+  // boolean state instead of a heartbeat so there's no race window between a
+  // periodic tick and a subagent that finishes between ticks.
+  function isSubagentInFlight(): boolean {
+    return taskDispatchByCallID.size > 0 || pendingTaskDispatches.length > 0;
+  }
+
   function emitSubagentFinished(
     dispatch: TaskDispatch,
     status: string,
@@ -709,6 +719,20 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       activityTimeout: 300_000,
       onActivityTimeout: params.onActivityTimeout,
       stdio: ["ignore", "pipe", "pipe"],
+      // node_modules/opencode-ai/bin/opencode is a Node shim that spawnSyncs
+      // the native opencode-<plat>-<arch> binary with stdio:"inherit". without
+      // a process-group kill, SIGKILL hits only the shim, the native binary
+      // is reparented to PID 1, holds our stdout pipe open, and `child.close`
+      // never fires — producing zombie runs. detached + killGroup nukes the
+      // whole tree.
+      killGroup: true,
+      // suspend the inner activity timer while a `task` subagent is in flight.
+      // opencode's task tool encapsulates subagent execution in-process — the
+      // subagent's internal events don't surface on the parent NDJSON stream,
+      // so without this the 5min timeout would falsely fire mid-subagent.
+      // suspend/resume is preferable to a heartbeat because there's no race
+      // between a periodic tick and a subagent finishing between ticks.
+      isPausedExternally: isSubagentInFlight,
       onStdout: async (chunk) => {
         const text = chunk.toString();
         output += text;
