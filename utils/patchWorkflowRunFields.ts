@@ -14,7 +14,6 @@ export type WorkflowRunArtifactPatchKey =
   | "issueNodeId"
   | "reviewNodeId"
   | "planCommentNodeId"
-  | "summaryCommentNodeId"
   | "summarySnapshot";
 
 /**
@@ -38,7 +37,6 @@ const STRING_KEYS: WorkflowRunArtifactPatchKey[] = [
   "issueNodeId",
   "reviewNodeId",
   "planCommentNodeId",
-  "summaryCommentNodeId",
   "summarySnapshot",
 ];
 
