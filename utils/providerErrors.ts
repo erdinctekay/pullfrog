@@ -6,6 +6,17 @@ type ProviderErrorPattern = { regex: RegExp; label: string };
 const statusKey = `\\b(?:status[_ ]?code|http[_ ]?status|status)["']?\\s*[:=]\\s*["']?`;
 
 const PROVIDER_ERROR_PATTERNS: ProviderErrorPattern[] = [
+  // auth patterns must come BEFORE rate-limit patterns. OpenRouter 401 error
+  // payloads carry `x-ratelimit-*` response headers in the dump, and the
+  // free-form rate-limit regex below would otherwise win on word-boundary
+  // matches inside header names. canonical 401 messages: OpenRouter returns
+  // `{"error":{"message":"User not found","code":401}}` for disabled or
+  // invalid keys (https://openai.luzhipeng.com/docs/api/reference/errors-and-debugging).
+  { regex: new RegExp(`${statusKey}401\\b`, "i"), label: "auth error (401)" },
+  { regex: new RegExp(`${statusKey}403\\b`, "i"), label: "auth error (403)" },
+  { regex: /\bUser not found\b/i, label: "auth error (invalid/disabled key)" },
+  { regex: /\bInvalid authentication\b/i, label: "auth error (invalid credentials)" },
+  { regex: /\bNo auth credentials found\b/i, label: "auth error (missing credentials)" },
   { regex: new RegExp(`${statusKey}429\\b`, "i"), label: "rate limited (429)" },
   { regex: new RegExp(`${statusKey}500\\b`, "i"), label: "provider 500 error" },
   { regex: new RegExp(`${statusKey}503\\b`, "i"), label: "provider unavailable (503)" },

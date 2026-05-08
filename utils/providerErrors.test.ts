@@ -7,7 +7,13 @@ describe("detectProviderError", () => {
       expect(detectProviderError("commit f609cc89e84596ab125d60dac568bfb2ef398396 429")).toBeNull();
     });
 
-    it("returns null for x-ratelimit-* response headers in 401 error JSON", () => {
+    it("classifies 401 + x-ratelimit-* headers as auth, not rate-limited", () => {
+      // OpenRouter 401 responses bundle `x-ratelimit-*` rate-limit headers
+      // alongside the auth error. the auth patterns must win — pre-fix this
+      // got tagged as `rate limited` because of the loose `\brate[_ ]limit`
+      // match against header names like `ratelimit-limit-requests`. note: in
+      // OpenRouter's actual format the header name is `ratelimit` (one word),
+      // but the dumped JSON sometimes contains `rate-limit` separators too.
       const stderr = JSON.stringify({
         error: { name: "APIError", statusCode: 401, message: "Invalid authentication credentials" },
         headers: {
@@ -16,7 +22,7 @@ describe("detectProviderError", () => {
           "x-ratelimit-reset-tokens": "2025-01-01T00:00:00Z",
         },
       });
-      expect(detectProviderError(stderr)).toBeNull();
+      expect(detectProviderError(stderr)).toBe("auth error (401)");
     });
 
     it("returns null for INTERNAL_SERVER_ERROR substring", () => {
@@ -26,6 +32,37 @@ describe("detectProviderError", () => {
 
     it("returns null for INTERNALS substring", () => {
       expect(detectProviderError("debugging INTERNALS of the parser")).toBeNull();
+    });
+  });
+
+  describe("auth errors", () => {
+    it("detects 401 / 403 status codes as auth errors", () => {
+      expect(detectProviderError('{"statusCode": 401}')).toBe("auth error (401)");
+      expect(detectProviderError('{"statusCode": 403}')).toBe("auth error (403)");
+      expect(detectProviderError("status_code: 401")).toBe("auth error (401)");
+    });
+
+    it("detects OpenRouter 'User not found' (disabled/invalid key)", () => {
+      // bare `"code":401` lacks a status-key prefix so the 401 status pattern
+      // intentionally doesn't fire; the User-not-found pattern catches it.
+      expect(detectProviderError('{"error":{"message":"User not found","code":401}}')).toBe(
+        "auth error (invalid/disabled key)"
+      );
+      expect(detectProviderError("APIError: User not found.")).toBe(
+        "auth error (invalid/disabled key)"
+      );
+    });
+
+    it("detects 'Invalid authentication' phrasing", () => {
+      expect(detectProviderError("Invalid authentication credentials")).toBe(
+        "auth error (invalid credentials)"
+      );
+    });
+
+    it("detects 'No auth credentials found' phrasing", () => {
+      expect(detectProviderError("AI_APICallError: No auth credentials found")).toBe(
+        "auth error (missing credentials)"
+      );
     });
   });
 
