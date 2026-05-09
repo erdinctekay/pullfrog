@@ -31,8 +31,14 @@ function agentForSlug(slug: string): "claude" | "opencode" {
 const ROUTING_CANARIES = new Set(["openrouter/claude-sonnet", "opencode/claude-sonnet"]);
 
 // pruned by default; opt back in with INCLUDE_EXPENSIVE=1 or MATRIX_FILTER.
+// matched against `alias.resolve` so every routing layer (openai/, opencode/,
+// openrouter/) is covered without enumerating each slug separately.
 // gpt-5.5-pro burns ~$2.40/run on this fixture — too expensive per-push.
-const EXPENSIVE_ALIASES = new Set(["openai/gpt-pro"]);
+const EXPENSIVE_RESOLVE_SUBSTRINGS = ["gpt-5.5-pro"];
+
+function isExpensive(alias: (typeof modelAliases)[number]): boolean {
+  return EXPENSIVE_RESOLVE_SUBSTRINGS.some((s) => alias.resolve.includes(s));
+}
 
 function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
   if (ROUTING_CANARIES.has(alias.slug)) return false;
@@ -50,7 +56,7 @@ const includeExpensive = process.env.INCLUDE_EXPENSIVE === "1" || filter !== "";
 const matrix = modelAliases
   .filter((alias) => (filter ? alias.slug.toLowerCase().includes(filter.toLowerCase()) : true))
   .filter((alias) => includeAllPassthroughs || !isPrunablePassthrough(alias))
-  .filter((alias) => includeExpensive || !EXPENSIVE_ALIASES.has(alias.slug))
+  .filter((alias) => includeExpensive || !isExpensive(alias))
   .map((alias) => ({
     slug: alias.slug,
     agent: agentForSlug(alias.slug),
