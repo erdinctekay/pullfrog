@@ -8,6 +8,7 @@ import { countLines, createDiffCoverageState } from "../utils/diffCoverage.ts";
 import { $git } from "../utils/gitAuth.ts";
 import { executeLifecycleHook } from "../utils/lifecycle.ts";
 import { computeIncrementalDiff } from "../utils/rangeDiff.ts";
+import { retry } from "../utils/retry.ts";
 import { $ } from "../utils/shell.ts";
 import { rejectIfLeadingDash } from "./git.ts";
 import { commentableLinesForFile } from "./review.ts";
@@ -281,6 +282,12 @@ type CheckoutPrBranchParams = GitContext & {
 // legitimate git op that's holding the lock.
 const STALE_LOCK_AGE_MS = 30_000;
 
+// PR head refs (refs/pull/N/head) sometimes lag the pull_request.opened
+// webhook by a few seconds. retry the missing-ref case with backoff
+// before giving up — see issue #591.
+const PULL_REF_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
+const PULL_REF_MISSING_PATTERN = /couldn't find remote ref pull\/\d+\/head/i;
+
 const GIT_LOCK_PATHS = [
   ".git/shallow.lock",
   ".git/index.lock",
@@ -306,6 +313,62 @@ function cleanupStaleGitLocks(): void {
       );
     }
   }
+}
+
+/**
+ * Returns false when a PR's current state diverges from what we dispatched
+ * on (closed/merged, or head SHA differs from pr.headSha). Used to short-
+ * circuit the pull/N/head retry loop when the ref is missing because the
+ * PR has moved on, not because of a webhook race.
+ *
+ * Network failures here are treated as "still valid" — we'd rather burn the
+ * retry budget than wrongly abort on a transient API blip.
+ *
+ * Note: this answers "should we keep trying?", NOT "will the next fetch
+ * succeed?". `pulls.get` (REST API) and `pull/N/head` (git ref) are served
+ * by independent GitHub replicas with their own propagation lag, so
+ * `pulls.get` reporting an open PR with a matching head SHA does not
+ * guarantee the git ref is yet visible — and vice versa (see issue #591
+ * for the original webhook-vs-ref replication-lag context).
+ */
+async function isPullRequestStillDispatchable(args: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  pr: PrData;
+}): Promise<boolean> {
+  try {
+    const { data } = await args.octokit.rest.pulls.get({
+      owner: args.owner,
+      repo: args.repo,
+      pull_number: args.pr.number,
+    });
+    if (data.state !== "open") return false;
+    if (data.head.sha !== args.pr.headSha) return false;
+    return true;
+  } catch {
+    // lenient — don't abort on API hiccups
+    return true;
+  }
+}
+
+/**
+ * Throws the friendly clean-abort error when the PR has moved on since
+ * dispatch. Wraps `isPullRequestStillDispatchable` so the abort message
+ * lives in one place and is invoked from the inner `catch` around the
+ * `pull/N/head` fetch on every missing-ref failure.
+ */
+async function abortIfPullRequestMoved(args: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  pr: PrData;
+}): Promise<void> {
+  const stillValid = await isPullRequestStillDispatchable(args);
+  if (stillValid) return;
+  throw new Error(
+    `PR #${args.pr.number} is no longer in the state it was at dispatch (likely closed, merged, or force-pushed between webhook fire and run start). aborting checkout — re-trigger the run if this PR is still active.`
+  );
 }
 
 /**
@@ -365,9 +428,31 @@ export async function checkoutPrBranch(
 
     // fetch PR branch using pull/{n}/head refspec (works for both fork and same-repo PRs)
     log.debug(`» fetching PR #${pr.number} (${localBranch})...`);
-    await $git("fetch", ["--no-tags", "origin", `+pull/${pr.number}/head:${localBranch}`], {
-      token: gitToken,
-    });
+    await retry(
+      async () => {
+        try {
+          await $git("fetch", ["--no-tags", "origin", `+pull/${pr.number}/head:${localBranch}`], {
+            token: gitToken,
+          });
+        } catch (e) {
+          // on the webhook race, check whether the PR still matches what we
+          // dispatched on. if it's been closed/merged or the head SHA moved,
+          // no amount of retrying will populate the expected ref — surface a
+          // clean abort error instead of burning the full retry budget.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (PULL_REF_MISSING_PATTERN.test(msg)) {
+            await abortIfPullRequestMoved({ octokit, owner, repo: name, pr });
+          }
+          throw e;
+        }
+      },
+      {
+        delaysMs: PULL_REF_RETRY_DELAYS_MS,
+        label: `pull/${pr.number}/head fetch`,
+        shouldRetry: (e) =>
+          PULL_REF_MISSING_PATTERN.test(e instanceof Error ? e.message : String(e)),
+      }
+    );
 
     // checkout the branch
     $("git", ["checkout", localBranch], { log: false });
