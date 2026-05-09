@@ -54,13 +54,24 @@ export interface PostRunIssues {
    * seed, i.e. the agent never touched it. soft gate — nudges once via a
    * resume turn but never fails the run, parallel to dirtyTree semantics. */
   summaryStale?: SummaryStale;
+  /**
+   * populated when the agent selected a review mode but the post-run check
+   * over toolState shows neither a `create_pull_request_review` submission
+   * nor a final `report_progress` write happened. derived inline from
+   * `toolState.selectedMode` + `toolState.review` + `toolState.finalSummaryWritten`
+   * — no parallel toolState flag is stored. carries the mode name so the
+   * resume prompt can reference it. handled like `stopHook`: nudge via
+   * resume, hard-fail if still unsatisfied after `MAX_POST_RUN_RETRIES`.
+   */
+  unsubmittedReview?: "Review" | "IncrementalReview";
 }
 
 export function hasPostRunIssues(issues: PostRunIssues): boolean {
   return (
     issues.stopHook !== undefined ||
     issues.dirtyTree !== undefined ||
-    issues.summaryStale !== undefined
+    issues.summaryStale !== undefined ||
+    issues.unsubmittedReview !== undefined
   );
 }
 
@@ -147,6 +158,15 @@ export interface AgentRunContext {
    */
   onActivityTimeout?: (() => void) | undefined;
   onToolUse?: ((event: AgentToolUseEvent) => void) | undefined;
+  /**
+   * post-run check derived from toolState: returns the selected mode when
+   * the agent picked Review / IncrementalReview but neither submitted a
+   * review nor wrote a final progress comment, otherwise `null`. main.ts
+   * supplies the closure so the agent harness has no direct toolState
+   * dependency; the closure fires synchronously after each agent attempt
+   * so it sees the latest mutations from any MCP tool calls.
+   */
+  getUnsubmittedReview?: (() => "Review" | "IncrementalReview" | null) | undefined;
 }
 
 export interface Agent {

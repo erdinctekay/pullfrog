@@ -68,6 +68,28 @@ export type StoredPushDest = {
   localBranch: string;
 };
 
+/**
+ * mutable per-run record of facts that occurred during execution. shared
+ * between the action process and the MCP server (one process — toolState is
+ * just a JS object passed by reference into both surfaces).
+ *
+ * design rule: ToolState is LITERAL. each field records a thing that
+ * happened — `review` is set when `create_pull_request_review` succeeded,
+ * `finalSummaryWritten` flips when `report_progress` wrote a non-plan body,
+ * `selectedMode` is set when `select_mode` was called. fields should never
+ * encode the absence of an event ("unsubmittedReview", "missingArtifact"),
+ * speculative state, or values derived from other fields.
+ *
+ * any predicate the rest of the code needs ("the agent picked review mode but
+ * never produced a review or progress write") is computed inline at the call
+ * site, not stored. derived state in this struct invariably drifts from the
+ * literal fields under refactors and is the wrong layer for the check.
+ *
+ * write narrowly: prefer adding state inside the tool that mutates it (e.g.
+ * `create_pull_request_review` populates `toolState.review`) and reading
+ * narrowly elsewhere. don't introduce flags from main.ts that mirror what an
+ * MCP tool already records.
+ */
 export interface ToolState {
   // where we're allowed to push - base repo initially, fork URL for fork PRs
   // set by setupGit, updated by checkout_pr. always set before push validation.

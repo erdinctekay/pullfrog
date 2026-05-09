@@ -927,6 +927,19 @@ export async function main(): Promise<MainResult> {
       summaryFilePath: toolState.summaryFilePath,
       summarySeed: toolState.summarySeed,
       learningsFilePath: toolState.learningsFilePath,
+      // post-run gate: derive "review mode finished without producing
+      // anything visible" inline from toolState. no parallel toolState flag —
+      // the absence of `review` and `finalSummaryWritten` is the signal.
+      // skipped when there's no progress comment to anchor the failure to
+      // (e.g. silent runs / non-issue events) so the gate doesn't fire
+      // on runs where there's nothing to display anyway.
+      getUnsubmittedReview: () => {
+        const mode = toolState.selectedMode;
+        if (mode !== "Review" && mode !== "IncrementalReview") return null;
+        if (toolState.review || toolState.finalSummaryWritten) return null;
+        if (!toolState.hadProgressComment) return null;
+        return mode;
+      },
       onActivityTimeout: onInnerActivityTimeout,
       onToolUse: (event) => {
         const wasTracked = recordDiffReadFromToolUse({
@@ -1021,6 +1034,22 @@ export async function main(): Promise<MainResult> {
       await persistLearnings(toolContext);
     }
 
+    // when the agent harness returns success=false (e.g. unsubmitted-review
+    // gate exhausted retries, stop-hook persistently failing), surface the
+    // error in the progress comment so the user sees it instead of a
+    // deleted-comment void. mirrors the catch-block error reporting for
+    // thrown errors. runs before the stranded-comment cleanup below so
+    // the comment is still around to update; reportErrorToComment sets
+    // wasUpdated=true and the !result.success guard skips deletion.
+    if (!result.success && toolContext && toolState.progressComment) {
+      await reportErrorToComment({
+        toolState,
+        error: result.error || "agent run failed",
+      }).catch((error) => {
+        log.debug(`failure error report failed: ${error}`);
+      });
+    }
+
     // clean up stranded progress comments. the comment is stale unless
     // report_progress wrote a final summary to it — three sub-cases all reduce
     // to !finalSummaryWritten:
@@ -1034,14 +1063,34 @@ export async function main(): Promise<MainResult> {
     // so progressComment is already null by the time we get here for that path.
     // uses finalSummaryWritten (not todoTracker.enabled or wasUpdated) so cleanup
     // survives API failures in report_progress where cancel() ran but the write
-    // didn't succeed, and isn't fooled by writes to *other* artifacts.
-    if (toolContext && toolState.progressComment && !toolState.finalSummaryWritten) {
+    // didn't succeed, and isn't fooled by writes to *other* artifacts. skipped
+    // entirely on result.success===false: the error message just written above
+    // is the user's only signal that the run happened — deleting it would
+    // restore the same empty-void UX this commit fixes.
+    if (
+      toolContext &&
+      result.success &&
+      toolState.progressComment &&
+      !toolState.finalSummaryWritten
+    ) {
       await deleteProgressComment(toolContext).catch((error) => {
         log.debug(`stranded progress comment cleanup failed: ${error}`);
       });
     }
 
-    await writeJobSummary(toolState);
+    // best-effort: failures writing the actions step summary must not throw
+    // past this point. on the result.success===false branch above we already
+    // wrote `result.error` to the progress comment, and a throw here would
+    // jump to the outer catch which calls reportErrorToComment again with
+    // the (less actionable) writeJobSummary error — silently overwriting the
+    // gate's failure message in the progress comment. the step-summary write
+    // is informational; let it fail silently rather than corrupt user-facing
+    // output.
+    try {
+      await writeJobSummary(toolState);
+    } catch (error) {
+      log.debug(`job summary write failed: ${error}`);
+    }
 
     // emit structured output marker for test validation
     if (toolState.output) {

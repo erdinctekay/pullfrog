@@ -810,6 +810,7 @@ export const claude = agent({
       stopScript: ctx.stopScript,
       summaryFilePath: ctx.summaryFilePath,
       summarySeed: ctx.summarySeed,
+      getUnsubmittedReview: ctx.getUnsubmittedReview,
       reflectionPrompt: ctx.learningsFilePath
         ? buildLearningsReflectionPrompt(ctx.learningsFilePath)
         : undefined,

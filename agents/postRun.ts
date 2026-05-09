@@ -115,6 +115,32 @@ export function buildSummaryStalePrompt(filePath: string): string {
   ].join("\n");
 }
 
+export function buildUnsubmittedReviewPrompt(mode: "Review" | "IncrementalReview"): string {
+  // mode-aware: Review mode's contract is "always submit one review" — its
+  // mode prompt forbids `report_progress`, so the nudge here must not offer
+  // it as an exit. IncrementalReview legitimately allows a report_progress
+  // exit when there are no new issues since the last review (mode prompt
+  // step 7), so the nudge mirrors that contract.
+  if (mode === "Review") {
+    return [
+      `MISSING REVIEW OUTPUT — you selected Review mode but stopped without calling \`create_pull_request_review\`. the user has no visible signal that this run produced anything; the progress comment will be deleted on exit and no review will appear on the PR.`,
+      "",
+      "call `create_pull_request_review` now with your aggregated review (body + inline comments). if you found no actionable issues, submit with `approved: true` and a body opening with `No new issues found.` per the mode prompt — Review mode does not have a no-submit exit. the first call may error once with a diff-coverage nudge — retry the same call to proceed.",
+      "",
+      "do NOT stop again until `create_pull_request_review` has been called successfully.",
+    ].join("\n");
+  }
+  return [
+    `MISSING REVIEW OUTPUT — you selected IncrementalReview mode but stopped without calling \`create_pull_request_review\` or \`report_progress\`. the user has no visible signal that this run produced anything; the progress comment will be deleted on exit and no review will appear on the PR.`,
+    "",
+    "do exactly one of:",
+    "- if you have findings: call `create_pull_request_review` now with your aggregated review (body + inline comments). the first call may error once with a diff-coverage nudge — retry the same call to proceed.",
+    "- if there are genuinely no actionable findings since the last review (e.g. only formatting / comment / lockfile changes): call `report_progress` with a 1-2 sentence summary explaining that no review was warranted.",
+    "",
+    "do NOT stop again until one of those tools has been called successfully.",
+  ].join("\n");
+}
+
 /**
  * check the post-run gates: did the stop hook pass, is the working tree
  * clean, and (when applicable) did the agent touch the rolling PR summary
@@ -132,6 +158,7 @@ export async function collectPostRunIssues(params: {
   stopScript: string | null | undefined;
   summaryFilePath?: string | undefined;
   summarySeed?: string | undefined;
+  getUnsubmittedReview?: (() => "Review" | "IncrementalReview" | null) | undefined;
 }): Promise<PostRunIssues> {
   const issues: PostRunIssues = {};
   if (params.stopScript) {
@@ -144,12 +171,24 @@ export async function collectPostRunIssues(params: {
     const stale = await isSummaryUnchanged(params.summaryFilePath, params.summarySeed);
     if (stale) issues.summaryStale = { filePath: params.summaryFilePath };
   }
+  if (params.getUnsubmittedReview) {
+    const mode = params.getUnsubmittedReview();
+    if (mode) issues.unsubmittedReview = mode;
+  }
   return issues;
 }
 
 export function buildPostRunPrompt(issues: PostRunIssues): string {
+  // order matches the terminal hard-fail order in `runPostRunRetryLoop` so
+  // the prompt's emphasis (which gate the agent should fix first) lines up
+  // with the user-visible failure message reported when retries exhaust.
+  // both hard-fail gates first (`stopHook` → `unsubmittedReview`), then the
+  // soft gates (`dirtyTree` → `summaryStale`).
   const parts: string[] = [];
   if (issues.stopHook) parts.push(buildStopHookPrompt(issues.stopHook));
+  if (issues.unsubmittedReview) {
+    parts.push(buildUnsubmittedReviewPrompt(issues.unsubmittedReview));
+  }
   if (issues.dirtyTree) parts.push(buildCommitPrompt(issues.dirtyTree));
   if (issues.summaryStale) parts.push(buildSummaryStalePrompt(issues.summaryStale.filePath));
   return parts.join("\n\n---\n\n");
@@ -214,6 +253,8 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
   summaryFilePath?: string | undefined;
   /** exact bytes of the seeded summary file used for the unchanged-check. */
   summarySeed?: string | undefined;
+  /** see {@link AgentRunContext.getUnsubmittedReview}. */
+  getUnsubmittedReview?: (() => "Review" | "IncrementalReview" | null) | undefined;
   resume: (context: { prompt: string; previousResult: R }) => Promise<R>;
   canResume?: ((result: R) => boolean) | undefined;
   reflectionPrompt?: string | undefined;
@@ -236,6 +277,7 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
       stopScript: params.stopScript,
       summaryFilePath: summaryStaleNudged ? undefined : params.summaryFilePath,
       summarySeed: summaryStaleNudged ? undefined : params.summarySeed,
+      getUnsubmittedReview: params.getUnsubmittedReview,
     });
     if (issues.summaryStale) summaryStaleNudged = true;
     finalIssues = issues;
@@ -321,10 +363,14 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
   // false-positive failures right after it just passed.
   if (gateResumeCount > 0 && result.success && hasPostRunIssues(finalIssues)) {
     // re-check the gates that can actually fail the run (stop hook /
-    // dirty tree). summary-stale is intentionally NOT re-checked here:
-    // we already delivered the one-shot nudge, and a still-unchanged
-    // file at this point is the agent's deliberate choice.
-    finalIssues = await collectPostRunIssues({ stopScript: params.stopScript });
+    // dirty tree / unsubmitted review). summary-stale is intentionally
+    // NOT re-checked here: we already delivered the one-shot nudge, and
+    // a still-unchanged file at this point is the agent's deliberate
+    // choice.
+    finalIssues = await collectPostRunIssues({
+      stopScript: params.stopScript,
+      getUnsubmittedReview: params.getUnsubmittedReview,
+    });
   }
 
   if (result.success && finalIssues.stopHook) {
@@ -336,6 +382,26 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
       ...result,
       success: false,
       error: `stop hook failed${retryNote} (exit code ${finalIssues.stopHook.exitCode}): ${finalIssues.stopHook.output || "(no output)"}`,
+      usage: aggregatedUsage,
+    };
+  }
+
+  if (result.success && finalIssues.unsubmittedReview) {
+    const retryNote =
+      gateResumeCount > 0
+        ? ` after ${gateResumeCount} retry ${gateResumeCount === 1 ? "attempt" : "attempts"}`
+        : "";
+    // mode-aware: Review's contract requires a review submission; only
+    // IncrementalReview accepts `report_progress` as an exit. mirroring
+    // the nudge prompt avoids contradicting the agent-facing copy.
+    const expected =
+      finalIssues.unsubmittedReview === "Review"
+        ? "create_pull_request_review"
+        : "create_pull_request_review or report_progress";
+    return {
+      ...result,
+      success: false,
+      error: `${finalIssues.unsubmittedReview} mode finished without calling ${expected}${retryNote}`,
       usage: aggregatedUsage,
     };
   }

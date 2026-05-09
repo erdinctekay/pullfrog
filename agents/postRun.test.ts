@@ -328,6 +328,138 @@ describe("runPostRunRetryLoop — reflection turn", () => {
     expect(mockedGetGitStatus).not.toHaveBeenCalled();
   });
 
+  it("nudges the agent when Review mode finished without submitting (no report_progress exit offered)", async () => {
+    // simulate the canonical bug: the agent picked Review mode, talked itself
+    // out of acting, and stopped without calling create_pull_request_review.
+    // the gate should fire a single resume that ONLY offers
+    // create_pull_request_review (Review mode's contract forbids
+    // report_progress as an exit). once the resume flips the toolState
+    // (modeled here by the closure returning null on the second call), the
+    // loop should exit cleanly with success=true.
+    let submitted = false;
+    const resume = vi
+      .fn<(ctx: { prompt: string; previousResult: AgentResult }) => Promise<AgentResult>>()
+      .mockImplementation(async () => {
+        submitted = true;
+        return successResult({ output: "review submitted" });
+      });
+
+    const result = await runPostRunRetryLoop({
+      initialResult: successResult({ output: "analysis turn" }),
+      initialUsage: undefined,
+      stopScript: null,
+      getUnsubmittedReview: () => (submitted ? null : "Review"),
+      resume,
+    });
+
+    expect(result.success).toBe(true);
+    expect(resume).toHaveBeenCalledTimes(1);
+    const prompt = resume.mock.calls[0]?.[0].prompt ?? "";
+    expect(prompt).toContain("MISSING REVIEW OUTPUT");
+    expect(prompt).toContain("Review mode");
+    expect(prompt).toContain("create_pull_request_review");
+    // Review mode contract: nudge must NOT offer report_progress as an exit
+    // (would contradict modes.ts step 5 "ALWAYS submit ... do NOT call
+    // report_progress").
+    expect(prompt).not.toContain("report_progress");
+  });
+
+  it("offers `report_progress` in the IncrementalReview nudge for the trivial-skip path", async () => {
+    // IncrementalReview's mode prompt step 7 has a legitimate "no new
+    // issues, non-substantive changes only → report_progress" exit. the
+    // nudge must offer it so the agent can satisfy the gate without
+    // submitting a vacuous re-review.
+    let satisfied = false;
+    const resume = vi
+      .fn<(ctx: { prompt: string; previousResult: AgentResult }) => Promise<AgentResult>>()
+      .mockImplementation(async () => {
+        satisfied = true;
+        return successResult({ output: "no review warranted, reported" });
+      });
+
+    const result = await runPostRunRetryLoop({
+      initialResult: successResult({ output: "analysis turn" }),
+      initialUsage: undefined,
+      stopScript: null,
+      getUnsubmittedReview: () => (satisfied ? null : "IncrementalReview"),
+      resume,
+    });
+
+    expect(result.success).toBe(true);
+    const prompt = resume.mock.calls[0]?.[0].prompt ?? "";
+    expect(prompt).toContain("IncrementalReview mode");
+    expect(prompt).toContain("create_pull_request_review");
+    expect(prompt).toContain("report_progress");
+  });
+
+  it("hard-fails IncrementalReview after MAX_POST_RUN_RETRIES with mode-appropriate error copy", async () => {
+    // parallel to the persistent-stop-hook test: if the agent keeps stopping
+    // without producing a review, the run must fail loudly with a clear error
+    // so the user knows something went wrong instead of seeing a deleted
+    // progress comment and silence. IncrementalReview's error string lists
+    // both exits the gate accepts.
+    const resume = vi
+      .fn<(ctx: { prompt: string; previousResult: AgentResult }) => Promise<AgentResult>>()
+      .mockResolvedValue(successResult({ output: "still didn't submit" }));
+
+    const result = await runPostRunRetryLoop({
+      initialResult: successResult({ output: "analysis turn" }),
+      initialUsage: undefined,
+      stopScript: null,
+      getUnsubmittedReview: () => "IncrementalReview",
+      resume,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("IncrementalReview");
+    expect(result.error).toContain("create_pull_request_review");
+    expect(result.error).toContain("report_progress");
+    expect(result.error).toContain("3 retry attempts");
+    expect(resume).toHaveBeenCalledTimes(3);
+  });
+
+  it("hard-fails Review with a mode-appropriate error string (no `report_progress`)", async () => {
+    // Review mode's contract is "always submit a review" (modes.ts step 5).
+    // the terminal error must mirror the nudge copy: only
+    // create_pull_request_review is named — listing report_progress would
+    // contradict the mode prompt and confuse triage.
+    const resume = vi
+      .fn<(ctx: { prompt: string; previousResult: AgentResult }) => Promise<AgentResult>>()
+      .mockResolvedValue(successResult({ output: "still didn't submit" }));
+
+    const result = await runPostRunRetryLoop({
+      initialResult: successResult({ output: "analysis turn" }),
+      initialUsage: undefined,
+      stopScript: null,
+      getUnsubmittedReview: () => "Review",
+      resume,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Review mode");
+    expect(result.error).toContain("create_pull_request_review");
+    expect(result.error).not.toContain("report_progress");
+  });
+
+  it("does not fire the unsubmitted-review gate when review was submitted", async () => {
+    // negative case: the closure returns null (review or progress was
+    // recorded), the gate must stay silent regardless of mode.
+    const resume = vi
+      .fn<(ctx: { prompt: string; previousResult: AgentResult }) => Promise<AgentResult>>()
+      .mockResolvedValue(successResult());
+
+    const result = await runPostRunRetryLoop({
+      initialResult: successResult({ output: "review submitted inline" }),
+      initialUsage: undefined,
+      stopScript: null,
+      getUnsubmittedReview: () => null,
+      resume,
+    });
+
+    expect(result.success).toBe(true);
+    expect(resume).not.toHaveBeenCalled();
+  });
+
   it("aggregates usage across every gate retry", async () => {
     // billing/reporting rely on the usage summary reflecting the full run,
     // not just the final retry's slice. regression gate.
