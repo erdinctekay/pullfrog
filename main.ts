@@ -514,9 +514,14 @@ async function persistSummary(ctx: ToolContext): Promise<void> {
   });
 }
 
-async function writeJobSummary(toolState: ToolState): Promise<void> {
+// fall back to the agent's final assistant message when the agent never
+// called report_progress (e.g. schedule/workflow_dispatch runs that have no
+// PR/issue context to comment on). lastProgressBody wins when present so we
+// don't double up the progress comment body in the job summary.
+async function writeJobSummary(toolState: ToolState, finalOutput?: string): Promise<void> {
   const usageSummary = formatUsageSummary(toolState.usageEntries);
-  const summaryParts = [toolState.lastProgressBody, usageSummary].filter(Boolean);
+  const body = toolState.lastProgressBody || finalOutput;
+  const summaryParts = [body, usageSummary].filter(Boolean);
   if (summaryParts.length > 0) {
     await writeSummary(summaryParts.join("\n\n"));
   }
@@ -1087,7 +1092,7 @@ export async function main(): Promise<MainResult> {
     // is informational; let it fail silently rather than corrupt user-facing
     // output.
     try {
-      await writeJobSummary(toolState);
+      await writeJobSummary(toolState, result.output);
     } catch (error) {
       log.debug(`job summary write failed: ${error}`);
     }
