@@ -471,12 +471,16 @@ async function persistLearnings(ctx: ToolContext): Promise<void> {
     });
     if (!response.ok) {
       const error = await response.text().catch(() => "(no body)");
-      log.debug(`learnings persist failed (${response.status}): ${error}`);
+      // promoted from debug → warning: this path means the agent edited the
+      // file (we already short-circuited the unchanged-from-seed case above)
+      // but the PATCH dropped it on the floor. silently losing real work is
+      // worse than the noise of a CI warning.
+      log.warning(`learnings persist failed (${response.status}): ${error}`);
       return;
     }
     log.info("» learnings updated");
   } catch (err) {
-    log.debug(`learnings persist failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warning(`learnings persist failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
