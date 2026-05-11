@@ -21,6 +21,7 @@ export const JsonPayload = type({
   "triggerer?": "string | undefined",
 
   "eventInstructions?": "string",
+  "previousRunsNote?": "string",
   "event?": "object",
   "timeout?": "string | undefined",
   "progressComment?": type({
@@ -157,6 +158,7 @@ export function resolvePayload(
       // it's not a common use case but GITHUB_ACTOR can be a user when the workflow is manually triggered by a user through GitHub Actions UI
       (!isPullfrog(process.env.GITHUB_ACTOR) ? process.env.GITHUB_ACTOR : undefined),
     eventInstructions: jsonPayload?.eventInstructions,
+    previousRunsNote: jsonPayload?.previousRunsNote,
     event,
     timeout: inputs.timeout ?? jsonPayload?.timeout,
     cwd: resolveCwd(inputs.cwd),

@@ -273,6 +273,13 @@ export interface WriteablePayload {
   triggerer?: string | undefined;
   /** event-level instructions for this trigger type (flag-expanded server-side) */
   eventInstructions?: string | undefined;
+  /**
+   * system-injected note about prior superseded runs (e.g. when the
+   * triggering @pullfrog comment is edited). rendered alongside the user's
+   * prompt rather than via eventInstructions so it survives user-prompt
+   * precedence.
+   */
+  previousRunsNote?: string | undefined;
   /** event data from webhook payload - discriminated union based on trigger field */
   event: PayloadEvent;
   /** timeout for agent run (e.g., "10m", "1h30m") - defaults to "1h" */

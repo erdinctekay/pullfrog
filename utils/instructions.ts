@@ -32,6 +32,7 @@ function buildRuntimeContext(ctx: InstructionsContext): string {
     "~pullfrog": _,
     prompt: _p,
     eventInstructions: _ei,
+    previousRunsNote: _prn,
     event: _e,
     ...payloadRest
   } = ctx.payload;
@@ -146,17 +147,23 @@ In case of conflict between instructions, follow this precedence (highest to low
 // section builders
 // ---------------------------------------------------------------------------
 
-// the user's task: blockquoted user prompt, or event-level instructions for auto-triggers
+// the user's task: blockquoted user prompt, or event-level instructions for auto-triggers.
+// `previousRunsNote` is system-injected context (e.g. prior runs superseded by a
+// comment edit); it's appended regardless of which branch wins so it survives
+// user-prompt precedence over eventInstructions.
 function buildTaskSection(ctx: PromptContext): string {
+  const previousRunsNote = ctx.payload.previousRunsNote?.trim() ?? "";
+
   if (ctx.userQuoted) {
+    const parts = [ctx.userQuoted, previousRunsNote].filter(Boolean);
     return `************* YOUR TASK *************
 
-${ctx.userQuoted}`;
+${parts.join("\n\n")}`;
   }
 
   const eventInstructions = ctx.payload.eventInstructions ?? "";
-  if (eventInstructions) {
-    const parts = [ctx.eventTitle, eventInstructions].filter(Boolean);
+  if (eventInstructions || previousRunsNote) {
+    const parts = [ctx.eventTitle, eventInstructions, previousRunsNote].filter(Boolean);
     return `************* YOUR TASK *************
 
 ${parts.join("\n\n")}`;
