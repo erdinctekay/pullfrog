@@ -433,3 +433,18 @@ ${PR_SUMMARY_FORMAT}`,
 
 // static export for UI display — uses opencode format as the readable default
 export const modes: Mode[] = computeModes("opencode");
+
+/**
+ * modes that legitimately never modify the working tree. used by the post-run
+ * dirty-tree gate to suppress the "commit and push" nudge — those modes
+ * complete by submitting a review (`Review` / `IncrementalReview`) or by
+ * posting a Plan comment (`Plan`), not by touching files. any leftover in the
+ * tree at end-of-run is incidental tool noise (e.g. a `node_modules/` from a
+ * stray install attempt) on an ephemeral worktree; nudging the agent to
+ * commit it would produce a spurious PR.
+ */
+export const NON_COMMITTING_MODES: ReadonlySet<string> = new Set([
+  "Review",
+  "IncrementalReview",
+  "Plan",
+]);

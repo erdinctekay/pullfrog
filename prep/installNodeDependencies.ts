@@ -135,14 +135,21 @@ export const installNodeDependencies: PrepDefinition = {
       }
     }
 
-    // get the frozen install command (or fallback to regular install)
-    const resolved = resolveCommand(agent, "frozen", []) || resolveCommand(agent, "install", []);
+    // frozen-lockfile install only. eager prep is non-mutating by contract:
+    // we run it before the agent starts and any artifact it leaves in the
+    // tree (e.g. a generated `package-lock.json`) trips the dirty-tree
+    // post-run gate and produces a spurious PR. `frozen` commands
+    // (`npm ci`, `pnpm install --frozen-lockfile`, etc.) fail cleanly
+    // without modifying state when there's no lockfile, which is exactly
+    // what we want — repos that need a non-frozen install must opt in via
+    // a `setup` lifecycle hook (`action/utils/lifecycle.ts`).
+    const resolved = resolveCommand(agent, "frozen", []);
     if (!resolved) {
       return {
         language: "node",
         packageManager,
         dependenciesInstalled: false,
-        issues: [`no install command found for ${agent}`],
+        issues: [`no frozen-install command available for ${agent}`],
       };
     }
 

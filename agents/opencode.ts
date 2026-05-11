@@ -80,6 +80,26 @@ type OpenCodeConfig = {
  */
 const PULLFROG_OPENCODE_OUTPUT_LIMIT = 5000;
 
+/**
+ * upstream opencode hardcodes `thinkingLevel: "high"` as the default for every
+ * gemini-3 model on the direct google SDK (`provider/transform.ts` `options()`).
+ * that adds 30-60s of pre-tool-call TTFT and 5-46s of post-tool jabber per turn,
+ * which is overkill for agentic loops where most steps are tool-routing
+ * decisions. we override to "medium" for the curated slugs we ship in
+ * `action/models.ts`; users who want max quality can still pick the `-high`
+ * variant explicitly. flash stays at "medium" too — low-effort flash is
+ * visibly worse on harder tasks and the latency savings aren't meaningful
+ * (flash is already fast). other gemini-3 ids that exist in models.dev but
+ * aren't in our curated alias map keep the upstream `"high"` default.
+ *
+ * keyed by upstream api id (matches the slugs in `action/models.ts`). the
+ * merge order in opencode `session/llm.ts` is `base ← model.options ← agent.options ← variant`,
+ * deep-merged — so an explicit `--variant high` still wins, and explicit
+ * model.options in a user-provided opencode config would also win.
+ */
+const GEMINI_3_DIRECT_THINKING_LEVEL = "medium";
+const GEMINI_3_DIRECT_API_IDS = ["gemini-3.1-pro-preview", "gemini-3-flash-preview"];
+
 function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): string {
   const config: OpenCodeConfig = {
     permission: {
@@ -94,6 +114,20 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
       [pullfrogMcpName]: { type: "remote", url: ctx.mcpServerUrl },
     },
     agent: buildReviewerAgentConfig(),
+    provider: {
+      google: {
+        models: Object.fromEntries(
+          GEMINI_3_DIRECT_API_IDS.map((id) => [
+            id,
+            {
+              options: {
+                thinkingConfig: { thinkingLevel: GEMINI_3_DIRECT_THINKING_LEVEL },
+              },
+            },
+          ])
+        ),
+      },
+    },
   };
 
   if (model) {

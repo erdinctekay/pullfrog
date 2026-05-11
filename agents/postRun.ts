@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { LIFECYCLE_HOOK_TIMEOUT_MS } from "../lifecycle.ts";
+import { NON_COMMITTING_MODES } from "../modes.ts";
 import type { ToolState } from "../toolState.ts";
 import { log } from "../utils/cli.ts";
 import {
@@ -181,8 +182,21 @@ export async function collectPostRunIssues(
     const failure = await executeStopHook(ctx.stopScript);
     if (failure) issues.stopHook = failure;
   }
+  // dirty-tree gate fires only in modes that legitimately commit. Review /
+  // IncrementalReview / Plan complete via review submission or a Plan
+  // comment, not by touching files — any tree dirt is incidental (e.g. a
+  // tool-installed `node_modules/`) and the worktree is ephemeral, so
+  // nudging the agent to commit it would produce a spurious PR. see
+  // `NON_COMMITTING_MODES` in `action/modes.ts`.
   const status = getGitStatus();
-  if (status) issues.dirtyTree = status;
+  const mode = ctx.toolState.selectedMode;
+  if (status) {
+    if (mode && NON_COMMITTING_MODES.has(mode)) {
+      log.info(`» dirty-tree gate suppressed: mode \`${mode}\` does not commit`);
+    } else {
+      issues.dirtyTree = status;
+    }
+  }
   const summaryFilePath = ctx.toolState.summaryFilePath;
   const summarySeed = ctx.toolState.summarySeed;
   if (!options.skipSummaryStale && summaryFilePath && summarySeed !== undefined) {
