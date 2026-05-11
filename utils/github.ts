@@ -221,8 +221,11 @@ const checkRepositoryAccess = async (
       headers: { Authorization: `token ${token}` },
     });
 
+    const ownerLower = repoOwner.toLowerCase();
+    const nameLower = repoName.toLowerCase();
     return response.repositories.some(
-      (repo) => repo.owner.login === repoOwner && repo.name === repoName
+      (repo) =>
+        repo.owner.login.toLowerCase() === ownerLower && repo.name.toLowerCase() === nameLower
     );
   } catch {
     return false;
