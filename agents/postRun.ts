@@ -139,7 +139,7 @@ export function buildUnsubmittedReviewPrompt(mode: "Review" | "IncrementalReview
   // mode prompt forbids `report_progress`, so the nudge here must not offer
   // it as an exit. IncrementalReview legitimately allows a report_progress
   // exit when there are no new issues since the last review (mode prompt
-  // step 7), so the nudge mirrors that contract.
+  // step 8), so the nudge mirrors that contract.
   if (mode === "Review") {
     return [
       `MISSING REVIEW OUTPUT — you selected Review mode but stopped without calling \`create_pull_request_review\`. the user has no visible signal that this run produced anything; the progress comment will be deleted on exit and no review will appear on the PR.`,

@@ -24,13 +24,14 @@ function buildModeOverrides(t: (name: string) => string): Record<string, string>
 
 An existing plan comment was found for this issue. Update that comment with the revised plan — do not create a new plan comment.
 
-1. Use \`previousPlanBody\` from this response as the plan to revise; do not call \`get_issue\` or \`get_issue_comments\`.
-2. Revise the plan based on the user's request:
+1. **task list**: create your task list for this run as your first action.
+2. Use \`previousPlanBody\` from this response as the plan to revise; do not call \`get_issue\` or \`get_issue_comments\`.
+3. Revise the plan based on the user's request:
    - incorporate the current plan (\`previousPlanBody\`) and the user's revision request
    - gather relevant codebase context (file paths, architecture notes from AGENTS.md)
    - produce a structured plan with clear milestones
-3. Call \`${t("report_progress")}\` with the full revised plan text and \`{ target_plan_comment: true }\` so it updates the existing plan comment (not the progress comment).
-4. Then post a short note to the progress comment (e.g. "Plan has been updated in the comment above.") via \`${t("report_progress")}\` so it is not left as "Leaping...".`,
+4. Call \`${t("report_progress")}\` with the full revised plan text and \`{ target_plan_comment: true }\` so it updates the existing plan comment (not the progress comment).
+5. Then post a short note to the progress comment (e.g. "Plan has been updated in the comment above.") via \`${t("report_progress")}\` so it is not left as "Leaping...".`,
   };
 }
 

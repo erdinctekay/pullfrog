@@ -74,18 +74,20 @@ export function computeModes(agentId: AgentId): Mode[] {
         "Implement, build, create, or develop code changes; make specific changes to files or features; execute a plan; or handle tasks with specific implementation details",
       prompt: `### Checklist
 
-1. **plan** (optional, for complex tasks): analyze requirements, read AGENTS.md and relevant code, produce a step-by-step implementation plan.
+1. **task list**: create your task list for this run as your first action.
 
-2. **setup**: checkout or create the branch:
+2. **plan** (optional, for complex tasks): analyze requirements, read AGENTS.md and relevant code, produce a step-by-step implementation plan.
+
+3. **setup**: checkout or create the branch:
    - **PR event, modifying the existing PR**: call \`${t("checkout_pr")}\`
    - **new branch**: use \`${t("git")}\` to create a branch (\`git checkout -b pullfrog/branch-name\`)
 
-3. **build**: implement changes using your native file and shell tools:
+4. **build**: implement changes using your native file and shell tools:
    - follow the plan (if you ran a plan phase)
    - plan your approach before writing code: identify which files need to change, key design decisions, and edge cases. for non-trivial changes, consider whether there's a more elegant approach.
    - run relevant tests/lints before committing
 
-4. **self-review**: judgment call — does YOUR diff warrant a fresh-eyes pass?
+5. **self-review**: judgment call — does YOUR diff warrant a fresh-eyes pass?
 
    Skip self-review (commit directly) when the diff is **genuinely trivial**:
    - doc typos, comment-only edits, whitespace/format-only, import reordering
@@ -116,7 +118,7 @@ export function computeModes(agentId: AgentId): Mode[] {
 
    Review the findings, address valid points, and discard nitpicks or false positives. The reviewer is fallible — it biases toward *recommending additions* (defensive checks for impossible cases, extra logging, new abstractions used once, comments restating code, tests asserting tautologies, "just-in-case" guards). For each finding, ask: would applying it leave the code more sound, correct, AND elegant? Two-out-of-three is usually a signal to look harder for a fix that gets all three before settling for one that trades elegance for correctness. Reject bloat-shaped findings without applying them, and after applying the rest re-read your diff and be discerning about what *you just changed*: if any fix turned out to be bloat in context, revert it. The goal is code that is sound and correct *while remaining elegant*; the smallest diff that fixes the real defect almost always wins. Then verify only intended changes are present, no debug artifacts or commented-out code remain, no unrelated files were modified. Commit locally via shell (\`git add . && git commit -m "..."\`).
 
-5. **finalize**:
+6. **finalize**:
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (see *SYSTEM* Git rules if this fails — prepush errors are usually the repo's tests/lint, not infra timeouts)
    - create a PR via \`${t("create_pull_request")}\`
    - call \`${t("report_progress")}\` with the PR link or the exact error if push/PR failed
@@ -131,21 +133,23 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
         "Address PR review feedback; respond to reviewer comments; make requested changes to an existing PR",
       prompt: `### Checklist
 
-1. Checkout the PR branch via \`${t("checkout_pr")}\`.
+1. **task list**: create your task list for this run as your first action.
 
-2. Fetch review comments via \`${t("get_review_comments")}\`.
+2. Checkout the PR branch via \`${t("checkout_pr")}\`.
 
-3. For each comment:
+3. Fetch review comments via \`${t("get_review_comments")}\`.
+
+4. For each comment:
    - understand the feedback
    - evaluate whether applying it would leave the code more **sound, correct, AND elegant**. reviewers are fallible and bias toward *recommending additions* (defensive checks for impossible cases, extra abstractions, comments restating obvious code, tests asserting tautologies, "just-in-case" guards). if a request would add bloat — ceremony without commensurate correctness benefit — push back in your reply rather than mechanically applying it. two-out-of-three is usually a signal to look harder for a fix that gets all three before settling.
    - if the request stands, make the code change using your native tools; otherwise reply explaining why
    - record what was done (or why nothing was done)
 
-4. Quality check:
+5. Quality check:
    - test changes, then review the diff before committing — verify only intended changes are present, no debug artifacts remain, no fix turned out to be bloat in context (revert any that did), and the changes are clean enough that a senior engineer would approve without hesitation
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-5. Finalize:
+6. Finalize:
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*)
    - reply to each comment **exactly once** using \`${t("reply_to_review_comment")}\` — do not re-emit the same call (the runtime dedupes identical bodies and the second call is wasted)
    - resolve addressed threads via \`${t("resolve_review_thread")}\`
@@ -169,11 +173,13 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
         "Review code, PRs, or implementations; provide feedback or suggestions; identify issues; or check code quality, style, and correctness",
       prompt: `### Checklist
 
-1. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`. read the diff TOC end-to-end and treat its file line ranges as your coverage checklist.
+1. **task list**: create your task list for this run as your first action.
 
-2. **triage**: orient yourself on the PR — identify *what kind of thing this is* (domain it touches, seams it crosses, external contracts it depends on, user-facing surfaces it changes). orientation only — defer specific defect-hunting to the subagents; pre-reviewing biases the lenses you pick. use \`${t("get_pull_request")}\` and other read-only GitHub tools for additional context if needed.
+2. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata and a \`diffPath\`. read the diff TOC end-to-end and treat its file line ranges as your coverage checklist.
 
-   if the PR is **genuinely trivial**, skip steps 3–4 entirely and submit a \`No new issues found.\` review per step 5. there's no value in dispatching even one lens for a typo.
+3. **triage**: orient yourself on the PR — identify *what kind of thing this is* (domain it touches, seams it crosses, external contracts it depends on, user-facing surfaces it changes). orientation only — defer specific defect-hunting to the subagents; pre-reviewing biases the lenses you pick. use \`${t("get_pull_request")}\` and other read-only GitHub tools for additional context if needed.
+
+   if the PR is **genuinely trivial**, skip steps 4–5 entirely and submit a \`No new issues found.\` review per step 6. there's no value in dispatching even one lens for a typo.
 
    "Genuinely trivial" (skip):
    - single-word doc typo, whitespace/format-only, comment-only across any number of files
@@ -218,7 +224,7 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
    - **holistic** — does the PR make sense as a whole? symmetric flows (delete for every create, rollback for every migration)?
    - **subsystem lenses** (invent as the PR demands) — auth, billing, payments, schema migration, webhooks, secrets, RBAC, multi-tenant isolation, cron/scheduling, etc.
 
-3. **fan out**: dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). when picking 2+ lenses, dispatch them in a **single assistant turn with multiple parallel subagent calls**; issuing one and awaiting reply before the next collapses the fan-out into a serial review. if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 3 entirely on a single subagent failure. each subagent gets:
+4. **fan out**: dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). when picking 2+ lenses, dispatch them in a **single assistant turn with multiple parallel subagent calls**; issuing one and awaiting reply before the next collapses the fan-out into a serial review. if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 4 entirely on a single subagent failure. each subagent gets:
    - the diff path / target — reading the diff and the codebase is its job
    - **only one lens** — never a multi-section "review for X, Y, and Z" prompt
    - **a Task \`description\` set to the lens name** (e.g. \`"security"\`, \`"correctness"\`, \`"billing-subsystem"\`) — the harness reads this field to label the subagent's log lines so parallel runs can be told apart in CI output. without it, every subagent shows up as \`subagent#N\`.
@@ -233,11 +239,11 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
    - do NOT pre-shape their output with a finding schema
    - do NOT mention the other lenses (independence is the point — overlapping findings are a strong signal)
 
-4. **aggregate & draft**: merge findings; de-dup overlaps (two lenses catching the same issue = higher-confidence signal); trace each finding yourself before accepting it. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the PR (heuristic: if the finding's root cause lives in lines this PR added or modified, it's in scope; otherwise drop unless the PR plausibly introduced or amplified the regression), and anything not actionable. also drop **bloat-shaped findings** — proposed fixes that would add defensive checks for cases that can't happen, abstractions used once, comments restating obvious code, tests asserting tautologies, or "just-in-case" guards. subagents are fallible and bias toward recommending changes; the bar for an actionable inline comment is sound + correct + elegant. recommending a change that improves only one of the three (or worse, degrades elegance to nominally improve correctness) makes the codebase worse, not better.
+5. **aggregate & draft**: merge findings; de-dup overlaps (two lenses catching the same issue = higher-confidence signal); trace each finding yourself before accepting it. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the PR (heuristic: if the finding's root cause lives in lines this PR added or modified, it's in scope; otherwise drop unless the PR plausibly introduced or amplified the regression), and anything not actionable. also drop **bloat-shaped findings** — proposed fixes that would add defensive checks for cases that can't happen, abstractions used once, comments restating obvious code, tests asserting tautologies, or "just-in-case" guards. subagents are fallible and bias toward recommending changes; the bar for an actionable inline comment is sound + correct + elegant. recommending a change that improves only one of the three (or worse, degrades elegance to nominally improve correctness) makes the codebase worse, not better.
 
    for surviving findings, draft inline comments with NEW line numbers from the diff. every comment must be actionable, 2-3 sentences max. use GitHub permalink format for code references. for impact-analysis findings (stale references after rename/remove), report them in the review body ordered by severity (runtime breakage > incorrect docs > stale comments) rather than as inline comments unless they're anchored to a specific line.
 
-5. **submit**: ALWAYS submit exactly one review via \`${t("create_pull_request_review")}\`. Do NOT call \`report_progress\` — the review is the final record and the progress comment will be cleaned up automatically.
+6. **submit**: ALWAYS submit exactly one review via \`${t("create_pull_request_review")}\`. Do NOT call \`report_progress\` — the review is the final record and the progress comment will be cleaned up automatically.
 
    note: the first create_pull_request_review submission may error with a one-time diff-coverage nudge listing unread TOC regions. retry the same call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session.
 
@@ -268,7 +274,7 @@ ${PR_SUMMARY_FORMAT}`,
     // IncrementalReview shares Review's multi-lens orchestrator pattern but
     // scopes the target to the incremental diff. The "issues must be NEW
     // since the last Pullfrog review" filter lives at aggregation time
-    // (step 5), NOT in the subagent prompt — pushing the filter into
+    // (step 6), NOT in the subagent prompt — pushing the filter into
     // subagents matches the canonical anneal anti-pattern of "list known
     // pre-existing failures — don't flag these" and suppresses signal on
     // regressions the new commits amplified. The review body is just
@@ -282,15 +288,17 @@ ${PR_SUMMARY_FORMAT}`,
         "Re-review a PR after new commits are pushed; focus on new changes since the last review",
       prompt: `### Checklist
 
-1. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available). read the diff TOC first and use its line ranges as your coverage checklist.
+1. **task list**: create your task list for this run as your first action.
 
-2. **incremental scope**: if \`incrementalDiffPath\` is present, read it to see what changed since the last review. this is a range-diff that isolates the net changes, filtering out base branch noise. if not present, fall back to reviewing the full PR diff and determine what changed since Pullfrog's most recent review.
+2. **checkout**: call \`${t("checkout_pr")}\` — this returns PR metadata, \`diffPath\` (full diff), and \`incrementalDiffPath\` (changes since last reviewed version, if available). read the diff TOC first and use its line ranges as your coverage checklist.
 
-3. **prior feedback**: fetch previous reviews via \`${t("list_pull_request_reviews")}\`. for the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback. you'll use this to filter your aggregation in step 5 — anything already flagged in a prior review and not changed by the new commits should not be re-raised. you do NOT need to render this in the review body; the rolling PR summary snapshot is the durable record of what's been addressed.
+3. **incremental scope**: if \`incrementalDiffPath\` is present, read it to see what changed since the last review. this is a range-diff that isolates the net changes, filtering out base branch noise. if not present, fall back to reviewing the full PR diff and determine what changed since Pullfrog's most recent review.
 
-4. **triage & fan out**: orient on the *incremental* changes — domain, seams, external contracts, user-facing surfaces.
+4. **prior feedback**: fetch previous reviews via \`${t("list_pull_request_reviews")}\`. for the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback. you'll use this to filter your aggregation in step 6 — anything already flagged in a prior review and not changed by the new commits should not be re-raised. you do NOT need to render this in the review body; the rolling PR summary snapshot is the durable record of what's been addressed.
 
-   if the incremental changes are **genuinely trivial**, skip the fan-out entirely and jump to step 7's non-substantive path (do NOT submit a review).
+5. **triage & fan out**: orient on the *incremental* changes — domain, seams, external contracts, user-facing surfaces.
+
+   if the incremental changes are **genuinely trivial**, skip the fan-out entirely and jump to step 8's non-substantive path (do NOT submit a review).
 
    "Genuinely trivial" (skip): formatting/comment tweaks, import reordering, lockfile regen, mechanical rename of import paths, whitespace-only.
    "Looks trivial but isn't" (do NOT skip — same anti-patterns as Review mode): 1-line changes to SQL/regex/auth/billing/permissions/signature-verification code; flipping feature-flag defaults or retry/timeout constants; money/tax/HTTP-method/redirect changes; tightening or loosening a comparison operator; mixed diffs with a semantic line buried in formatting.
@@ -298,8 +306,8 @@ ${PR_SUMMARY_FORMAT}`,
 
    otherwise pick lenses by where the new commits concentrate risk — **there's no fixed count**, same calibration as Review mode (1 lens for pure refactor / isolated fix; 2–3 for typical features; 4–5 for high-stakes subsystem touches; 6+ is a smell). lens framing follows Review mode: themed lenses (correctness & invariants, impact when new commits remove/rename/deprecate things, research-validated assumptions, security, user-journey, operational readiness, integration & cross-cutting, test integrity, performance, holistic) and subsystem lenses (auth, billing, schema migration, etc.) — for high-stakes domains lead with the subsystem lens rather than the generic themed equivalent.
 
-   dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). dispatch them in a **single assistant turn with multiple parallel subagent calls** (serial dispatch collapses the fan-out). if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 4 entirely on a single subagent failure. each subagent gets:
-   - the diff scope (incremental diff path if available, full diff otherwise). do NOT tell them to skip pre-existing issues — that suppresses regressions the new commits amplified; the "issues must be NEW" filter lives at aggregation time (step 5), not in the subagent prompt
+   dispatch one \`${REVIEWER_AGENT_NAME}\` subagent per lens — its baked-in system prompt enforces the non-mutative + non-recursive contract (read-only file/search/web tools and read-only MCP queries; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch). dispatch them in a **single assistant turn with multiple parallel subagent calls** (serial dispatch collapses the fan-out). if a subagent errors out, times out, or returns nothing usable, retry once with the same lens; if it still fails, proceed with partial coverage and note the missing lens in the review body — do not skip step 5 entirely on a single subagent failure. each subagent gets:
+   - the diff scope (incremental diff path if available, full diff otherwise). do NOT tell them to skip pre-existing issues — that suppresses regressions the new commits amplified; the "issues must be NEW" filter lives at aggregation time (step 6), not in the subagent prompt
    - **only one lens** — never a multi-section "review for X, Y, and Z" prompt
    - **a Task \`description\` set to the lens name** (e.g. \`"security"\`, \`"correctness"\`, \`"billing-subsystem"\`) — the harness reads this field to label the subagent's log lines so parallel runs can be told apart in CI output. without it, every subagent shows up as \`subagent#N\`.
    - the read-only contract restated in your dispatch instructions so the rule is present twice (the subagent's system prompt also enforces it). The test: would this call still be a no-op if reverted? If not (PR comments, branch pushes, issue updates, set_output, label changes, dependency installs, etc.), don't make it.
@@ -313,11 +321,11 @@ ${PR_SUMMARY_FORMAT}`,
    - do NOT pre-shape their output with a finding schema
    - do NOT mention the other lenses (independence is the point)
 
-5. **aggregate, draft, self-critique**: merge findings; de-dup overlaps; trace each finding yourself. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the new commits, anything not actionable, and anything that re-states prior review feedback (heuristic: if the finding's root cause lives in lines the *new commits* added or modified, it's in scope; otherwise drop). also drop **bloat-shaped findings** — proposed fixes that would add defensive checks for cases that can't happen, abstractions used once, comments restating obvious code, tests asserting tautologies, or "just-in-case" guards. subagents are fallible and bias toward recommending changes; the bar for an actionable inline comment is sound + correct + elegant. recommending a change that improves only one of the three (or degrades elegance to nominally improve correctness) makes the codebase worse, not better. To compute "lines the new commits added or modified": if \`incrementalDiffPath\` from step 1 is present, use it directly. Otherwise, take the prior Pullfrog review's \`commit_id\` (returned alongside each entry from \`${t("list_pull_request_reviews")}\` in step 3) and run \`git diff <prior-review-sha>..HEAD\` to isolate the lines added since that review. draft inline comments with NEW line numbers from the full PR diff — every comment must be actionable, 2-3 sentences max.
+6. **aggregate, draft, self-critique**: merge findings; de-dup overlaps; trace each finding yourself. drop praise, style preferences, speculative/unverified claims, findings about pre-existing code unrelated to the new commits, anything not actionable, and anything that re-states prior review feedback (heuristic: if the finding's root cause lives in lines the *new commits* added or modified, it's in scope; otherwise drop). also drop **bloat-shaped findings** — proposed fixes that would add defensive checks for cases that can't happen, abstractions used once, comments restating obvious code, tests asserting tautologies, or "just-in-case" guards. subagents are fallible and bias toward recommending changes; the bar for an actionable inline comment is sound + correct + elegant. recommending a change that improves only one of the three (or degrades elegance to nominally improve correctness) makes the codebase worse, not better. To compute "lines the new commits added or modified": if \`incrementalDiffPath\` from step 2 is present, use it directly. Otherwise, take the prior Pullfrog review's \`commit_id\` (returned alongside each entry from \`${t("list_pull_request_reviews")}\` in step 4) and run \`git diff <prior-review-sha>..HEAD\` to isolate the lines added since that review. draft inline comments with NEW line numbers from the full PR diff — every comment must be actionable, 2-3 sentences max.
 
-6. **build the review body** — a single "Reviewed changes" section: summarize at the logical-change level, not per-file. each bullet starts with a past-tense verb (e.g. \`- Extracted shared CLI runtime into a single module\`, \`- Renamed package to pullfrog\`). avoid file paths unless they add clarity. if the changes can be described in one sentence, use one sentence — no bullets needed. do NOT include a separate "Prior review feedback" checklist; that's tracked in the rolling PR summary snapshot for the next agent run, and surfacing it in the user-facing body is noise (changes that addressed prior feedback are already covered by the Reviewed-changes bullets). in some cases you may receive a complete diff for the whole pull request instead of an incremental one — when this happens, you will need to determine what changes have happened since Pullfrog's most recent review.
+7. **build the review body** — a single "Reviewed changes" section: summarize at the logical-change level, not per-file. each bullet starts with a past-tense verb (e.g. \`- Extracted shared CLI runtime into a single module\`, \`- Renamed package to pullfrog\`). avoid file paths unless they add clarity. if the changes can be described in one sentence, use one sentence — no bullets needed. do NOT include a separate "Prior review feedback" checklist; that's tracked in the rolling PR summary snapshot for the next agent run, and surfacing it in the user-facing body is noise (changes that addressed prior feedback are already covered by the Reviewed-changes bullets). in some cases you may receive a complete diff for the whole pull request instead of an incremental one — when this happens, you will need to determine what changes have happened since Pullfrog's most recent review.
 
-7. Submit — every run must end with EXACTLY ONE of \`${t("create_pull_request_review")}\` (substantive review) or \`${t("report_progress")}\` (no-review acknowledgement). do NOT call \`create_issue_comment\` for review output.
+8. Submit — every run must end with EXACTLY ONE of \`${t("create_pull_request_review")}\` (substantive review) or \`${t("report_progress")}\` (no-review acknowledgement). do NOT call \`create_issue_comment\` for review output.
 
    Same callout-intensity ladder as Review mode — \`[!CAUTION]\` (large red, "will break") → \`[!IMPORTANT]\` (large purple, "must address before merging") → \`[!NOTE]\` (small blue, "FYI") → no callout (plain text). And the same Fix-button lever: the footer renders a Fix button on every non-approving review, so \`approved: true\` suppresses it. Wrapping mergeable feedback in \`[!IMPORTANT]\` trains users to click Fix on reviews that don't need fixing — pick the tier the author's actual next action justifies.
 
@@ -336,13 +344,15 @@ ${PR_SUMMARY_FORMAT}`,
         "Create plans, break down tasks, outline steps, analyze requirements, understand scope of work, or provide task breakdowns",
       prompt: `### Checklist
 
-1. Analyze the task and gather context:
+1. **task list**: create your task list for this run as your first action.
+
+2. Analyze the task and gather context:
    - read AGENTS.md and relevant codebase files
    - understand the architecture and constraints
 
-2. Produce a structured, actionable plan with clear milestones.
+3. Produce a structured, actionable plan with clear milestones.
 
-3. Call \`${t("report_progress")}\` with the plan.`,
+4. Call \`${t("report_progress")}\` with the plan.`,
     },
     {
       name: "Fix",
@@ -350,20 +360,22 @@ ${PR_SUMMARY_FORMAT}`,
         "Fix CI failures; debug failing tests or builds; investigate and resolve check suite failures",
       prompt: `### Checklist
 
-1. Checkout the PR branch via \`${t("checkout_pr")}\`.
+1. **task list**: create your task list for this run as your first action.
 
-2. Fetch check suite logs via \`${t("get_check_suite_logs")}\`.
+2. Checkout the PR branch via \`${t("checkout_pr")}\`.
 
-3. **CRITICAL**: verify the failure was INTRODUCED BY THIS PR before fixing. If unrelated, abort and report.
+3. Fetch check suite logs via \`${t("get_check_suite_logs")}\`.
 
-4. Diagnose and fix:
+4. **CRITICAL**: verify the failure was INTRODUCED BY THIS PR before fixing. If unrelated, abort and report.
+
+5. Diagnose and fix:
    - read the workflow file, reproduce locally with the EXACT same commands CI runs
    - fix the issue using your native file and shell tools
    - verify the fix by re-running the exact CI command
    - review the diff before committing — verify only the fix is present, no debug artifacts, no unrelated changes. the fix should be clean enough that a senior engineer would approve without hesitation.
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-5. Finalize:
+6. Finalize:
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*)
    - call \`${t("report_progress")}\` with the diagnosis and fix summary (or the exact push error if push failed)`,
     },
@@ -372,22 +384,24 @@ ${PR_SUMMARY_FORMAT}`,
       description: "Resolve merge conflicts in a PR branch against the base branch",
       prompt: `### Checklist
 
-1. **Setup**:
+1. **task list**: create your task list for this run as your first action.
+
+2. **Setup**:
    - Call \`${t("checkout_pr")}\` to get the PR branch.
    - Call \`${t("get_pull_request")}\` to identify the base branch (e.g., 'main').
    - Call \`${t("git_fetch")}\` to fetch the base branch.
 
-2. **Merge Attempt**:
+3. **Merge Attempt**:
    - Run \`git merge origin/<base_branch>\` via shell.
-   - If it succeeds automatically, confirm a clean working tree, push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*), and call \`${t("report_progress")}\` with a brief success note or the exact push error if push failed — **then stop; do not run steps 3–4.**
-   - If it fails (conflicts), resolve them manually (continue to steps 3–4).
+   - If it succeeds automatically, confirm a clean working tree, push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*), and call \`${t("report_progress")}\` with a brief success note or the exact push error if push failed — **then stop; do not run steps 4–5.**
+   - If it fails (conflicts), resolve them manually (continue to steps 4–5).
 
-3. **Resolve Conflicts**:
+4. **Resolve Conflicts**:
    - Run \`git status\` or parse the merge output to find the list of conflicting files.
    - For each conflicting file: read it, find the conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`), understand the code context, and rewrite the file with the correct resolution. Remove all markers.
    - Verify the file syntax is correct after resolution.
 
-4. **Finalize**:
+5. **Finalize**:
    - Run a final verification (build/test) to ensure the resolution works.
    - \`git add . && git commit -m "resolve merge conflicts"\`
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*)
@@ -399,15 +413,17 @@ ${PR_SUMMARY_FORMAT}`,
         "General-purpose tasks that don't fit other modes: answering questions, adding comments, labeling, running ad-hoc commands, or any direct request",
       prompt: `### Checklist
 
-1. Analyze the task. For simple operations (labeling, commenting, answering questions, running a single command), handle directly.
+1. **task list**: create your task list for this run as your first action.
 
-2. For substantial work — code changes across multiple files, multi-step investigations:
+2. Analyze the task. For simple operations (labeling, commenting, answering questions, running a single command), handle directly.
+
+3. For substantial work — code changes across multiple files, multi-step investigations:
    - plan your approach before starting
    - use native file and shell tools for local operations
    - use ${pullfrogMcpName} MCP tools for GitHub/git operations
    - if code changes are needed: review your own diff before committing — verify only intended changes are present, no debug artifacts remain, and the changes are clean enough that a senior engineer would approve without hesitation
 
-3. Finalize:
+4. Finalize:
    - if code changes were made, push to a pull request (new or existing) using \`${t("push_branch")}\` and \`${t("create_pull_request")}\` as needed. \`git status\` must be clean before you finish (see *SYSTEM* Git rules if push fails).
    - call \`${t("report_progress")}\` once with results — include exact tool errors if push or PR creation failed
    - if the task involved labeling, commenting, or other GitHub operations, perform those directly`,
