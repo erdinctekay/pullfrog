@@ -183,8 +183,9 @@ function billingConsoleUrl(owner: string, anchor: "billing" | "model-access"): s
  *
  * Branches:
  *   - `router_requires_card`: user is on Router mode with no card AND no
- *     wallet balance. Lead with the carrot ($20 free credit), link to
- *     `#model-access` where the Add Card flow lives.
+ *     wallet balance (signup credit exhausted or not granted). Frame as
+ *     "add a card to continue", link to `#model-access` where the Add
+ *     Card flow lives.
  *   - `router_balance_exhausted`: user has a card on file but auto-reload is
  *     disabled and they've spent past their $5 overdraft buffer. Frame as
  *     "balance ran out" and surface both remediation paths (top up, or flip
@@ -206,7 +207,7 @@ function formatBillingErrorSummary(error: BillingError, owner: string): string {
     return [
       "**Add a card to start using Pullfrog Router.**",
       "",
-      "Router proxies OpenRouter at raw cost — no platform markup, and your first $20 of usage is on us.",
+      "Router proxies OpenRouter at raw cost — no platform markup. Add a card and we'll auto-reload your wallet so runs keep flowing.",
       "",
       `[Add a card →](${billingConsoleUrl(owner, "model-access")})`,
     ].join("\n");
