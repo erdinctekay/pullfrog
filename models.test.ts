@@ -55,13 +55,13 @@ describe("getModelEnvVars", () => {
 
   it("returns empty env vars for free opencode models", () => {
     expect(getModelEnvVars("opencode/big-pickle")).toEqual([]);
-    expect(getModelEnvVars("opencode/gpt-5-nano")).toEqual([]);
     expect(getModelEnvVars("opencode/mimo-v2-pro-free")).toEqual([]);
     expect(getModelEnvVars("opencode/minimax-m2.5-free")).toEqual([]);
   });
 
   it("still requires OPENCODE_API_KEY for non-free opencode models", () => {
     expect(getModelEnvVars("opencode/claude-opus")).toEqual(["OPENCODE_API_KEY"]);
+    expect(getModelEnvVars("opencode/gpt-5-nano")).toEqual(["OPENCODE_API_KEY"]);
   });
 });
 

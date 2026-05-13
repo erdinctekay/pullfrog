@@ -27,11 +27,7 @@ describe("validateAgentApiKey", () => {
     });
 
     it("passes for other free opencode models", () => {
-      for (const slug of [
-        "opencode/gpt-5-nano",
-        "opencode/mimo-v2-pro-free",
-        "opencode/minimax-m2.5-free",
-      ]) {
+      for (const slug of ["opencode/mimo-v2-pro-free", "opencode/minimax-m2.5-free"]) {
         expect(() => validateAgentApiKey({ ...base, model: slug })).not.toThrow();
       }
     });
@@ -56,6 +52,12 @@ describe("validateAgentApiKey", () => {
 
     it("throws for opencode keyed model without OPENCODE_API_KEY", () => {
       expect(() => validateAgentApiKey({ ...base, model: "opencode/claude-opus" })).toThrow(
+        "no API key found"
+      );
+    });
+
+    it("throws for opencode/gpt-5-nano without OPENCODE_API_KEY (paid Zen alias)", () => {
+      expect(() => validateAgentApiKey({ ...base, model: "opencode/gpt-5-nano" })).toThrow(
         "no API key found"
       );
     });

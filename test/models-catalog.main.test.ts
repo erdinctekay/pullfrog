@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelAliases } from "../models.ts";
+import { modelAliases, resolveDisplayAlias } from "../models.ts";
 
 // ── catalog drift tests — main-only ─────────────────────────────────────────────
 //
@@ -21,6 +21,7 @@ type ModelsDevModel = {
   name: string;
   status?: string;
   release_date?: string;
+  cost?: { input?: number; output?: number };
 };
 
 type ModelsDevProvider = {
@@ -109,6 +110,73 @@ describe("openRouterResolve OpenRouter API validity", async () => {
         orModelIds.has(orModelId),
         `model "${orModelId}" not found in OpenRouter API (/api/v1/models)`
       ).toBe(true);
+    });
+  }
+});
+
+// ── OpenCode Zen served-list + free-cost checks ────────────────────────────────
+//
+// these enforce the two dynamic conditions for "this opencode alias works for a
+// user without OPENCODE_API_KEY" — the gap that let issue #691 ship:
+//   1. the alias's terminal-fallback resolve appears in Zen's /v1/models (Zen
+//      actually serves it). caught nothing in #691 because mimo had a fallback
+//      to big-pickle which IS served, but would catch any future alias that
+//      points at a Zen-removed model without a fallback.
+//   2. for isFree aliases, the terminal-fallback's models.dev `cost.input` is
+//      zero. caught the gpt-5-nano regression: $0.05/M input on models.dev,
+//      marked isFree in our catalog.
+//
+// we check the terminal-fallback (via resolveDisplayAlias) because deprecated
+// aliases legitimately point at dead resolve targets — the terminal is what
+// actually runs at the agent CLI.
+
+type ZenModel = { id: string };
+type ZenModelsResponse = { data: ZenModel[] };
+
+const zenApi = fetch("https://opencode.ai/zen/v1/models").then(
+  (r) => r.json() as Promise<ZenModelsResponse>
+);
+
+describe("opencode Zen served list", async () => {
+  const zenData = await zenApi;
+  const zenIds = new Set(zenData.data.map((m) => m.id));
+  const seen = new Set<string>();
+
+  for (const alias of modelAliases) {
+    const terminal = resolveDisplayAlias(alias.slug);
+    if (!terminal) continue;
+    const parsed = parseResolve(terminal.resolve);
+    if (parsed.provider !== "opencode") continue;
+    if (seen.has(terminal.resolve)) continue;
+    seen.add(terminal.resolve);
+
+    it(`${alias.slug} terminal resolve ${terminal.resolve} is served by Zen`, () => {
+      expect(
+        zenIds.has(parsed.modelId),
+        `terminal resolve "${terminal.resolve}" for alias "${alias.slug}" is not in https://opencode.ai/zen/v1/models — Zen no longer serves it. either point a fallback at a Zen-served alias or remove the entry.`
+      ).toBe(true);
+    });
+  }
+});
+
+describe("isFree models.dev cost", async () => {
+  const data = await api;
+  const seen = new Set<string>();
+
+  for (const alias of modelAliases.filter((a) => a.isFree)) {
+    const terminal = resolveDisplayAlias(alias.slug);
+    if (!terminal) continue;
+    const parsed = parseResolve(terminal.resolve);
+    if (seen.has(terminal.resolve)) continue;
+    seen.add(terminal.resolve);
+
+    it(`${alias.slug} terminal resolve ${terminal.resolve} has cost.input === 0`, () => {
+      const model = data[parsed.provider]?.models[parsed.modelId];
+      expect(model, `terminal resolve "${terminal.resolve}" missing on models.dev`).toBeDefined();
+      expect(
+        model?.cost?.input,
+        `isFree alias "${alias.slug}" walks to "${terminal.resolve}" which reports cost.input=${model?.cost?.input} on models.dev — either repoint the fallback or drop \`isFree\``
+      ).toBe(0);
     });
   }
 });

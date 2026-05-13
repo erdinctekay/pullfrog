@@ -271,8 +271,7 @@ export const providers = {
       "gpt-5-nano": {
         displayName: "GPT Nano",
         resolve: "opencode/gpt-5-nano",
-        envVars: [],
-        isFree: true,
+        openRouterResolve: "openrouter/openai/gpt-5-nano",
       },
       "mimo-v2-pro-free": {
         displayName: "MiMo V2 Pro",

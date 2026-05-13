@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelAliases, resolveCliModel } from "../models.ts";
+import { getModelEnvVars, modelAliases, resolveCliModel, resolveDisplayAlias } from "../models.ts";
 
 // ── pure alias-registry invariants ──────────────────────────────────────────────
 //
@@ -39,6 +39,52 @@ describe("fallback chain resolution", () => {
         resolved,
         `fallback chain for "${alias.slug}" does not resolve to a non-deprecated model`
       ).toBeDefined();
+    });
+  }
+});
+
+// ── isFree invariants — sanity-check the catalog data shape ─────────────────────
+//
+// these catch the latent regressions that produced issue #691:
+//   - opencode/gpt-5-nano was marked `isFree` despite costing $0.05/M
+//     (no static check existed; demoted to paid in the same PR adding these tests)
+//   - opencode/mimo-v2-pro-free was free + fallback to big-pickle (correct shape),
+//     but nothing enforced that the terminal of an isFree fallback chain is itself
+//     free. if someone repointed big-pickle's fallback at a paid model, all of mimo
+//     and big-pickle's users would silently start hitting a paid endpoint.
+//
+// the cost.input check itself is network-dependent (lives in
+// models-catalog.main.test.ts); these are the static sibling that runs on every PR.
+describe("isFree invariants", () => {
+  for (const alias of modelAliases.filter((a) => a.isFree)) {
+    it(`${alias.slug} lives under the opencode provider`, () => {
+      expect(
+        alias.provider,
+        `isFree alias "${alias.slug}" must be under "opencode" (Zen's keyless gate is opencode-only)`
+      ).toBe("opencode");
+    });
+
+    it(`${alias.slug} has empty envVars`, () => {
+      expect(
+        getModelEnvVars(alias.slug),
+        `isFree alias "${alias.slug}" must declare \`envVars: []\` so validateAgentApiKey doesn't demand OPENCODE_API_KEY`
+      ).toEqual([]);
+    });
+
+    it(`${alias.slug} has no openRouterResolve`, () => {
+      expect(
+        alias.openRouterResolve,
+        `isFree alias "${alias.slug}" must omit \`openRouterResolve\` — free Zen models don't exist on OpenRouter`
+      ).toBeUndefined();
+    });
+
+    it(`${alias.slug} fallback chain terminates at an isFree alias`, () => {
+      const terminal = resolveDisplayAlias(alias.slug);
+      expect(terminal, `fallback chain for "${alias.slug}" is broken`).toBeDefined();
+      expect(
+        terminal?.isFree,
+        `isFree alias "${alias.slug}" walks to "${terminal?.slug}" which is NOT isFree — users would silently start paying`
+      ).toBe(true);
     });
   }
 });

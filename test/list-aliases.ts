@@ -50,8 +50,9 @@ const FLAGSHIPS = [
 function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
   if (ROUTING_CANARIES.has(alias.slug)) return false;
   if (alias.provider === "openrouter") return true;
-  // opencode FREE models (big-pickle, mimo, minimax, gpt-5-nano) are unique
-  // to opencode and used in prod — keep them. only prune the keyed mirrors.
+  // opencode FREE models (big-pickle, mimo-v2-pro-free, minimax-m2.5-free)
+  // are unique to opencode and used in prod — keep them. only prune the keyed
+  // mirrors.
   return alias.provider === "opencode" && !alias.isFree;
 }
 
