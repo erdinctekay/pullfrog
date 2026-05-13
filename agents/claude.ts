@@ -22,7 +22,13 @@ import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { detectProviderError } from "../utils/providerErrors.ts";
 import { addSkill, installBundledSkills } from "../utils/skills.ts";
-import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/subprocess.ts";
+import {
+  DEFAULT_MAX_RETAINED_BYTES,
+  SPAWN_ACTIVITY_TIMEOUT_CODE,
+  SpawnTimeoutError,
+  spawn,
+  TailBuffer,
+} from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
@@ -536,7 +542,8 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
 
   let lastProviderError: string | null = null;
 
-  let output = "";
+  // capped accumulator — see opencode.ts for rationale (issue #680).
+  const output = new TailBuffer(DEFAULT_MAX_RETAINED_BYTES);
   let stdoutBuffer = "";
 
   try {
@@ -554,9 +561,14 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       // there's no shim-orphan issue like opencode-ai/bin/opencode, but
       // detached + killGroup is the right default for any agent runtime.
       killGroup: true,
+      // claude already drains every chunk via onStdout (NDJSON parsing) and
+      // onStderr (recentStderr ring buffer). retaining a second copy in the
+      // spawn wrapper would grow unbounded for long sessions and previously
+      // crashed the wrapper with RangeError. see issue #680.
+      retain: "none",
       onStdout: async (chunk) => {
         const text = chunk.toString();
-        output += text;
+        output.append(text);
         markActivity();
 
         stdoutBuffer += text;
@@ -666,20 +678,26 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       // hides the actionable provider message and pollutes the run log. cap
       // the stdout fallback to the last 2KB so it stays readable when neither
       // a structured error nor stderr is available.
-      const truncatedStdout = result.stdout ? tailLines(result.stdout, 2048) : "";
+      //
+      // result.stdout / result.stderr are empty because we pass retain:"none"
+      // to spawn (see issue #680); the agent layer keeps its own bounded
+      // mirrors via `output` (TailBuffer) and `recentStderr` (ring buffer).
+      const stdoutSnapshot = output.toString();
+      const stderrSnapshot = recentStderr.join("\n");
+      const truncatedStdout = stdoutSnapshot ? tailLines(stdoutSnapshot, 2048) : "";
       const errorMessage =
         lastResultError ||
-        result.stderr ||
+        stderrSnapshot ||
         truncatedStdout ||
         `unknown error - no output from Claude CLI${errorContext}`;
       log.error(
         `${params.label} exited with code ${result.exitCode}${errorContext}: ${errorMessage}`
       );
-      log.debug(`stdout: ${result.stdout?.substring(0, 500)}`);
-      log.debug(`stderr: ${result.stderr?.substring(0, 500)}`);
+      log.debug(`stdout: ${stdoutSnapshot.substring(0, 500)}`);
+      log.debug(`stderr: ${stderrSnapshot.substring(0, 500)}`);
       return {
         success: false,
-        output: finalOutput || output,
+        output: finalOutput || stdoutSnapshot,
         error: errorMessage,
         usage,
         sessionId,
@@ -689,7 +707,7 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
     if (eventCount === 0 && lastProviderError) {
       return {
         success: false,
-        output: finalOutput || output,
+        output: finalOutput || output.toString(),
         error: `provider error: ${lastProviderError}`,
         usage,
         sessionId,
@@ -699,14 +717,14 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
     if (resultErrorSubtype) {
       return {
         success: false,
-        output: finalOutput || output,
+        output: finalOutput || output.toString(),
         error: lastResultError || `result subtype: ${resultErrorSubtype}`,
         usage,
         sessionId,
       };
     }
 
-    return { success: true, output: finalOutput || output, usage, sessionId };
+    return { success: true, output: finalOutput || output.toString(), usage, sessionId };
   } catch (error) {
     params.todoTracker?.cancel();
     const duration = performance.now() - startTime;
@@ -732,7 +750,7 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
 
     return {
       success: false,
-      output: finalOutput || output,
+      output: finalOutput || output.toString(),
       error: `${errorMessage} [${diagnosis}]`,
       usage: buildUsage(),
       sessionId,

@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
-import { spawn } from "./subprocess.ts";
+import { spawn, TailBuffer } from "./subprocess.ts";
 
 describe("spawn error path", () => {
   it("surfaces ENOENT-style spawn failures in stderr so callers can diagnose", async () => {
@@ -78,6 +78,76 @@ describe("spawn error path", () => {
     // here (no killGroup) would hang for the full 30s sleep.
     expect(elapsed).toBeLessThan(10_000);
   }, 20_000);
+
+  it('retain:"tail" caps stderr at maxRetainedBytes and prepends a truncation sentinel', async () => {
+    // regression for issue #680: unbounded `stderrBuffer += chunk` previously
+    // crashed the wrapper with `RangeError: Invalid string length` once V8's
+    // ~1 GiB kMaxLength was breached on long-lived agent runs. the fix caps
+    // retention with a TailBuffer; this test exercises the cap end-to-end by
+    // emitting ~2 MiB of stderr against a 256 KiB ceiling and asserts the
+    // wrapper does not crash, the result is bounded, and the sentinel is
+    // present so downstream consumers can detect the truncation.
+    const result = await spawn({
+      cmd: "bash",
+      // print ~2 MiB to stderr in 64 KiB chunks. `yes` + head gives us a
+      // reliable byte budget that's well above the 256 KiB cap below.
+      args: ["-c", "yes ABCDEFGH | head -c 2097152 1>&2"],
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+      activityTimeout: 0,
+      maxRetainedBytes: 256 * 1024,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toMatch(/truncated by retain:tail cap/);
+    expect(result.stderr.length).toBeLessThan(256 * 1024 + 200);
+  }, 15_000);
+
+  it('retain:"none" returns empty stdout/stderr regardless of child output', async () => {
+    // long-lived agent callers (opencode, claude) drain via onStdout/onStderr
+    // and never read result.stdout/result.stderr — they pass retain:"none"
+    // to skip the per-chunk concatenation entirely. assert that contract:
+    // empty strings out, but onStdout still fires.
+    const chunks: string[] = [];
+    const result = await spawn({
+      cmd: "bash",
+      args: ["-c", "echo hello; echo world 1>&2"],
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+      activityTimeout: 0,
+      retain: "none",
+      onStdout: (chunk) => chunks.push(chunk),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(chunks.join("")).toContain("hello");
+  });
+
+  it('retain defaults to "tail" so short-lived callers keep failure-surfacing snapshots', async () => {
+    // lock the default explicitly. gitAuth, package installs, and lifecycle
+    // hooks all rely on `result.stderr` being non-empty on failure — flipping
+    // the default to "none" would silently break their error messages while
+    // all other tests in this file kept passing.
+    const result = await spawn({
+      cmd: "bash",
+      args: ["-c", "echo -n diagnostic-output 1>&2; exit 7"],
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" },
+      activityTimeout: 0,
+    });
+
+    expect(result.exitCode).toBe(7);
+    expect(result.stderr).toBe("diagnostic-output");
+  });
+
+  it("TailBuffer drops oldest bytes once the cap is exceeded", () => {
+    const buf = new TailBuffer(10);
+    buf.append("0123456789");
+    expect(buf.toString()).toBe("0123456789");
+    buf.append("abcde");
+    // 0-9 plus abcde = 15 chars; cap is 10, so we keep the last 10 = "56789abcde"
+    expect(buf.toString()).toMatch(/truncated by retain:tail cap/);
+    expect(buf.toString()).toContain("56789abcde");
+  });
 
   it("reports signal-killed subprocesses as failures, not success", async () => {
     // regression: before the fix, `child.on("close", (exitCode) => ...)`

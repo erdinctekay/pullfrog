@@ -88,6 +88,29 @@ function installSignalHandler(): void {
   });
 }
 
+/**
+ * Controls what the wrapper retains in memory across the child's lifetime
+ * for the post-hoc `SpawnResult.stdout` / `SpawnResult.stderr` snapshots.
+ *
+ * Streaming callbacks (`onStdout` / `onStderr`) fire regardless — `retain`
+ * only governs the buffered snapshot returned in `SpawnResult`.
+ *
+ * - `"tail"` (default): keep the last `maxRetainedBytes` UTF-16 code units
+ *   of each stream. Once the cap is exceeded, oldest bytes are sliced off
+ *   and the result is prefixed with a `... [N MiB truncated] ...` sentinel.
+ *   Right default for short-lived commands whose failure mode is in their
+ *   final output (git errors, install failures, hook scripts).
+ * - `"none"`: skip the buffer entirely. `SpawnResult.stdout` / `.stderr`
+ *   are empty strings. Use this for long-lived streaming agents that already
+ *   drain via `onStdout` / `onStderr` and never read the buffered snapshot.
+ *
+ * Default cap is 8 MiB — well below V8's ~1 GiB `kMaxLength` so `+= chunk`
+ * can never throw `RangeError: Invalid string length`.
+ */
+export type RetainMode = "tail" | "none";
+
+export const DEFAULT_MAX_RETAINED_BYTES = 8 * 1024 * 1024;
+
 export interface SpawnOptions {
   cmd: string;
   args: string[];
@@ -115,6 +138,46 @@ export interface SpawnOptions {
   // open, keeps emitting NDJSON, and `child.on("close")` never fires —
   // producing zombie runs that hang until the GitHub Actions job timeout).
   killGroup?: boolean;
+  retain?: RetainMode;
+  maxRetainedBytes?: number;
+}
+
+/**
+ * Bounded string accumulator that keeps the tail of appended chunks.
+ * Once the cap is exceeded, oldest bytes are sliced off and `toString()`
+ * prefixes the survivors with a sentinel describing the elided byte count.
+ *
+ * Exported because long-lived agent runtimes (opencode, claude) also
+ * accumulate per-run narration strings independently of the spawn wrapper
+ * and need the same protection against V8's `kMaxLength`.
+ */
+export class TailBuffer {
+  // explicit field declarations rather than constructor parameter properties:
+  // node's strip-only TS loader (used by action/test/run.ts in CI) rejects
+  // `constructor(private readonly cap: number)` with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+  private readonly cap: number;
+  private buffer = "";
+  private truncatedBytes = 0;
+
+  constructor(cap: number) {
+    this.cap = cap;
+  }
+
+  append(chunk: string): void {
+    if (this.cap <= 0) return;
+    this.buffer += chunk;
+    if (this.buffer.length > this.cap) {
+      const drop = this.buffer.length - this.cap;
+      this.truncatedBytes += drop;
+      this.buffer = this.buffer.slice(drop);
+    }
+  }
+
+  toString(): string {
+    if (this.truncatedBytes === 0) return this.buffer;
+    const mib = (this.truncatedBytes / 1024 / 1024).toFixed(1);
+    return `... [${mib} MiB truncated by retain:tail cap] ...\n${this.buffer}`;
+  }
 }
 
 export interface SpawnResult {
@@ -133,8 +196,15 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
   installSignalHandler();
 
   const startTime = performance.now();
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
+  // capped accumulators — unbounded `+= chunk` previously crashed the wrapper
+  // with `RangeError: Invalid string length` once V8's ~1 GiB kMaxLength was
+  // breached on long-lived agent subprocesses (e.g. multi-lens opencode
+  // Reviews on large monorepos). retain:"none" skips the buffer entirely
+  // for callers that already drain via onStdout/onStderr.
+  const retain: RetainMode = options.retain ?? "tail";
+  const cap = options.maxRetainedBytes ?? DEFAULT_MAX_RETAINED_BYTES;
+  const stdoutBuffer = retain === "none" ? null : new TailBuffer(cap);
+  const stderrBuffer = retain === "none" ? null : new TailBuffer(cap);
 
   const killGroup = options.killGroup ?? false;
 
@@ -234,20 +304,46 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       lastActivityTime = performance.now();
     }
 
+    // wrap handlers in try/catch as defense in depth for synchronous throws
+    // inside the listener body. the historical `+= chunk` RangeError was such
+    // a throw — synchronous and fatal under node's default uncaught-exception
+    // policy. with the TailBuffer cap in place the wrapper-side `append` can
+    // no longer throw, but the catch keeps protecting against any future
+    // synchronous regression in this path.
+    //
+    // note: this does NOT catch rejections from async user callbacks —
+    // `options.onStdout?.(chunk)` returns a Promise in the agent callers
+    // (claude.ts, opencode.ts) and a throw inside an async callback surfaces
+    // as an unhandled Promise rejection, not a synchronous exception. agent
+    // callers handle their own NDJSON-parse failures internally; the
+    // synchronous protection here is what matters for the RangeError class
+    // of bugs (issue #680).
     if (child.stdout) {
       child.stdout.on("data", (data: Buffer) => {
-        updateActivity();
-        const chunk = data.toString();
-        stdoutBuffer += chunk;
-        options.onStdout?.(chunk);
+        try {
+          updateActivity();
+          const chunk = data.toString();
+          stdoutBuffer?.append(chunk);
+          options.onStdout?.(chunk);
+        } catch (err) {
+          log.debug(
+            `spawn stdout handler threw: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       });
     }
 
     if (child.stderr) {
       child.stderr.on("data", (data: Buffer) => {
-        const chunk = data.toString();
-        stderrBuffer += chunk;
-        options.onStderr?.(chunk);
+        try {
+          const chunk = data.toString();
+          stderrBuffer?.append(chunk);
+          options.onStderr?.(chunk);
+        } catch (err) {
+          log.debug(
+            `spawn stderr handler threw: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       });
     }
 
@@ -289,7 +385,7 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       // appeared to succeed when they'd actually been killed — caller
       // checked `result.exitCode !== 0` and moved on.
       let resolvedExitCode = exitCode ?? 0;
-      let resolvedStderr = stderrBuffer;
+      let resolvedStderr = stderrBuffer?.toString() ?? "";
       if (exitCode === null && signal) {
         const killMsg = `[spawn] ${options.cmd}: killed by signal ${signal}`;
         resolvedStderr = resolvedStderr ? `${resolvedStderr}\n${killMsg}` : killMsg;
@@ -297,7 +393,7 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       }
 
       resolve({
-        stdout: stdoutBuffer,
+        stdout: stdoutBuffer?.toString() ?? "",
         stderr: resolvedStderr,
         exitCode: resolvedExitCode,
         durationMs,
@@ -319,11 +415,12 @@ export async function spawn(options: SpawnOptions): Promise<SpawnResult> {
       // per the guidance, and hit the same wall every run.
       const errMsg = `[spawn] ${options.cmd}: ${error.message}`;
       console.error(errMsg);
-      stderrBuffer = stderrBuffer ? `${stderrBuffer}\n${errMsg}` : errMsg;
+      const existingStderr = stderrBuffer?.toString() ?? "";
+      const finalStderr = existingStderr ? `${existingStderr}\n${errMsg}` : errMsg;
 
       resolve({
-        stdout: stdoutBuffer,
-        stderr: stderrBuffer,
+        stdout: stdoutBuffer?.toString() ?? "",
+        stderr: finalStderr,
         exitCode: 1,
         durationMs,
       });

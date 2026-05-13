@@ -22,7 +22,13 @@ import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { detectProviderError } from "../utils/providerErrors.ts";
 import { addSkill, installBundledSkills } from "../utils/skills.ts";
-import { SPAWN_ACTIVITY_TIMEOUT_CODE, SpawnTimeoutError, spawn } from "../utils/subprocess.ts";
+import {
+  DEFAULT_MAX_RETAINED_BYTES,
+  SPAWN_ACTIVITY_TIMEOUT_CODE,
+  SpawnTimeoutError,
+  spawn,
+  TailBuffer,
+} from "../utils/subprocess.ts";
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
@@ -888,7 +894,12 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   let lastProviderError: string | null = null;
   let agentErrorEvent: OpenCodeErrorEvent | null = null;
 
-  let output = "";
+  // capped accumulator for the agent's narration. used as a post-run fallback
+  // when `finalOutput` (the orchestrator's final assistant message) is empty.
+  // unbounded `output += text` previously grew to ~1 GiB on multi-lens Reviews
+  // and contributed to the wrapper-level RangeError. retain:"none" on spawn
+  // skips the duplicate buffer there; this TailBuffer caps the agent layer.
+  const output = new TailBuffer(DEFAULT_MAX_RETAINED_BYTES);
   let stdoutBuffer = "";
 
   try {
@@ -907,6 +918,11 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // never fires — producing zombie runs. detached + killGroup nukes the
       // whole tree.
       killGroup: true,
+      // we already drain every chunk via onStdout/onStderr (NDJSON parsing
+      // + recentStderr ring buffer). retaining a second copy in the spawn
+      // wrapper would grow unbounded for multi-lens Reviews and previously
+      // crashed the wrapper with RangeError at ~1 GiB. see issue #680.
+      retain: "none",
       // NB: we used to pass `isPausedExternally: isSubagentInFlight` to suspend
       // the activity timer during subagent dispatches. unnecessary now that
       // our injected plugin (action/agents/opencodePlugin.ts) re-emits
@@ -916,7 +932,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // (~3.3 plugin events/sec during a typical subagent run).
       onStdout: async (chunk) => {
         const text = chunk.toString();
-        output += text;
+        output.append(text);
         markActivity();
 
         stdoutBuffer += text;
@@ -1041,22 +1057,31 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
 
     if (result.exitCode !== 0) {
       const errorContext = lastProviderError ? ` (${lastProviderError})` : "";
+      // result.stdout / result.stderr are empty because we pass retain:"none"
+      // to spawn (see issue #680); use the agent's bounded mirrors instead.
+      const stdoutSnapshot = output.toString();
+      const stderrSnapshot = recentStderr.join("\n");
       const errorMessage =
-        result.stderr ||
-        result.stdout ||
+        stderrSnapshot ||
+        stdoutSnapshot ||
         `unknown error - no output from OpenCode CLI${errorContext}`;
       log.error(
         `${params.label} exited with code ${result.exitCode}${errorContext}: ${errorMessage}`
       );
-      log.debug(`stdout: ${result.stdout?.substring(0, 500)}`);
-      log.debug(`stderr: ${result.stderr?.substring(0, 500)}`);
-      return { success: false, output: finalOutput || output, error: errorMessage, usage };
+      log.debug(`stdout: ${stdoutSnapshot.substring(0, 500)}`);
+      log.debug(`stderr: ${stderrSnapshot.substring(0, 500)}`);
+      return {
+        success: false,
+        output: finalOutput || stdoutSnapshot,
+        error: errorMessage,
+        usage,
+      };
     }
 
     if (eventCount === 0 && lastProviderError) {
       return {
         success: false,
-        output: finalOutput || output,
+        output: finalOutput || output.toString(),
         error: `provider error: ${lastProviderError}`,
         usage,
       };
@@ -1069,13 +1094,13 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         errorEvent.error?.data?.message || errorEvent.error?.name || JSON.stringify(errorEvent);
       return {
         success: false,
-        output: finalOutput || output,
+        output: finalOutput || output.toString(),
         error: `${errorName}: ${errorMessage}`,
         usage,
       };
     }
 
-    return { success: true, output: finalOutput || output, usage };
+    return { success: true, output: finalOutput || output.toString(), usage };
   } catch (error) {
     params.todoTracker?.cancel();
     const duration = performance.now() - startTime;
@@ -1101,7 +1126,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
 
     return {
       success: false,
-      output: finalOutput || output,
+      output: finalOutput || output.toString(),
       error: `${errorMessage} [${diagnosis}]`,
       usage: buildUsage(),
     };
