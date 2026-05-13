@@ -176,13 +176,32 @@ export function sanitizeToolForGemini<T extends Tool<any, any>>(tool: T): T {
 }
 
 /**
- * true when the effective upstream model is served by google's generative
- * language API — directly (`google/*`), via opencode (`opencode/gemini-*`),
- * or via openrouter (`openrouter/google/gemini-*`). slug-substring match
- * works because every gemini route's model id contains "gemini".
+ * true when the effective upstream model is — or might become — google
+ * generative language API traffic. matches:
+ *   - direct `google/*`, opencode `opencode/gemini-*`, openrouter
+ *     `openrouter/google/gemini-*` (slug substring "gemini" wins).
+ *   - any unresolved specifier: `undefined`, `"auto"`, or a slug that
+ *     didn't map through the alias registry (no `provider/` prefix).
+ *     these flow through the agent's own auto-select, which may land
+ *     on gemini *after* the MCP server has already registered tools —
+ *     at which point sanitization is too late to apply. erring on the
+ *     side of sanitizing is safe: cases 1 + 2 are universally
+ *     compatible JSON-Schema normalizations (enum-only → typed string,
+ *     collapsible const-unions → string enum); case 3 is gemini-
+ *     specific but only fires on non-collapsible unions, which arktype
+ *     does not emit for our current tool schemas. see issue #676 for
+ *     the prod failure that motivated this widening.
  */
 export function isGeminiRouted(ctx: ToolContext): boolean {
   const effective = ctx.payload.proxyModel ?? ctx.resolvedModel ?? ctx.payload.model;
-  if (!effective) return false;
-  return effective.toLowerCase().includes("gemini");
+  if (!effective) return true;
+  const normalized = effective.toLowerCase();
+  if (normalized.includes("gemini")) return true;
+  // every concrete model resolved through the registry carries a
+  // `provider/` prefix (e.g. "anthropic/claude-opus-4-7"). anything
+  // without a slash is either the literal `"auto"` alias or an
+  // unrecognized slug that resolveModel logged a warning for — both
+  // route through the agent's late auto-select, which may pick gemini.
+  if (!normalized.includes("/")) return true;
+  return false;
 }
