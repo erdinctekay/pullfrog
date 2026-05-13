@@ -88,7 +88,6 @@ export async function fetchRunContext(params: {
   try {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${params.token}`,
-      "Content-Type": "application/json",
     };
     if (params.oidcToken) {
       headers["X-GitHub-OIDC-Token"] = params.oidcToken;

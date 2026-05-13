@@ -37,6 +37,18 @@ export async function apiFetch(options: ApiFetchOptions): Promise<Response> {
     headers["x-vercel-protection-bypass"] = bypassSecret;
   }
 
+  // never send Content-Type on body-less requests. empirically, Vercel's
+  // Next.js lambda adapter (Next 16.1.x) throws `SyntaxError: Unexpected
+  // end of data` before delegating to the route handler — returning a 500 —
+  // when Content-Type is set but no body is present. exact mechanism is
+  // unverified (minified runtime frame), but Content-Type on a body-less
+  // request has no defined semantics per RFC 9110 §8.3 anyway. see #692.
+  if (!options.body) {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === "content-type") delete headers[key];
+    }
+  }
+
   log.debug(`api fetch: ${options.method ?? "GET"} ${url.pathname}`);
 
   const init: RequestInit = {
