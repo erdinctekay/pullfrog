@@ -307,6 +307,17 @@ interface OpenCodeStepFinishEvent {
   [key: string]: unknown;
 }
 
+/**
+ * tool-part state, mirroring opencode's `ToolState` (anomalyco/opencode
+ * `session/message-v2.ts`). error parts carry the reason on `error`,
+ * completed parts on `output` — reading the wrong field is what caused
+ * the silent `(no error message)` log in #662.
+ */
+type ToolState =
+  | { status: "pending" | "running"; input?: unknown }
+  | { status: "completed"; input?: unknown; output: string }
+  | { status: "error"; input?: unknown; error: string };
+
 interface OpenCodeToolUseEvent {
   type: "tool_use";
   timestamp?: number;
@@ -315,7 +326,7 @@ interface OpenCodeToolUseEvent {
     id?: string;
     callID?: string;
     tool?: string;
-    state?: { status?: string; input?: unknown; output?: string };
+    state?: ToolState;
   };
   [key: string]: unknown;
 }
@@ -324,7 +335,7 @@ interface OpenCodeToolResultEvent {
   type: "tool_result";
   timestamp?: number;
   sessionID?: string;
-  part?: { callID?: string; state?: { status?: string; output?: string } };
+  part?: { callID?: string; state?: ToolState };
   tool_id?: string;
   status?: "success" | "error";
   output?: string;
@@ -703,11 +714,9 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // status="error" through the same `tool_use` event the CLI's run-loop
       // (and our injected plugin for subagent parts) emits — without this
       // branch the only signal in the user's logs is `» <tool>(...)` with
-      // no indication the call failed. error info lives in `state.output`
-      // (an error string set by the tool layer).
+      // no indication the call failed.
       if (event.part?.state?.status === "error") {
-        const errorMsg = event.part.state.output ?? "(no error message)";
-        log.info(withLabel(label, `» tool call failed: ${errorMsg}`));
+        log.info(withLabel(label, `» tool call failed: ${event.part.state.error}`));
       }
 
       // agent's explicit MCP report_progress takes priority over todo tracking
@@ -723,8 +732,14 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
     },
     tool_result: (event: OpenCodeToolResultEvent) => {
       const toolId = event.part?.callID || event.tool_id;
-      const status = event.part?.state?.status || event.status || "unknown";
-      const output = event.part?.state?.output || event.output;
+      const state = event.part?.state;
+      const status = state?.status ?? event.status ?? "unknown";
+      const payload =
+        state?.status === "completed"
+          ? state.output
+          : state?.status === "error"
+            ? state.error
+            : event.output;
       const label = eventLabel(event);
 
       timerFor(label).markToolResult();
@@ -743,12 +758,12 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       if (taskDispatchByCallID.size > 0 || pendingTaskDispatches.length > 0) {
         if (toolId && taskDispatchByCallID.has(toolId)) {
           const dispatch = taskDispatchByCallID.get(toolId);
-          if (dispatch) emitSubagentFinished(dispatch, status, output, "exact");
+          if (dispatch) emitSubagentFinished(dispatch, status, payload, "exact");
         } else {
           const callIDIsKnownNonTask = toolId ? knownNonTaskCallIDs.has(toolId) : false;
           if (!callIDIsKnownNonTask && pendingTaskDispatches.length > 0) {
             const dispatch = pendingTaskDispatches[0]!;
-            emitSubagentFinished(dispatch, status, output, "fifo");
+            emitSubagentFinished(dispatch, status, payload, "fifo");
           }
         }
       }
@@ -765,13 +780,8 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
               `» ${params.label} tool_result${stepContext}: id=${toolId}, status=${status}, duration=${Math.round(toolDuration)}ms`
             )
           );
-          if (output) {
-            log.debug(
-              withLabel(
-                label,
-                `  output: ${typeof output === "string" ? output : JSON.stringify(output)}`
-              )
-            );
+          if (payload) {
+            log.debug(withLabel(label, `  output: ${payload}`));
           }
           if (toolDuration > 5000) {
             log.info(
@@ -784,11 +794,9 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         }
       }
       if (status === "error") {
-        const errorMsg = typeof output === "string" ? output : JSON.stringify(output);
-        log.info(withLabel(label, `» tool call failed: ${errorMsg}`));
-      } else if (output) {
-        const outputStr = typeof output === "string" ? output : JSON.stringify(output);
-        log.debug(withLabel(label, `tool output: ${outputStr}`));
+        log.info(withLabel(label, `» tool call failed: ${payload ?? "(no error message)"}`));
+      } else if (payload) {
+        log.debug(withLabel(label, `tool output: ${payload}`));
       }
     },
     error: (event: OpenCodeErrorEvent) => {
