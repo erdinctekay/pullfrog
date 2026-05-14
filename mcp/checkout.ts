@@ -603,7 +603,192 @@ export async function checkoutPrBranch(
   return { hookWarning: postCheckoutHook.warning };
 }
 
+/**
+ * dedupes concurrent `checkout_pr` calls for the same PR. agents (notably
+ * Sonnet/Claude) occasionally emit duplicate parallel tool_use blocks for the
+ * same args in one turn; without this, both invocations race
+ * `checkoutPrBranch` against the same `.git/shallow.lock` and one fails with
+ * `File exists` (issue #642). cleared in `finally` so subsequent same-PR
+ * calls re-do the work normally.
+ */
+const inFlightCheckouts = new Map<number, Promise<CheckoutPrResult>>();
+
 export function CheckoutPrTool(ctx: ToolContext) {
+  const runCheckout = async (pull_number: number): Promise<CheckoutPrResult> => {
+    const prResponse = await ctx.octokit.rest.pulls.get({
+      owner: ctx.repo.owner,
+      repo: ctx.repo.name,
+      pull_number,
+    });
+
+    const headRepo = prResponse.data.head.repo;
+    if (!headRepo) {
+      throw new Error(`PR #${pull_number} source repository was deleted`);
+    }
+
+    const pr: PrData = {
+      number: pull_number,
+      headSha: prResponse.data.head.sha,
+      headRef: prResponse.data.head.ref,
+      headRepoFullName: headRepo.full_name,
+      baseRef: prResponse.data.base.ref,
+      baseRepoFullName: prResponse.data.base.repo.full_name,
+      maintainerCanModify: prResponse.data.maintainer_can_modify,
+    };
+
+    const checkoutResult = await checkoutPrBranch(pr, {
+      octokit: ctx.octokit,
+      owner: ctx.repo.owner,
+      name: ctx.repo.name,
+      gitToken: ctx.gitToken,
+      toolState: ctx.toolState,
+      shell: ctx.payload.shell,
+      postCheckoutScript: ctx.postCheckoutScript,
+      beforeSha: ctx.toolState.beforeSha,
+    });
+
+    const tempDir = process.env.PULLFROG_TEMP_DIR;
+    if (!tempDir) {
+      throw new Error(
+        "PULLFROG_TEMP_DIR not set - checkout_pr must run in pullfrog action context"
+      );
+    }
+
+    const headShort = ctx.toolState.checkoutSha!.slice(0, 7);
+
+    // compute incremental diff if we have a beforeSha to compare against
+    let incrementalDiffPath: string | undefined;
+    if (ctx.toolState.beforeSha && ctx.toolState.checkoutSha) {
+      const beforeShort = ctx.toolState.beforeSha.slice(0, 7);
+      const incremental = computeIncrementalDiff({
+        baseBranch: pr.baseRef,
+        beforeSha: ctx.toolState.beforeSha,
+        headSha: ctx.toolState.checkoutSha,
+      });
+      if (incremental) {
+        incrementalDiffPath = join(
+          tempDir,
+          `pr-${pull_number}-${beforeShort}-${headShort}-incremental.diff`
+        );
+        writeFileSync(incrementalDiffPath, incremental);
+        log.info(
+          `» incremental diff computed (${incremental.length} bytes) → ${incrementalDiffPath}`
+        );
+      }
+    }
+
+    // fetch PR files and format with line numbers
+    const formatResult = await fetchAndFormatPrDiff(ctx, pull_number);
+    const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
+    log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
+    const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
+    writeFileSync(diffPath, formatResult.content);
+    log.debug(`wrote diff to ${diffPath} (${formatResult.content.length} bytes)`);
+    ctx.toolState.diffCoverage = createDiffCoverageState({
+      diffPath,
+      totalLines: countLines({ content: formatResult.content }),
+      toc: formatResult.toc,
+      previous: ctx.toolState.diffCoverage,
+    });
+    log.debug(
+      `» diff coverage initialized: diffPath=${diffPath}, totalLines=${ctx.toolState.diffCoverage.totalLines}, tocEntries=${ctx.toolState.diffCoverage.tocEntries.length}`
+    );
+
+    // cache commentable-lines snapshot so review-time validation matches what
+    // GitHub will anchor to (commit_id=checkoutSha), even if the PR is updated
+    // between checkout and review.
+    const cached = new Map<string, ReturnType<typeof commentableLinesForFile>>();
+    for (const file of formatResult.files) {
+      cached.set(file.filename, commentableLinesForFile(file.patch));
+    }
+    ctx.toolState.commentableLinesByFile = cached;
+    ctx.toolState.commentableLinesPullNumber = pull_number;
+    ctx.toolState.commentableLinesCheckoutSha = ctx.toolState.checkoutSha;
+
+    const incrementalInstructions = incrementalDiffPath
+      ? ` IMPORTANT: incrementalDiffPath contains ONLY the changes since the last reviewed version ` +
+        `(computed via range-diff). you MUST read incrementalDiffPath FIRST to understand what changed, ` +
+        `then use diffPath for full PR context. do NOT skip the incremental diff.`
+      : "";
+
+    // commit metadata relative to the PR base (e.g. main). use origin/<base>
+    // because the local base ref may not exist after a shallow fetch. cap
+    // the log so a PR with thousands of commits doesn't blow up the tool
+    // response. if the base ref can't be resolved (e.g. shallow fetch that
+    // didn't pull down origin/<base>), degrade gracefully rather than
+    // failing the whole checkout_pr call over metadata.
+    const COMMIT_LOG_MAX = 200;
+    const baseRange = `origin/${pr.baseRef}..HEAD`;
+    let commitCount = 0;
+    let commitLog = "";
+    let commitLogUnavailable = false;
+    try {
+      commitCount = parseInt(
+        $("git", ["rev-list", "--count", baseRange], { log: false }).trim() || "0",
+        10
+      );
+      commitLog = $("git", ["log", "--oneline", `--max-count=${COMMIT_LOG_MAX}`, baseRange], {
+        log: false,
+      });
+    } catch (err) {
+      commitLogUnavailable = true;
+      log.debug(
+        `» unable to compute commit metadata for ${baseRange}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    const commitLogTruncated = commitCount > COMMIT_LOG_MAX;
+
+    const hookWarningInstructions = checkoutResult.hookWarning
+      ? ` HOOK WARNING: the post-checkout lifecycle hook reported a non-fatal failure (see hookWarning). ` +
+        `decide whether to retry based on the guidance in that field before proceeding.`
+      : "";
+
+    const commitLogInstructions = commitLogUnavailable
+      ? ` NOTE: commit metadata is partial (base ref unreachable, likely a shallow fetch). ` +
+        `commitCount/commitLog may be 0/empty or incomplete; treat them as "unknown" rather than "no commits", ` +
+        `and use \`git log\` directly if you need the full history.`
+      : commitLogTruncated
+        ? ` NOTE: commitLog was capped at ${COMMIT_LOG_MAX} entries out of ${commitCount} commits; ` +
+          `use \`git log\` directly if you need the full history.`
+        : "";
+
+    return {
+      success: true,
+      number: prResponse.data.number,
+      title: prResponse.data.title,
+      body: prResponse.data.body,
+      base: pr.baseRef,
+      localBranch: `pr-${pull_number}`,
+      remoteBranch: `refs/heads/${pr.headRef}`,
+      isFork: pr.headRepoFullName !== pr.baseRepoFullName,
+      maintainerCanModify: pr.maintainerCanModify,
+      url: prResponse.data.html_url,
+      headRepo: pr.headRepoFullName,
+      diffPath,
+      incrementalDiffPath,
+      toc: formatResult.toc,
+      commitCount,
+      commitLog,
+      commitLogTruncated,
+      commitLogUnavailable,
+      hookWarning: checkoutResult.hookWarning,
+      instructions:
+        `the diff file at diffPath contains a table of contents (TOC) at the top listing every changed file with its line range. ` +
+        `use the TOC line ranges as your checklist and read specific files from the diff instead of reading the entire file. ` +
+        `for example, if the TOC says "src/foo.ts → lines 5-42", read lines 5-42 from diffPath to see that file's changes. ` +
+        `review files selectively based on relevance rather than reading everything sequentially. ` +
+        `to inspect the PR's changed files, use diffPath — do NOT run \`git diff <base>..<head>\` to re-derive what's already in diffPath. the formatted diff with line numbers is authoritative. ` +
+        `\`git log\` and \`git diff --stat\` are fine for commit-range overview, and \`git diff\` / \`git diff --cached\` are fine for inspecting *your own* uncommitted changes — but PR review content MUST come from diffPath. ` +
+        `before your review is submitted, a one-time coverage pre-flight may error listing unread TOC regions. ` +
+        `retry the same create_pull_request_review call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session. ` +
+        `the local branch is 'localBranch' (pr-{number}), not the remote branch name. ` +
+        `when pushing, omit branchName to use the current branch. do not use remoteBranch as a local branch name.` +
+        incrementalInstructions +
+        hookWarningInstructions +
+        commitLogInstructions,
+    } satisfies CheckoutPrResult;
+  };
+
   return tool({
     name: "checkout_pr",
     description:
@@ -614,178 +799,38 @@ export function CheckoutPrTool(ctx: ToolContext) {
       "If the error mentions `.git/shallow.lock: File exists` or `.git/index.lock: File exists`, that's a stale lock from a prior timed-out fetch — remove it via the shell tool (`rm -f .git/shallow.lock .git/index.lock`) and retry.",
     parameters: CheckoutPr,
     execute: execute(async ({ pull_number }) => {
-      const prResponse = await ctx.octokit.rest.pulls.get({
-        owner: ctx.repo.owner,
-        repo: ctx.repo.name,
-        pull_number,
-      });
-
-      const headRepo = prResponse.data.head.repo;
-      if (!headRepo) {
-        throw new Error(`PR #${pull_number} source repository was deleted`);
+      const inFlight = inFlightCheckouts.get(pull_number);
+      if (inFlight) {
+        log.info(`» checkout_pr({pull_number:${pull_number}}) already in flight — sharing result`);
+        return inFlight;
       }
 
-      const pr: PrData = {
-        number: pull_number,
-        headSha: prResponse.data.head.sha,
-        headRef: prResponse.data.head.ref,
-        headRepoFullName: headRepo.full_name,
-        baseRef: prResponse.data.base.ref,
-        baseRepoFullName: prResponse.data.base.repo.full_name,
-        maintainerCanModify: prResponse.data.maintainer_can_modify,
-      };
-
-      const checkoutResult = await checkoutPrBranch(pr, {
-        octokit: ctx.octokit,
-        owner: ctx.repo.owner,
-        name: ctx.repo.name,
-        gitToken: ctx.gitToken,
-        toolState: ctx.toolState,
-        shell: ctx.payload.shell,
-        postCheckoutScript: ctx.postCheckoutScript,
-        beforeSha: ctx.toolState.beforeSha,
-      });
-
-      const tempDir = process.env.PULLFROG_TEMP_DIR;
-      if (!tempDir) {
-        throw new Error(
-          "PULLFROG_TEMP_DIR not set - checkout_pr must run in pullfrog action context"
-        );
-      }
-
-      const headShort = ctx.toolState.checkoutSha!.slice(0, 7);
-
-      // compute incremental diff if we have a beforeSha to compare against
-      let incrementalDiffPath: string | undefined;
-      if (ctx.toolState.beforeSha && ctx.toolState.checkoutSha) {
-        const beforeShort = ctx.toolState.beforeSha.slice(0, 7);
-        const incremental = computeIncrementalDiff({
-          baseBranch: pr.baseRef,
-          beforeSha: ctx.toolState.beforeSha,
-          headSha: ctx.toolState.checkoutSha,
-        });
-        if (incremental) {
-          incrementalDiffPath = join(
-            tempDir,
-            `pr-${pull_number}-${beforeShort}-${headShort}-incremental.diff`
-          );
-          writeFileSync(incrementalDiffPath, incremental);
-          log.info(
-            `» incremental diff computed (${incremental.length} bytes) → ${incrementalDiffPath}`
+      // refuse to clobber an active checkout if the working tree is dirty —
+      // forces the agent to commit/push or discard before switching contexts
+      // instead of silently overwriting uncommitted work. `issueNumber`
+      // tracks any issue/PR the agent has touched (issues and PRs share
+      // GitHub's number space); the guard fires only when the agent is
+      // switching to a *different* number with a dirty tree, which captures
+      // the legitimate "stop, you have unsaved work" case regardless of
+      // whether the prior number was an issue or a PR.
+      const current = ctx.toolState.issueNumber;
+      if (current !== undefined && current !== pull_number) {
+        const dirty = $("git", ["status", "--porcelain"], { log: false }).trim();
+        if (dirty) {
+          throw new Error(
+            `cannot checkout PR #${pull_number} while the working tree has uncommitted changes. ` +
+              `commit, push, or discard them before switching. dirty paths:\n${dirty}`
           );
         }
       }
 
-      // fetch PR files and format with line numbers
-      const formatResult = await fetchAndFormatPrDiff(ctx, pull_number);
-      const diffPreview = formatResult.content.split("\n").slice(0, 100).join("\n");
-      log.debug(`formatted diff preview (first 100 lines):\n${diffPreview}`);
-      const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
-      writeFileSync(diffPath, formatResult.content);
-      log.debug(`wrote diff to ${diffPath} (${formatResult.content.length} bytes)`);
-      ctx.toolState.diffCoverage = createDiffCoverageState({
-        diffPath,
-        totalLines: countLines({ content: formatResult.content }),
-        toc: formatResult.toc,
-        previous: ctx.toolState.diffCoverage,
-      });
-      log.debug(
-        `» diff coverage initialized: diffPath=${diffPath}, totalLines=${ctx.toolState.diffCoverage.totalLines}, tocEntries=${ctx.toolState.diffCoverage.tocEntries.length}`
-      );
-
-      // cache commentable-lines snapshot so review-time validation matches what
-      // GitHub will anchor to (commit_id=checkoutSha), even if the PR is updated
-      // between checkout and review.
-      const cached = new Map<string, ReturnType<typeof commentableLinesForFile>>();
-      for (const file of formatResult.files) {
-        cached.set(file.filename, commentableLinesForFile(file.patch));
-      }
-      ctx.toolState.commentableLinesByFile = cached;
-      ctx.toolState.commentableLinesPullNumber = pull_number;
-      ctx.toolState.commentableLinesCheckoutSha = ctx.toolState.checkoutSha;
-
-      const incrementalInstructions = incrementalDiffPath
-        ? ` IMPORTANT: incrementalDiffPath contains ONLY the changes since the last reviewed version ` +
-          `(computed via range-diff). you MUST read incrementalDiffPath FIRST to understand what changed, ` +
-          `then use diffPath for full PR context. do NOT skip the incremental diff.`
-        : "";
-
-      // commit metadata relative to the PR base (e.g. main). use origin/<base>
-      // because the local base ref may not exist after a shallow fetch. cap
-      // the log so a PR with thousands of commits doesn't blow up the tool
-      // response. if the base ref can't be resolved (e.g. shallow fetch that
-      // didn't pull down origin/<base>), degrade gracefully rather than
-      // failing the whole checkout_pr call over metadata.
-      const COMMIT_LOG_MAX = 200;
-      const baseRange = `origin/${pr.baseRef}..HEAD`;
-      let commitCount = 0;
-      let commitLog = "";
-      let commitLogUnavailable = false;
+      const promise = runCheckout(pull_number);
+      inFlightCheckouts.set(pull_number, promise);
       try {
-        commitCount = parseInt(
-          $("git", ["rev-list", "--count", baseRange], { log: false }).trim() || "0",
-          10
-        );
-        commitLog = $("git", ["log", "--oneline", `--max-count=${COMMIT_LOG_MAX}`, baseRange], {
-          log: false,
-        });
-      } catch (err) {
-        commitLogUnavailable = true;
-        log.debug(
-          `» unable to compute commit metadata for ${baseRange}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        return await promise;
+      } finally {
+        inFlightCheckouts.delete(pull_number);
       }
-      const commitLogTruncated = commitCount > COMMIT_LOG_MAX;
-
-      const hookWarningInstructions = checkoutResult.hookWarning
-        ? ` HOOK WARNING: the post-checkout lifecycle hook reported a non-fatal failure (see hookWarning). ` +
-          `decide whether to retry based on the guidance in that field before proceeding.`
-        : "";
-
-      const commitLogInstructions = commitLogUnavailable
-        ? ` NOTE: commit metadata is partial (base ref unreachable, likely a shallow fetch). ` +
-          `commitCount/commitLog may be 0/empty or incomplete; treat them as "unknown" rather than "no commits", ` +
-          `and use \`git log\` directly if you need the full history.`
-        : commitLogTruncated
-          ? ` NOTE: commitLog was capped at ${COMMIT_LOG_MAX} entries out of ${commitCount} commits; ` +
-            `use \`git log\` directly if you need the full history.`
-          : "";
-
-      return {
-        success: true,
-        number: prResponse.data.number,
-        title: prResponse.data.title,
-        body: prResponse.data.body,
-        base: pr.baseRef,
-        localBranch: `pr-${pull_number}`,
-        remoteBranch: `refs/heads/${pr.headRef}`,
-        isFork: pr.headRepoFullName !== pr.baseRepoFullName,
-        maintainerCanModify: pr.maintainerCanModify,
-        url: prResponse.data.html_url,
-        headRepo: pr.headRepoFullName,
-        diffPath,
-        incrementalDiffPath,
-        toc: formatResult.toc,
-        commitCount,
-        commitLog,
-        commitLogTruncated,
-        commitLogUnavailable,
-        hookWarning: checkoutResult.hookWarning,
-        instructions:
-          `the diff file at diffPath contains a table of contents (TOC) at the top listing every changed file with its line range. ` +
-          `use the TOC line ranges as your checklist and read specific files from the diff instead of reading the entire file. ` +
-          `for example, if the TOC says "src/foo.ts → lines 5-42", read lines 5-42 from diffPath to see that file's changes. ` +
-          `review files selectively based on relevance rather than reading everything sequentially. ` +
-          `to inspect the PR's changed files, use diffPath — do NOT run \`git diff <base>..<head>\` to re-derive what's already in diffPath. the formatted diff with line numbers is authoritative. ` +
-          `\`git log\` and \`git diff --stat\` are fine for commit-range overview, and \`git diff\` / \`git diff --cached\` are fine for inspecting *your own* uncommitted changes — but PR review content MUST come from diffPath. ` +
-          `before your review is submitted, a one-time coverage pre-flight may error listing unread TOC regions. ` +
-          `retry the same create_pull_request_review call to proceed — optionally after reading the listed ranges. the pre-flight will not block again this session. ` +
-          `the local branch is 'localBranch' (pr-{number}), not the remote branch name. ` +
-          `when pushing, omit branchName to use the current branch. do not use remoteBranch as a local branch name.` +
-          incrementalInstructions +
-          hookWarningInstructions +
-          commitLogInstructions,
-      } satisfies CheckoutPrResult;
     }),
   });
 }
