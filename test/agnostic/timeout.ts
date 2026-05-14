@@ -29,4 +29,11 @@ export const test: TestRunnerOptions = {
   expectFailure: true,
   env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
   tags: ["agnostic"],
+  coverage: [
+    "action/utils/timer.ts",
+    "action/utils/subprocess.ts",
+    "action/utils/exitHandler.ts",
+    "action/utils/activity.ts",
+    "action/mcp/selectMode.ts",
+  ],
 };

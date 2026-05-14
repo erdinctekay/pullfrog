@@ -92,4 +92,5 @@ export const test: TestRunnerOptions = {
   validator,
   env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
   tags: ["agnostic", "security"],
+  coverage: ["action/mcp/dependencies.ts", "action/utils/install.ts"],
 };

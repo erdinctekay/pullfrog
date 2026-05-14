@@ -43,4 +43,5 @@ export const test: TestRunnerOptions = {
   validator,
   agentEnv,
   env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
+  coverage: ["action/mcp/shell.ts", "action/agents/{claude,opencode}.ts"],
 };

@@ -44,4 +44,5 @@ export const test: TestRunnerOptions = {
     PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1",
     PULLFROG_MODEL: "anthropic/claude-sonnet-4-6",
   },
+  coverage: ["action/agents/claude.ts"],
 };

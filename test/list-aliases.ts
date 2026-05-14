@@ -1,7 +1,7 @@
 /**
  * emits a JSON array of { slug, agent, name } entries for one of two CI matrix
  * jobs. `agent` mirrors the harness the runtime would pick in production
- * (anthropic/* → claude-code, everything else → opencode).
+ * (anthropic/* → claude, everything else → opencode).
  *
  * MODE=aliases (default) — every alias minus pruned passthroughs. consumed by
  *   `models-live`, which runs the cheap top-level CLI smoke per alias
@@ -10,7 +10,8 @@
  * MODE=flagships — one standard-tier model per provider. consumed by
  *   `providers-live`, which runs the full harness smoke
  *   (`pnpm runtest smoke <agent>`) to validate provider-class tool-calling
- *   (e.g. Gemini schema sanitizer, OpenAI tool-call format).
+ *   (e.g. Gemini schema sanitizer, OpenAI tool-call format). flagship slugs
+ *   live in `providers.ts` alongside their per-provider coverage globs.
  *
  * passthrough pruning (aliases mode): openrouter/* aliases and keyed opencode/*
  * aliases are routing-layer wrappers around models we already smoke-test
@@ -24,28 +25,14 @@
  *   MODE=flagships node action/test/list-aliases.ts
  *   MATRIX_FILTER=gemini node action/test/list-aliases.ts
  *   INCLUDE_PASSTHROUGHS=1 node action/test/list-aliases.ts
+ *
+ * NOTE: the per-PR-precision matrix lives in `matrix.ts`, which calls into
+ * this file. raw invocation here emits the unfiltered matrix.
  */
 import { modelAliases } from "../models.ts";
+import { providers } from "./providers.ts";
 
 const ROUTING_CANARIES = new Set(["openrouter/claude-sonnet", "opencode/claude-sonnet"]);
-
-// hand-picked "standard good model" per provider — not the pro/opus tier (too
-// expensive for per-push) and not the free/experimental tier (too flaky). these
-// aliases anchor the harness smoke job that catches provider-class regressions
-// like Gemini schema sanitization or OpenAI tool-call format drift. the
-// assertion below catches slug-drift loudly, but adding a NEW provider without
-// an entry here silently omits it from `providers-live` — see
-// wiki/models-catalog.md "To add a provider".
-const FLAGSHIPS = [
-  "anthropic/claude-sonnet",
-  "openai/gpt",
-  "google/gemini-pro",
-  "xai/grok",
-  "deepseek/deepseek-pro",
-  "moonshotai/kimi-k2",
-  "opencode/big-pickle",
-  "openrouter/claude-sonnet",
-];
 
 function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
   if (ROUTING_CANARIES.has(alias.slug)) return false;
@@ -59,7 +46,13 @@ function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
   return alias.provider === "opencode" && !alias.isFree;
 }
 
-function toMatrixEntry(alias: (typeof modelAliases)[number]) {
+export type MatrixEntry = {
+  slug: string;
+  agent: string;
+  name: string;
+};
+
+function toMatrixEntry(alias: (typeof modelAliases)[number]): MatrixEntry {
   return {
     slug: alias.slug,
     agent: alias.slug.startsWith("anthropic/") ? "claude" : "opencode",
@@ -68,25 +61,14 @@ function toMatrixEntry(alias: (typeof modelAliases)[number]) {
   };
 }
 
-const mode = process.env.MODE === "flagships" ? "flagships" : "aliases";
-const filter = process.env.MATRIX_FILTER?.trim().toLowerCase() ?? "";
-const includePassthroughs = process.env.INCLUDE_PASSTHROUGHS === "1";
-
 const aliasBySlug = new Map(modelAliases.map((a) => [a.slug, a]));
-const matrix = (() => {
-  if (mode === "flagships") {
-    return FLAGSHIPS.map((slug) => {
-      const alias = aliasBySlug.get(slug);
-      if (!alias) {
-        throw new Error(
-          `list-aliases: flagship "${slug}" missing from modelAliases — update FLAGSHIPS`
-        );
-      }
-      return alias;
-    })
-      .filter((alias) => !filter || alias.slug.toLowerCase().includes(filter))
-      .map(toMatrixEntry);
-  }
+
+export function buildAliasMatrix(opts: {
+  filter?: string;
+  includePassthroughs?: boolean;
+}): MatrixEntry[] {
+  const filter = opts.filter ?? "";
+  const includePassthroughs = opts.includePassthroughs ?? false;
   return modelAliases
     .filter((alias) => {
       if (filter && !alias.slug.toLowerCase().includes(filter)) return false;
@@ -94,6 +76,31 @@ const matrix = (() => {
       return true;
     })
     .map(toMatrixEntry);
-})();
+}
 
-process.stdout.write(JSON.stringify(matrix));
+export function buildFlagshipMatrix(opts: { filter?: string }): MatrixEntry[] {
+  const filter = opts.filter ?? "";
+  return providers
+    .map((p) => {
+      const alias = aliasBySlug.get(p.flagship);
+      if (!alias) {
+        throw new Error(
+          `list-aliases: flagship "${p.flagship}" missing from modelAliases — update providers.ts`
+        );
+      }
+      return alias;
+    })
+    .filter((alias) => !filter || alias.slug.toLowerCase().includes(filter))
+    .map(toMatrixEntry);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const mode = process.env.MODE === "flagships" ? "flagships" : "aliases";
+  const filter = process.env.MATRIX_FILTER?.trim().toLowerCase() ?? "";
+  const includePassthroughs = process.env.INCLUDE_PASSTHROUGHS === "1";
+  const matrix =
+    mode === "flagships"
+      ? buildFlagshipMatrix({ filter })
+      : buildAliasMatrix({ filter, includePassthroughs });
+  process.stdout.write(JSON.stringify(matrix));
+}

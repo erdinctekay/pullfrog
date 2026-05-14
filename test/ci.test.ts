@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +15,7 @@ type WorkflowJob = {
   "runs-on": string;
   "timeout-minutes"?: number;
   permissions?: WorkflowPermissions;
-  strategy?: { "fail-fast": boolean; matrix: Record<string, string[]> };
+  strategy?: { "fail-fast": boolean; matrix: Record<string, unknown> };
   env?: Record<string, string>;
   steps?: unknown[];
 };
@@ -57,7 +56,6 @@ const expectedAgents = Object.keys(agents).sort();
 const crossagentTests = getTestNamesFromDir("crossagent");
 const agnosticTests = getTestNamesFromDir("agnostic");
 const adhocTests = getTestNamesFromDir("adhoc");
-const dynamicAgentsExpression = "$" + "{{ fromJSON(needs.changes.outputs.agents) }}";
 
 // all provider API key names + GITHUB_TOKEN + model overrides
 const expectedAgentEnvVars = [
@@ -83,53 +81,22 @@ describe("ci workflow consistency", () => {
     const rootJob = rootWorkflow.jobs["action-agents"];
     const actionJob = actionWorkflow.jobs.agents;
 
-    it("root agent matrix uses dynamic output from changes job", () => {
-      expect(rootJob.strategy!.matrix.agent).toBe(dynamicAgentsExpression);
-    });
-
-    it("changed-agents.sh falls back to opencode when shared agent code changed", () => {
-      const input = JSON.stringify(["action/agents/shared.ts"]);
-      const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input,
-        encoding: "utf-8",
-      });
-      expect(JSON.parse(output)).toEqual(["opencode"]);
-    });
-
-    it("changed-agents.sh falls back to opencode for non-agent action changes", () => {
-      const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/mcp/server.ts"]),
-        encoding: "utf-8",
-      });
-      expect(JSON.parse(output)).toEqual(["opencode"]);
-    });
-
-    it("changed-agents.sh includes opencode canary alongside changed agents", () => {
-      const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/agents/opencode.ts", "action/mcp/server.ts"]),
-        encoding: "utf-8",
-      });
-      expect(JSON.parse(output)).toEqual(["opencode"]);
-    });
-
-    it("changed-agents.sh treats legacy agent files as non-agent changes", () => {
-      const output = execFileSync("bash", [join(__dirname, "changed-agents.sh")], {
-        input: JSON.stringify(["action/agents/codex.ts", "action/agents/gemini.ts"]),
-        encoding: "utf-8",
-      });
-      expect(JSON.parse(output)).toEqual(["opencode"]);
+    it("root agents matrix is wired to the dynamic matrix output", () => {
+      const include = rootJob.strategy?.matrix.include;
+      expect(typeof include).toBe("string");
+      expect(include as string).toContain("fromJSON(needs.changes.outputs.matrix).agents");
     });
 
     it("action agent matrix matches agents map", () => {
-      expect([...actionJob.strategy!.matrix.agent].sort()).toEqual(expectedAgents);
-    });
-
-    it("root test matrix matches crossagent/ directory", () => {
-      expect([...rootJob.strategy!.matrix.test].sort()).toEqual(crossagentTests);
+      expect((actionJob.strategy?.matrix.agent as string[])?.slice().sort()).toEqual(
+        expectedAgents
+      );
     });
 
     it("action test matrix matches crossagent/ directory", () => {
-      expect([...actionJob.strategy!.matrix.test].sort()).toEqual(crossagentTests);
+      expect((actionJob.strategy?.matrix.test as string[])?.slice().sort()).toEqual(
+        crossagentTests
+      );
     });
 
     it("permissions match between root and action", () => {
@@ -149,8 +116,8 @@ describe("ci workflow consistency", () => {
     });
 
     it("fail-fast is enabled in both", () => {
-      expect(rootJob.strategy!["fail-fast"]).toBe(true);
-      expect(actionJob.strategy!["fail-fast"]).toBe(true);
+      expect(rootJob.strategy?.["fail-fast"]).toBe(true);
+      expect(actionJob.strategy?.["fail-fast"]).toBe(true);
     });
   });
 
@@ -158,12 +125,14 @@ describe("ci workflow consistency", () => {
     const rootJob = rootWorkflow.jobs["action-agnostic"];
     const actionJob = actionWorkflow.jobs.agnostic;
 
-    it("root test matrix matches agnostic/ directory", () => {
-      expect([...rootJob.strategy!.matrix.test].sort()).toEqual(agnosticTests);
+    it("root agnostic matrix is wired to the dynamic matrix output", () => {
+      const include = rootJob.strategy?.matrix.include;
+      expect(typeof include).toBe("string");
+      expect(include as string).toContain("fromJSON(needs.changes.outputs.matrix).agnostic");
     });
 
     it("action test matrix matches agnostic/ directory", () => {
-      expect([...actionJob.strategy!.matrix.test].sort()).toEqual(agnosticTests);
+      expect((actionJob.strategy?.matrix.test as string[])?.slice().sort()).toEqual(agnosticTests);
     });
 
     it("permissions match between root and action", () => {
@@ -183,8 +152,8 @@ describe("ci workflow consistency", () => {
     });
 
     it("fail-fast is enabled in both", () => {
-      expect(rootJob.strategy!["fail-fast"]).toBe(true);
-      expect(actionJob.strategy!["fail-fast"]).toBe(true);
+      expect(rootJob.strategy?.["fail-fast"]).toBe(true);
+      expect(actionJob.strategy?.["fail-fast"]).toBe(true);
     });
   });
 });

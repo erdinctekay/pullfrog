@@ -29,4 +29,7 @@ export const test: TestRunnerOptions = {
   fixture,
   validator,
   env: { PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1" },
+  // canary: any agent harness change runs the smoke. shared MCP set_output
+  // surface is also captured.
+  coverage: ["action/agents/{claude,opencode}.ts", "action/mcp/output.ts"],
 };
