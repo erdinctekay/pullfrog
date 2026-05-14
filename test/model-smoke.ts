@@ -44,6 +44,11 @@ type Plan =
 async function plan(slug: string): Promise<Plan> {
   const alias = modelAliases.find((a) => a.slug === slug);
   if (!alias) throw new Error(`model-smoke: unknown alias "${slug}"`);
+  if (alias.routing) {
+    throw new Error(
+      `model-smoke: ${slug} is a routing slug (no fixed model). pass an explicit Bedrock model ID via PULLFROG_MODEL or the workflow env block.`
+    );
+  }
 
   // walk the fallback chain so deprecated aliases (those with `fallback` set,
   // e.g. opencode/mimo-v2-pro-free → opencode/big-pickle) hit their replacement

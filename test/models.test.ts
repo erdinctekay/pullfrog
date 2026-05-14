@@ -14,6 +14,10 @@ const BYOK_ONLY_MODELS = new Set(["openai/o3"]);
 describe("openRouterResolve completeness", () => {
   for (const alias of modelAliases) {
     if (alias.isFree) continue;
+    // routing slugs (e.g. bedrock/byok) are inherently BYOK — there's no
+    // single model to map to OpenRouter because the actual model ID is read
+    // from a per-run env var.
+    if (alias.routing) continue;
     if (BYOK_ONLY_MODELS.has(alias.slug)) continue;
     it(`${alias.slug} has openRouterResolve`, () => {
       expect(
@@ -26,6 +30,13 @@ describe("openRouterResolve completeness", () => {
   for (const alias of modelAliases) {
     if (!alias.isFree) continue;
     it(`${alias.slug} (free) does not need openRouterResolve`, () => {
+      expect(alias.openRouterResolve).toBeUndefined();
+    });
+  }
+
+  for (const alias of modelAliases) {
+    if (!alias.routing) continue;
+    it(`${alias.slug} (routing slug) has no openRouterResolve`, () => {
       expect(alias.openRouterResolve).toBeUndefined();
     });
   }

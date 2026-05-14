@@ -16,7 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
-import { modelAliases } from "../models.ts";
+import { BEDROCK_MODEL_ID_ENV, modelAliases } from "../models.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
@@ -1175,7 +1175,24 @@ export const opencode = agent({
   run: async (ctx) => {
     const cliPath = await installOpencodeCli();
 
-    const model = ctx.payload.proxyModel ?? ctx.resolvedModel ?? autoSelectModel(cliPath);
+    const rawModel = ctx.payload.proxyModel ?? ctx.resolvedModel ?? autoSelectModel(cliPath);
+
+    // bedrock route: opencode's `amazon-bedrock` provider expects the model
+    // string in `amazon-bedrock/<bedrock-id>` form. the bare AWS model ID
+    // (what the user puts in `BEDROCK_MODEL_ID`) needs the prefix added.
+    // detect via env-var sentinel — same pattern as claude.ts.
+    //
+    // we deliberately do NOT gate on `!isBedrockAnthropicId(rawModel)` here:
+    // Anthropic-on-Bedrock normally routes to claude-code (per `resolveAgent`),
+    // but `PULLFROG_AGENT=opencode` is the documented escape hatch for forcing
+    // opencode regardless. when that override fires, opencode still needs the
+    // `amazon-bedrock/` prefix or the provider lookup fails with
+    // "Model not found: <modelId>/.". the Anthropic-vs-other discriminant
+    // only belongs in `resolveAgent`.
+    const bedrockModelId = process.env[BEDROCK_MODEL_ID_ENV]?.trim();
+    const isBedrockRoute =
+      rawModel !== undefined && bedrockModelId !== undefined && bedrockModelId === rawModel;
+    const model = isBedrockRoute ? `amazon-bedrock/${rawModel}` : rawModel;
 
     const homeEnv = {
       HOME: ctx.tmpdir,

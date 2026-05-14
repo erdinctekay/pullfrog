@@ -22,9 +22,16 @@ type CliProvider = {
 
 function buildProviders(): CliProvider[] {
   return Object.entries(providers)
-    .filter(([key]) => key !== "opencode" && key !== "openrouter")
+    .filter(([key]) => key !== "opencode" && key !== "openrouter" && key !== "bedrock")
     .map(([key, config]: [string, ProviderConfig]) => {
-      const aliases = modelAliases.filter((a) => a.provider === key && !a.fallback && !a.hidden);
+      // bedrock requires multi-secret setup (auth + region + model id) that
+      // doesn't fit the single-paste flow below — direct users to
+      // https://docs.pullfrog.com/bedrock instead. revisit once the init flow
+      // supports multi-value setup. `hidden` excludes internal-only subagent
+      // targets (e.g. openai/gpt-5.4) per #710.
+      const aliases = modelAliases.filter(
+        (a) => a.provider === key && !a.fallback && !a.routing && !a.hidden
+      );
       const recommended = aliases.find((a) => a.preferred);
       const sorted = [...aliases].sort((a, b) => {
         if (a.preferred && !b.preferred) return -1;

@@ -42,6 +42,11 @@ describe("models.dev validity", async () => {
   const data = await api;
 
   for (const alias of modelAliases) {
+    // routing slugs (e.g. bedrock/byok) have no fixed `resolve` — the actual
+    // model ID is read from a separate env var at run time. skip drift checks
+    // since there's no models.dev entry to validate against.
+    if (alias.routing) continue;
+
     const parsed = parseResolve(alias.resolve);
 
     it(`${alias.resolve} exists on models.dev`, () => {

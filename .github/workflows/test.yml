@@ -55,6 +55,9 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+      AWS_REGION: us-east-1
+      BEDROCK_MODEL_ID: us.anthropic.claude-opus-4-6-v1
       PULLFROG_MODEL: ${{ vars.PULLFROG_MODEL }}
     steps:
       - uses: actions/checkout@v6

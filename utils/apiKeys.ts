@@ -1,4 +1,9 @@
-import { getModelEnvVars, providers } from "../models.ts";
+import {
+  BEDROCK_MODEL_ID_ENV,
+  getModelEnvVars,
+  providers,
+  resolveDisplayAlias,
+} from "../models.ts";
 import { getApiUrl } from "./apiUrl.ts";
 
 const knownApiKeys: Set<string> = new Set(Object.values(providers).flatMap((p) => [...p.envVars]));
@@ -18,6 +23,26 @@ function buildMissingApiKeyError(params: { owner: string; name: string }): strin
   ].join("\n");
 }
 
+function buildBedrockSetupError(params: {
+  owner: string;
+  name: string;
+  missing: string[];
+}): string {
+  const githubSecretsUrl = `https://github.com/${params.owner}/${params.name}/settings/secrets/actions`;
+
+  return `Bedrock model selected but required configuration is missing: ${params.missing.join(", ")}.
+
+add the missing secret(s) to your GitHub repository at ${githubSecretsUrl}, then reference them in your workflow's \`env:\` block:
+
+  AWS_BEARER_TOKEN_BEDROCK: \${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+  AWS_REGION: \${{ secrets.AWS_REGION }}
+  ${BEDROCK_MODEL_ID_ENV}: \${{ secrets.${BEDROCK_MODEL_ID_ENV} }}
+
+\`AWS_BEARER_TOKEN_BEDROCK\` may be substituted with \`AWS_ACCESS_KEY_ID\` + \`AWS_SECRET_ACCESS_KEY\` (and optional \`AWS_SESSION_TOKEN\`) if you prefer access keys.
+
+for full setup instructions, see https://docs.pullfrog.com/bedrock`;
+}
+
 function hasEnvVar(name: string): boolean {
   const value = process.env[name];
   return typeof value === "string" && value.length > 0;
@@ -30,6 +55,22 @@ export function hasProviderKey(model: string): boolean {
   return requiredVars.some((v) => hasEnvVar(v));
 }
 
+function validateBedrockSetup(params: { owner: string; name: string }): void {
+  const hasAuth =
+    hasEnvVar("AWS_BEARER_TOKEN_BEDROCK") ||
+    (hasEnvVar("AWS_ACCESS_KEY_ID") && hasEnvVar("AWS_SECRET_ACCESS_KEY"));
+
+  const missing: string[] = [];
+  if (!hasAuth)
+    missing.push("AWS_BEARER_TOKEN_BEDROCK (or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)");
+  if (!hasEnvVar("AWS_REGION")) missing.push("AWS_REGION");
+  if (!hasEnvVar(BEDROCK_MODEL_ID_ENV)) missing.push(BEDROCK_MODEL_ID_ENV);
+
+  if (missing.length > 0) {
+    throw new Error(buildBedrockSetupError({ owner: params.owner, name: params.name, missing }));
+  }
+}
+
 export function validateAgentApiKey(params: {
   agent: { name: string };
   model: string | undefined;
@@ -38,6 +79,28 @@ export function validateAgentApiKey(params: {
 }): void {
   // if a specific model is configured, only check that model's required env vars
   if (params.model) {
+    // routing slugs (e.g. bedrock) get a tailored validation path because
+    // their auth shape doesn't match the standard "any one envVar present"
+    // rule (Bedrock needs auth + region + model-id, with auth being either
+    // a bearer token OR an access-key pair).
+    const alias = resolveDisplayAlias(params.model);
+    if (alias?.routing === "bedrock") {
+      validateBedrockSetup({ owner: params.owner, name: params.name });
+      return;
+    }
+
+    // upstream `resolveModel` translates `bedrock/byok` into the raw Bedrock
+    // model ID (e.g. `us.anthropic.claude-opus-4-6-v1`), which has no `/`
+    // and so isn't parseable as `provider/model`. these IDs only reach this
+    // function via routing aliases, so re-run the bedrock setup check rather
+    // than falling through to `getModelEnvVars` (which would throw inside
+    // parseModel). resolveModel itself already enforced BEDROCK_MODEL_ID,
+    // but auth + region are still validated here.
+    if (!params.model.includes("/")) {
+      validateBedrockSetup({ owner: params.owner, name: params.name });
+      return;
+    }
+
     const requiredVars = getModelEnvVars(params.model);
     // free models have no required env vars — skip validation entirely
     if (requiredVars.length === 0) return;

@@ -28,6 +28,14 @@ const results: { model: string; status: "pass" | "fail" | "skip"; detail?: strin
 const seen = new Set<string>();
 
 for (const alias of modelAliases) {
+  // routing slugs (bedrock/byok) have no fixed `resolve` to test against —
+  // the model ID is supplied at run time via a per-run env var. skipping
+  // here matches the bumps cron + catalog drift test.
+  if (alias.routing) {
+    results.push({ model: alias.slug, status: "skip", detail: "routing slug (no fixed resolve)" });
+    continue;
+  }
+
   if (seen.has(alias.resolve)) {
     results.push({ model: alias.resolve, status: "skip", detail: "duplicate resolve" });
     continue;

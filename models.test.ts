@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getModelEnvVars,
   getModelProvider,
+  isBedrockAnthropicId,
   modelAliases,
   parseModel,
   providers,
@@ -175,7 +176,12 @@ describe("modelAliases registry", () => {
 
   it("has exactly one preferred model per provider", () => {
     for (const providerKey of Object.keys(providers)) {
-      const preferred = modelAliases.filter((a) => a.provider === providerKey && a.preferred);
+      // routing-only providers (bedrock) deliberately have no preferred
+      // model — the user picks the actual model via a per-run env var, so
+      // there's no "preferred default" to surface to auto-select.
+      const aliases = modelAliases.filter((a) => a.provider === providerKey);
+      if (aliases.every((a) => a.routing)) continue;
+      const preferred = aliases.filter((a) => a.preferred);
       expect(preferred.length, `${providerKey} should have exactly 1 preferred model`).toBe(1);
     }
   });
@@ -190,6 +196,10 @@ describe("modelAliases registry", () => {
 
   it("all resolve values follow provider/model format", () => {
     for (const alias of modelAliases) {
+      // routing slugs use a sentinel `resolve` (e.g. "bedrock") that's never
+      // passed to a CLI directly — the harness reads a separate env var to
+      // get the real model ID. format check doesn't apply.
+      if (alias.routing) continue;
       expect(alias.resolve).toContain("/");
     }
   });
@@ -197,6 +207,54 @@ describe("modelAliases registry", () => {
   it("slugs are unique", () => {
     const slugs = modelAliases.map((a) => a.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
+  });
+});
+
+describe("isBedrockAnthropicId", () => {
+  it("matches geo-prefixed Anthropic foundation IDs", () => {
+    expect(isBedrockAnthropicId("us.anthropic.claude-opus-4-7")).toBe(true);
+    expect(isBedrockAnthropicId("eu.anthropic.claude-sonnet-4-6")).toBe(true);
+    expect(isBedrockAnthropicId("global.anthropic.claude-haiku-4-5-20251001-v1:0")).toBe(true);
+  });
+
+  it("matches in-region Anthropic foundation IDs", () => {
+    expect(isBedrockAnthropicId("anthropic.claude-opus-4-7")).toBe(true);
+  });
+
+  it("rejects non-Anthropic foundation IDs", () => {
+    expect(isBedrockAnthropicId("amazon.nova-pro-v1:0")).toBe(false);
+    expect(isBedrockAnthropicId("us.meta.llama4-scout-17b-instruct-v1:0")).toBe(false);
+    expect(isBedrockAnthropicId("deepseek.v3.2")).toBe(false);
+  });
+
+  // regression: PR #720 review caught that a substring-only match was
+  // fragile for inference-profile ARNs (which BEDROCK_MODEL_ID accepts per
+  // the AWS docs). ARN names are user-chosen — both directions of the
+  // heuristic could break depending on what name the operator picked.
+  // We anchor on a discrete dot-segment match (case-insensitive) instead.
+  it("ignores 'anthropic' substrings inside non-segment text", () => {
+    // ARN whose user-chosen profile name happens to contain "anthropic" as
+    // part of a longer word — would route to claude-code under naive
+    // includes("anthropic") even though the backing model is unknown.
+    expect(
+      isBedrockAnthropicId(
+        "arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-anthropicish-profile"
+      )
+    ).toBe(false);
+  });
+
+  it("matches when 'anthropic' appears as its own dot-segment in ARN", () => {
+    // ARN whose profile name embeds the foundation segment correctly —
+    // operator chose to surface the backing model in the name.
+    expect(
+      isBedrockAnthropicId(
+        "arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/anthropic.claude-opus-4-7"
+      )
+    ).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isBedrockAnthropicId("US.ANTHROPIC.CLAUDE-OPUS-4-7")).toBe(true);
   });
 });
 

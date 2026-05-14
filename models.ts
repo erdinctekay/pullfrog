@@ -7,6 +7,22 @@
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
+/**
+ * routing discriminant for entries whose `resolve` is dynamic — looked up
+ * from a separate env var at run time rather than fixed in the catalog.
+ *
+ * `"bedrock"` means the actual model ID comes from `BEDROCK_MODEL_ID`
+ * (an AWS-canonical Bedrock model ID like `us.anthropic.claude-opus-4-7`
+ * or `amazon.nova-pro-v1:0`). enterprise Bedrock customers self-select for
+ * version control — silent alias bumps would break compliance review,
+ * model-access enrollment, and provisioned-throughput contracts. so the
+ * single `bedrock/byok` entry is a routing slug, not a model alias: the
+ * harness reads `BEDROCK_MODEL_ID` and routes to claude-code (when the ID
+ * contains "anthropic") or opencode (everything else, with an
+ * `amazon-bedrock/` prefix).
+ */
+export type ModelRouting = "bedrock";
+
 export interface ModelAlias {
   /** stable alias stored in DB, e.g. "anthropic/claude-opus" */
   slug: string;
@@ -14,9 +30,9 @@ export interface ModelAlias {
   provider: string;
   /** human-readable name shown in dropdowns */
   displayName: string;
-  /** concrete models.dev specifier, e.g. "anthropic/claude-opus-4-6" */
+  /** concrete models.dev specifier, e.g. "anthropic/claude-opus-4-6". sentinel for routing entries — never passed to a CLI directly. */
   resolve: string;
-  /** full models.dev specifier for the OpenRouter equivalent (undefined for free models) */
+  /** full models.dev specifier for the OpenRouter equivalent (undefined for free models and routing entries) */
   openRouterResolve: string | undefined;
   /** top-tier pick for this provider — preferred during auto-select */
   preferred: boolean;
@@ -24,6 +40,8 @@ export interface ModelAlias {
   isFree: boolean;
   /** slug of a replacement model — presence implies this model is deprecated */
   fallback: string | undefined;
+  /** dynamic-resolution discriminant — see ModelRouting docs */
+  routing: ModelRouting | undefined;
   /** alias key (within same provider) of the cheaper sibling reviewfrog should
    * use as its lens-fanout subagent. e.g. claude-opus → "claude-sonnet". */
   subagentModel: string | undefined;
@@ -44,6 +62,8 @@ interface ModelDef {
   isFree?: boolean;
   /** slug of a replacement model — presence implies this model is deprecated */
   fallback?: string;
+  /** dynamic-resolution discriminant — see ModelRouting docs */
+  routing?: ModelRouting;
   /** alias key (within same provider) of the cheaper sibling reviewfrog should
    * use as its lens-fanout subagent (e.g. claude-opus → "claude-sonnet"). */
   subagentModel?: string;
@@ -324,6 +344,20 @@ export const providers = {
       },
     },
   }),
+  bedrock: provider({
+    displayName: "Amazon Bedrock",
+    envVars: ["AWS_BEARER_TOKEN_BEDROCK", "AWS_REGION", "BEDROCK_MODEL_ID"],
+    models: {
+      // single routing entry — the actual Bedrock model ID is read from
+      // BEDROCK_MODEL_ID at run time. see ModelRouting docs for why we
+      // don't catalog individual Bedrock models.
+      byok: {
+        displayName: "Amazon Bedrock",
+        resolve: "bedrock",
+        routing: "bedrock",
+      },
+    },
+  }),
   openrouter: provider({
     displayName: "OpenRouter",
     envVars: ["OPENROUTER_API_KEY"],
@@ -479,6 +513,7 @@ export const modelAliases: ModelAlias[] = Object.entries(providers).flatMap(
       preferred: def.preferred ?? false,
       isFree: def.isFree ?? false,
       fallback: def.fallback,
+      routing: def.routing,
       // subagentModel is stored as an alias key local to the provider; expand
       // here to a fully-qualified slug so callers can look up the target alias
       // directly without re-deriving the provider.
@@ -536,4 +571,41 @@ export function resolveCliModel(slug: string): string | undefined {
  */
 export function resolveOpenRouterModel(slug: string): string | undefined {
   return resolveDisplayAlias(slug)?.openRouterResolve;
+}
+
+// ── bedrock routing ────────────────────────────────────────────────────────────
+
+/** env var that supplies the Bedrock model ID for the `bedrock/byok` slug. */
+export const BEDROCK_MODEL_ID_ENV = "BEDROCK_MODEL_ID";
+
+/**
+ * the Bedrock model ID passed to claude-code or opencode is whatever the
+ * user set in `BEDROCK_MODEL_ID` — Pullfrog never resolves or upgrades it.
+ * we route by checking whether the ID names an Anthropic model: claude-code
+ * handles Anthropic-on-Bedrock natively (with `CLAUDE_CODE_USE_BEDROCK=1`),
+ * everything else goes through opencode's `amazon-bedrock` provider.
+ *
+ * AWS Bedrock IDs come in two shapes:
+ *   - dotted foundation IDs: `us.anthropic.claude-opus-4-7`,
+ *     `anthropic.claude-haiku-4-5-20251001-v1:0`, `amazon.nova-pro-v1:0`,
+ *     `meta.llama4-scout-17b-instruct-v1:0`. AWS-published, lowercase, the
+ *     foundation provider always appears as a discrete dot-segment.
+ *   - inference-profile ARNs: `arn:aws:bedrock:us-east-2:<acct>:application-inference-profile/<user-name>`.
+ *     `<user-name>` is operator-chosen, so a naive substring check is fragile
+ *     in both directions (Anthropic profile named without "anthropic" → routes
+ *     to opencode and misses CLAUDE_CODE_USE_BEDROCK; non-Anthropic profile
+ *     whose name happens to contain "anthropic" → routes to claude-code).
+ *
+ * we anchor on a discrete dot-segment match (case-insensitive). this catches
+ * every published foundation ID and is conservative for ARN-form IDs: ARN
+ * names that don't include "anthropic" as their own dot-segment route to
+ * opencode by default. operators using ARN-form IDs whose backing model is
+ * Anthropic should set `PULLFROG_AGENT=claude` to force the right route, or
+ * include the foundation segment in the profile name.
+ */
+export function isBedrockAnthropicId(bedrockModelId: string): boolean {
+  // split on `.`, `/`, and `:` so the check works for both dotted foundation
+  // IDs (anthropic.* / us.anthropic.*) and ARN-form IDs (where the relevant
+  // foundation segment sits between `/` and `.` inside the resource name).
+  return bedrockModelId.toLowerCase().split(/[./:]/).includes("anthropic");
 }

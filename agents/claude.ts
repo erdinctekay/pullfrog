@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
+import { BEDROCK_MODEL_ID_ENV, isBedrockAnthropicId } from "../models.ts";
 
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
@@ -844,7 +845,22 @@ export const claude = agent({
     const cliPath = await installClaudeCli();
 
     const specifier = ctx.payload.proxyModel ?? ctx.resolvedModel;
-    const model = specifier ? stripProviderPrefix(specifier) : undefined;
+    // claude-code on Bedrock takes the bare AWS model ID — no provider prefix
+    // to strip, since the ID is already in `provider.model` form (e.g.
+    // `us.anthropic.claude-opus-4-7`). detect via the env-var sentinel: if
+    // BEDROCK_MODEL_ID is set and matches the resolved specifier, this is a
+    // bedrock route. see `wiki/model-resolution.md` for the routing pattern.
+    const bedrockModelId = process.env[BEDROCK_MODEL_ID_ENV]?.trim();
+    const isBedrockRoute =
+      specifier !== undefined &&
+      bedrockModelId !== undefined &&
+      bedrockModelId === specifier &&
+      isBedrockAnthropicId(specifier);
+    const model = !specifier
+      ? undefined
+      : isBedrockRoute
+        ? specifier
+        : stripProviderPrefix(specifier);
 
     const homeEnv = {
       HOME: ctx.tmpdir,
@@ -891,10 +907,24 @@ export const claude = agent({
 
     // agent process gets full env — needs LLM API keys, PATH, locale, etc.
     // security is enforced via managed-settings.json, --disallowedTools (Bash), and MCP tool filtering.
+    //
+    // bedrock route: claude-code reads `CLAUDE_CODE_USE_BEDROCK=1` to switch
+    // its provider implementation from the direct Anthropic API to Bedrock.
+    // AWS_BEARER_TOKEN_BEDROCK / AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY +
+    // AWS_REGION are already in process.env from the workflow's `env:` block.
+    // see https://docs.claude.com/en/docs/claude-code/amazon-bedrock.
+    //
+    // we only force CLAUDE_CODE_USE_BEDROCK=1 when this is a Pullfrog-routed
+    // bedrock run; if the user has set the env var manually for some other
+    // reason (e.g. always-Bedrock org policy), `...process.env` already
+    // carries it through and we don't disturb it.
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...homeEnv,
     };
+    if (isBedrockRoute) {
+      env.CLAUDE_CODE_USE_BEDROCK = "1";
+    }
 
     const repoDir = process.cwd();
 

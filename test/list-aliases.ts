@@ -50,6 +50,9 @@ const FLAGSHIPS = [
 function isPrunablePassthrough(alias: (typeof modelAliases)[number]): boolean {
   if (ROUTING_CANARIES.has(alias.slug)) return false;
   if (alias.provider === "openrouter") return true;
+  // routing slugs (bedrock/byok) need a per-run env var to pick the actual
+  // model — there's no generic smoke test, so prune from both matrices.
+  if (alias.routing) return true;
   // opencode FREE models (big-pickle, mimo-v2-pro-free, minimax-m2.5-free)
   // are unique to opencode and used in prod — keep them. only prune the keyed
   // mirrors.
