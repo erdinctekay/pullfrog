@@ -17,7 +17,9 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
 import { BEDROCK_MODEL_ID_ENV, modelAliases } from "../models.ts";
+import type { ToolState } from "../toolState.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
+import { type AgentDiagnostic, formatAgentHangBody } from "../utils/agentHangReport.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
 import { findProviderErrorMatch } from "../utils/providerErrors.ts";
@@ -312,8 +314,11 @@ interface OpenCodeStepFinishEvent {
  * `session/message-v2.ts`). error parts carry the reason on `error`,
  * completed parts on `output` — reading the wrong field is what caused
  * the silent `(no error message)` log in #662.
+ *
+ * Named `ToolPartState` locally (not `ToolState`) so it doesn't shadow the
+ * action-wide `ToolState` imported above.
  */
-type ToolState =
+type ToolPartState =
   | { status: "pending" | "running"; input?: unknown }
   | { status: "completed"; input?: unknown; output: string }
   | { status: "error"; input?: unknown; error: string };
@@ -326,7 +331,7 @@ interface OpenCodeToolUseEvent {
     id?: string;
     callID?: string;
     tool?: string;
-    state?: ToolState;
+    state?: ToolPartState;
   };
   [key: string]: unknown;
 }
@@ -335,7 +340,7 @@ interface OpenCodeToolResultEvent {
   type: "tool_result";
   timestamp?: number;
   sessionID?: string;
-  part?: { callID?: string; state?: ToolState };
+  part?: { callID?: string; state?: ToolPartState };
   tool_id?: string;
   status?: "success" | "error";
   output?: string;
@@ -420,6 +425,7 @@ type RunParams = {
   args: string[];
   cwd: string;
   env: Record<string, string | undefined>;
+  toolState: ToolState;
   todoTracker?: TodoTracker | undefined;
   onActivityTimeout?: (() => void) | undefined;
   onToolUse?: ((event: { toolName: string; input: unknown }) => void) | undefined;
@@ -936,6 +942,19 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   let lastProviderError: string | null = null;
   let agentErrorEvent: OpenCodeErrorEvent | null = null;
 
+  // shared with main.ts via toolState. updated in place as events stream and
+  // stderr accumulates so the outer activity-timeout catch sees the same
+  // context the harness's own catch path uses to format `result.error`.
+  // recentStderr is shared by reference; the scalar fields are mirrored on
+  // each update below.
+  const diagnostic: AgentDiagnostic = {
+    label: params.label,
+    recentStderr,
+    lastProviderError: undefined,
+    eventCount: 0,
+  };
+  params.toolState.agentDiagnostic = diagnostic;
+
   // capped accumulator for the agent's narration. used as a post-run fallback
   // when `finalOutput` (the orchestrator's final assistant message) is empty.
   // unbounded `output += text` previously grew to ~1 GiB on multi-lens Reviews
@@ -994,6 +1013,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           }
 
           eventCount++;
+          diagnostic.eventCount = eventCount;
           log.debug(JSON.stringify(event, null, 2));
 
           const timeSinceLastActivity = getIdleMs();
@@ -1035,6 +1055,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         const match = findProviderErrorMatch(trimmed);
         if (match) {
           lastProviderError = match.label;
+          diagnostic.lastProviderError = match.label;
           log.info(`» provider error detected (${match.label}): ${match.excerpt}`);
         } else {
           log.debug(trimmed);
@@ -1166,10 +1187,11 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         `» recent stderr (last ${Math.min(recentStderr.length, 10)} lines):\n${stderrContext}`
       );
 
+    const body = formatAgentHangBody({ diagnostic, isHang: isActivityTimeout, errorMessage });
     return {
       success: false,
       output: finalOutput || output.toString(),
-      error: `${errorMessage} [${diagnosis}]`,
+      error: body ?? `${errorMessage} [${diagnosis}]`,
       usage: buildUsage(),
     };
   }
@@ -1262,6 +1284,7 @@ export const opencode = agent({
       cliPath,
       cwd: repoDir,
       env,
+      toolState: ctx.toolState,
       todoTracker: ctx.todoTracker,
       onActivityTimeout: ctx.onActivityTimeout,
       onToolUse: ctx.onToolUse,

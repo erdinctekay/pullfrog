@@ -1,5 +1,6 @@
 import type { AgentUsage } from "./agents/shared.ts";
 import type { PrepResult } from "./prep/types.ts";
+import type { AgentDiagnostic } from "./utils/agentHangReport.ts";
 import { log } from "./utils/cli.ts";
 import type { DiffCoverageState } from "./utils/diffCoverage.ts";
 import {
@@ -157,6 +158,12 @@ export interface ToolState {
   model?: string | undefined;
   todoTracker?: TodoTracker | undefined;
   diffCoverage?: DiffCoverageState | undefined;
+  // mutable handle the agent harness writes to as a run progresses (recent
+  // stderr ring buffer reference, last provider-error label, event count).
+  // read by main.ts's outer catch so a watchdog-fired activity timeout still
+  // surfaces the same agent-side context the harness's own catch path returns
+  // via `result.error`. see `utils/agentHangReport.ts`.
+  agentDiagnostic?: AgentDiagnostic | undefined;
 }
 
 interface InitToolStateParams {

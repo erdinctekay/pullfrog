@@ -16,6 +16,7 @@ import {
   DEFAULT_ACTIVITY_TIMEOUT_MS,
 } from "./utils/activity.ts";
 import { resolveAgent, resolveModel } from "./utils/agent.ts";
+import { formatAgentHangBody } from "./utils/agentHangReport.ts";
 import { apiFetch } from "./utils/apiFetch.ts";
 import {
   formatApiKeyErrorSummary,
@@ -1123,12 +1124,32 @@ export async function main(): Promise<MainResult> {
       ? new BillingError(errorMessage, { code: "router_keylimit_exhausted" })
       : null;
 
+    // when the activity-timeout watchdog wins the race against the agent
+    // harness's own catch, the bare timer reject reason ("activity timeout:
+    // no output for 302s") tells the user nothing actionable. the harness
+    // keeps a structured diagnostic on toolState as it runs — recent stderr,
+    // last provider-error label, event count — and `formatAgentHangBody`
+    // renders that as a markdown body suitable for both the job summary tab
+    // and the PR progress comment.
+    //
+    // gated on isHang because the harness sets `agentDiagnostic` on entry,
+    // so any non-hang throw that hits the outer catch (e.g. the post-success
+    // output_schema validator, or a late cleanup throw after the run already
+    // succeeded) would otherwise render "Pullfrog failed" with stale event
+    // counts and silently drop the real `errorMessage`.
+    const isHang =
+      errorMessage.startsWith("activity timeout") || errorMessage.startsWith("agent still pending");
+    const hangBody = isHang
+      ? formatAgentHangBody({ diagnostic: toolState.agentDiagnostic, isHang: true, errorMessage })
+      : null;
+
+    const apiKeySource = hangBody ?? errorMessage;
     const apiKeyErrorSummary =
-      !billingError && isApiKeyAuthError(errorMessage)
+      !billingError && isApiKeyAuthError(apiKeySource)
         ? formatApiKeyErrorSummary({
             owner: runContext.repo.owner,
             name: runContext.repo.name,
-            raw: errorMessage,
+            raw: apiKeySource,
           })
         : null;
 
@@ -1136,7 +1157,10 @@ export async function main(): Promise<MainResult> {
     try {
       const errorSummary = billingError
         ? formatBillingErrorSummary(billingError, runContext.repo.owner)
-        : (apiKeyErrorSummary ?? `### ❌ Pullfrog failed\n\n\`\`\`\n${errorMessage}\n\`\`\``);
+        : (apiKeyErrorSummary ??
+          (hangBody
+            ? `### ❌ Pullfrog failed\n\n${hangBody}`
+            : `### ❌ Pullfrog failed\n\n\`\`\`\n${errorMessage}\n\`\`\``));
       const usageSummary = formatUsageSummary(toolState.usageEntries);
       const parts = [errorSummary, toolState.lastProgressBody, usageSummary].filter(Boolean);
       await writeSummary(parts.join("\n\n"));
@@ -1145,7 +1169,7 @@ export async function main(): Promise<MainResult> {
     try {
       const commentBody = billingError
         ? formatBillingErrorSummary(billingError, runContext.repo.owner)
-        : (apiKeyErrorSummary ?? errorMessage);
+        : (apiKeyErrorSummary ?? hangBody ?? errorMessage);
       await reportErrorToComment({ toolState, error: commentBody });
     } catch {
       // error reporting failed, but don't let it mask the original error
