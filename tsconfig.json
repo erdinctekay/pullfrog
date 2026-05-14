@@ -19,7 +19,8 @@
     "forceConsistentCasingInFileNames": true,
     "stripInternal": true,
     "moduleDetection": "force",
-    "useUnknownInCatchVariables": true
+    "useUnknownInCatchVariables": true,
+    "noEmit": true
   },
-  "exclude": []
+  "exclude": ["dist"]
 }
