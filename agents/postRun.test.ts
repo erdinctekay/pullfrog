@@ -29,9 +29,22 @@ describe("getUnsubmittedReview", () => {
     ).toBeNull();
   });
 
-  it("returns null when report_progress wrote a final summary", () => {
+  it("fires for Review even when report_progress wrote a final summary", () => {
+    // Review's only valid exit is `create_pull_request_review`. a summary
+    // comment is not a substitute, and accepting it here previously let
+    // subagent-flipped `finalSummaryWritten` silence the gate.
     expect(
       getUnsubmittedReview(makeToolState({ selectedMode: "Review", finalSummaryWritten: true }))
+    ).toBe("Review");
+  });
+
+  it("returns null for IncrementalReview when report_progress wrote a final summary", () => {
+    // IncrementalReview treats `report_progress` as a legitimate
+    // "no review warranted" exit, matching the post-failure error message.
+    expect(
+      getUnsubmittedReview(
+        makeToolState({ selectedMode: "IncrementalReview", finalSummaryWritten: true })
+      )
     ).toBeNull();
   });
 

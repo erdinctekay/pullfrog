@@ -30,13 +30,26 @@ import {
  *
  * the gate is anchored to `hadProgressComment` so silent runs (non-issue
  * events, dispatcher skipped seeding) don't fire a nudge there's no UI for.
+ *
+ * `Review` and `IncrementalReview` have different valid exits:
+ *   - Review: only `create_pull_request_review` counts. `report_progress` is
+ *     not a substitute — a Review run that exits with just a summary comment
+ *     has produced nothing reviewable on the PR. matches the hard-fail
+ *     message at `expected = "create_pull_request_review"` below.
+ *   - IncrementalReview: `report_progress` is a legitimate "no review
+ *     warranted" exit, so either toolState flag short-circuits.
+ * splitting per mode also closes the bypass where a subagent (e.g. a
+ * `task`-dispatched `reviewfrog` lens) calls `report_progress` and silences
+ * the gate even though the orchestrator never submitted a review.
  */
 export function getUnsubmittedReview(toolState: ToolState): "Review" | "IncrementalReview" | null {
   const mode = toolState.selectedMode;
-  if (mode !== "Review" && mode !== "IncrementalReview") return null;
-  if (toolState.review || toolState.finalSummaryWritten) return null;
   if (!toolState.hadProgressComment) return null;
-  return mode;
+  if (mode === "Review") return toolState.review ? null : "Review";
+  if (mode === "IncrementalReview") {
+    return toolState.review || toolState.finalSummaryWritten ? null : "IncrementalReview";
+  }
+  return null;
 }
 
 /**
