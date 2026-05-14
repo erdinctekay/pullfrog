@@ -549,6 +549,13 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
   };
 
   const recentStderr: string[] = [];
+  // ring buffer of recent non-JSON stdout lines. Claude CLI prints
+  // human-readable TTY chrome (status bubbles, quota notices, etc.)
+  // alongside the NDJSON event stream. when the CLI exits non-zero without
+  // emitting a structured error event, these lines are the only actionable
+  // signal — preferring them over the NDJSON tail keeps progress comments
+  // readable. issue #643.
+  const recentNonJsonStdout: string[] = [];
 
   let lastProviderError: string | null = null;
 
@@ -594,6 +601,8 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
             event = JSON.parse(trimmed) as ClaudeEvent;
           } catch {
             log.debug(`» non-JSON stdout line: ${trimmed.substring(0, 200)}`);
+            recentNonJsonStdout.push(trimmed);
+            if (recentNonJsonStdout.length > MAX_STDERR_LINES) recentNonJsonStdout.shift();
             continue;
           }
 
@@ -695,9 +704,16 @@ export async function runClaude(params: RunParams): Promise<ClaudeRunResult> {
       const stdoutSnapshot = output.toString();
       const stderrSnapshot = recentStderr.join("\n");
       const truncatedStdout = stdoutSnapshot ? tailLines(stdoutSnapshot, 2048) : "";
+      // prefer non-JSON stdout (human-readable TTY chrome the CLI prints,
+      // including status bubbles and quota notices) over the raw NDJSON
+      // tail. when the CLI exits 1 without emitting `is_error` (issue #643),
+      // the NDJSON fallback would otherwise dump 2KB of `system/init` events
+      // into the progress comment with no mention of the actual cause.
+      const nonJsonStdoutSnapshot = recentNonJsonStdout.join("\n");
       const errorMessage =
         lastResultError ||
         stderrSnapshot ||
+        nonJsonStdoutSnapshot ||
         truncatedStdout ||
         `unknown error - no output from Claude CLI${errorContext}`;
       log.error(
