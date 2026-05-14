@@ -176,6 +176,23 @@ function getTempDir(): string {
   return tempDir;
 }
 
+/** chars of shell output kept inline in the agent reply. anything past this
+ * blows the agent's context budget on commands that dump big logs (test
+ * runners, build tools, grep on large trees), so the overflow is spilled
+ * to a tempfile the agent can re-read selectively (cat/tail/grep). */
+export const MAX_OUTPUT_CHARS = 5000;
+
+/** if `output` exceeds `MAX_OUTPUT_CHARS`, persist the full body to a
+ * tempfile and return the last `MAX_OUTPUT_CHARS` prefixed with a sentinel
+ * pointing at the saved path. otherwise return as-is. */
+function capOutput(output: string): string {
+  if (output.length <= MAX_OUTPUT_CHARS) return output;
+  const fullPath = join(getTempDir(), `shell-${randomUUID().slice(0, 8)}.log`);
+  writeFileSync(fullPath, output);
+  const elided = output.length - MAX_OUTPUT_CHARS;
+  return `... [${elided} chars truncated; full output saved to ${fullPath}] ...\n${output.slice(-MAX_OUTPUT_CHARS)}`;
+}
+
 /** detect git as a command invocation (not as part of another word like .gitignore) */
 function isGitCommand(command: string): boolean {
   const trimmed = command.trim();
@@ -195,6 +212,8 @@ Use this tool to:
 - Run shell commands (ls, cat, grep, find, etc.)
 - Execute build tools (npm, pnpm, cargo, make, etc.)
 - Run tests and linters
+
+Output is capped at ${MAX_OUTPUT_CHARS} chars: if exceeded, only the tail is returned and the full body is saved to a tempfile (path included in the response). Re-read the tempfile with cat/tail/grep when you need more.
 
 Do NOT use this tool for git commands — use the dedicated git tools instead.`,
     parameters: ShellParams,
@@ -301,13 +320,14 @@ Do NOT use this tool for git commands — use the dedicated git tools instead.`,
           : `[timed out after ${timeout}ms]`;
 
       const finalExitCode = exitCode ?? (timedOut ? 124 : -1);
+      const trimmed = output.trim();
       if (finalExitCode !== 0) {
         log.info(`shell command failed with exit code ${finalExitCode}: ${params.command}`);
-        if (output) log.info(`output: ${output.trim()}`);
+        if (trimmed) log.info(`output: ${trimmed}`);
       }
 
       return {
-        output: output.trim(),
+        output: capOutput(trimmed),
         exit_code: finalExitCode,
         timed_out: timedOut,
       };
