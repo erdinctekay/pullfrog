@@ -1,4 +1,8 @@
-import { detectProviderError, isRouterKeylimitExhaustedError } from "./providerErrors.ts";
+import {
+  detectProviderError,
+  findProviderErrorMatch,
+  isRouterKeylimitExhaustedError,
+} from "./providerErrors.ts";
 
 describe("detectProviderError", () => {
   describe("false positives previously seen in production", () => {
@@ -113,6 +117,64 @@ describe("detectProviderError", () => {
       expect(detectProviderError('{"limit": 0, "remaining": 0}')).toBe("zero quota");
       expect(detectProviderError('"time_limit": 0')).toBeNull();
     });
+  });
+});
+
+describe("findProviderErrorMatch", () => {
+  // regression for issue #703: when stderr arrives as a multi-KB buffer
+  // (mcp tool-schema dump + the actual error message), the old
+  // `chunk.substring(0, 500)` excerpt showed the head of the buffer
+  // (schema) instead of the matched error text. the windowed excerpt
+  // must center on the matched line.
+  it("excerpt centers on the matched line, not the head of the buffer", () => {
+    const schemaDump =
+      "{".repeat(2000) +
+      '"name":"pullfrog_create_pull_request_review","description":"Submit a review..."';
+    const errorLine = "ERROR 2026-05-13 service=session error=rate_limit_exceeded retry-after=30";
+    const chunk = `${schemaDump}\n${errorLine}\ncaller stack at handler.ts:42`;
+
+    const match = findProviderErrorMatch(chunk);
+    expect(match).not.toBeNull();
+    expect(match?.label).toBe("rate limited");
+    expect(match?.excerpt).toContain("rate_limit_exceeded");
+    expect(match?.excerpt).toContain("retry-after=30");
+    expect(match?.excerpt).not.toContain("pullfrog_create_pull_request_review");
+  });
+
+  it("includes a small surrounding-line window for stack-trace context", () => {
+    const chunk =
+      "» about to call session.processor\n" +
+      "ERROR rate_limit_exceeded for key=abc\n" +
+      "at handler.ts:42\n" +
+      "at runtime.ts:88";
+    const match = findProviderErrorMatch(chunk);
+    expect(match?.excerpt).toContain("about to call session.processor");
+    expect(match?.excerpt).toContain("rate_limit_exceeded");
+    expect(match?.excerpt).toContain("handler.ts:42");
+    expect(match?.excerpt).toContain("runtime.ts:88");
+  });
+
+  it("falls back to the matched line alone when adjacent lines are huge", () => {
+    const giantPrefix = "x".repeat(5000);
+    const errorLine = '"statusCode": 429, "message": "slow down"';
+    const giantSuffix = "y".repeat(5000);
+    const chunk = `${giantPrefix}\n${errorLine}\n${giantSuffix}`;
+
+    const match = findProviderErrorMatch(chunk);
+    expect(match?.label).toBe("rate limited (429)");
+    expect(match?.excerpt).toBe(errorLine);
+  });
+
+  it("head-truncates the matched line if it alone exceeds the byte cap", () => {
+    const padding = "z".repeat(700);
+    const chunk = `${padding} "statusCode": 429 ${padding}`;
+    const match = findProviderErrorMatch(chunk);
+    expect(match?.label).toBe("rate limited (429)");
+    expect(match?.excerpt.length).toBeLessThanOrEqual(600);
+  });
+
+  it("returns null when no pattern matches", () => {
+    expect(findProviderErrorMatch("just some normal log line\nnothing wrong here")).toBeNull();
   });
 });
 

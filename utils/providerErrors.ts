@@ -41,11 +41,69 @@ const PROVIDER_ERROR_PATTERNS: ProviderErrorPattern[] = [
   { regex: /["']?\blimit\b["']?\s*:\s*0\b/, label: "zero quota" },
 ];
 
-export function detectProviderError(text: string): string | null {
+/**
+ * Result of a provider-error scan: the classification label plus a
+ * human-readable excerpt centered on the matched line. The excerpt is what
+ * gets surfaced in `» provider error detected (...)` log lines — see
+ * `extractExcerpt` for the windowing/byte-cap policy.
+ */
+export type ProviderErrorMatch = {
+  label: string;
+  excerpt: string;
+};
+
+// roughly half a wide terminal line by 4–5 lines of context; large enough
+// to capture a structured error payload (request id, retry-after, model)
+// plus its immediate stack/headers, small enough to not flood the log.
+const EXCERPT_MAX_BYTES = 600;
+const LINES_BEFORE = 1;
+const LINES_AFTER = 2;
+
+export function findProviderErrorMatch(text: string): ProviderErrorMatch | null {
   for (const entry of PROVIDER_ERROR_PATTERNS) {
-    if (entry.regex.test(text)) return entry.label;
+    const m = entry.regex.exec(text);
+    if (!m) continue;
+    return { label: entry.label, excerpt: extractExcerpt(text, m.index) };
   }
   return null;
+}
+
+export function detectProviderError(text: string): string | null {
+  return findProviderErrorMatch(text)?.label ?? null;
+}
+
+/**
+ * Slice a context window around `matchIndex`: the matched line plus
+ * `LINES_BEFORE`/`LINES_AFTER` neighbours. If the windowed slice exceeds
+ * `EXCERPT_MAX_BYTES` (giant adjacent lines, e.g. JSON tool-schema dumps),
+ * fall back to the matched line alone, head-truncated if still too long.
+ * Replaces the old `chunk.substring(0, 500)` head-anchored excerpt which
+ * surfaced whatever happened to be at the front of the stderr buffer
+ * instead of the error itself. See issue #703.
+ */
+function extractExcerpt(text: string, matchIndex: number): string {
+  const lineStart = text.lastIndexOf("\n", matchIndex - 1) + 1;
+  const lineEndRaw = text.indexOf("\n", matchIndex);
+  const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw;
+
+  let start = lineStart;
+  for (let i = 0; i < LINES_BEFORE && start > 0; i++) {
+    const prev = text.lastIndexOf("\n", start - 2);
+    start = prev < 0 ? 0 : prev + 1;
+  }
+
+  let end = lineEnd;
+  for (let i = 0; i < LINES_AFTER && end < text.length; i++) {
+    const next = text.indexOf("\n", end + 1);
+    end = next < 0 ? text.length : next;
+  }
+
+  let excerpt = text.slice(start, end);
+  if (excerpt.length > EXCERPT_MAX_BYTES) {
+    excerpt = text.slice(lineStart, lineEnd);
+    if (excerpt.length > EXCERPT_MAX_BYTES) excerpt = excerpt.slice(0, EXCERPT_MAX_BYTES);
+  }
+  return excerpt.trim();
 }
 
 /**

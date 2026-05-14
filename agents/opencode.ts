@@ -20,7 +20,7 @@ import { BEDROCK_MODEL_ID_ENV, modelAliases } from "../models.ts";
 import { getIdleMs, markActivity } from "../utils/activity.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
 import { installFromNpmTarball } from "../utils/install.ts";
-import { detectProviderError } from "../utils/providerErrors.ts";
+import { findProviderErrorMatch } from "../utils/providerErrors.ts";
 import { addSkill, installBundledSkills } from "../utils/skills.ts";
 import {
   DEFAULT_MAX_RETAINED_BYTES,
@@ -1032,10 +1032,10 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         recentStderr.push(trimmed);
         if (recentStderr.length > MAX_STDERR_LINES) recentStderr.shift();
 
-        const providerError = detectProviderError(trimmed);
-        if (providerError) {
-          lastProviderError = providerError;
-          log.info(`» provider error detected (${providerError}): ${trimmed.substring(0, 500)}`);
+        const match = findProviderErrorMatch(trimmed);
+        if (match) {
+          lastProviderError = match.label;
+          log.info(`» provider error detected (${match.label}): ${match.excerpt}`);
         } else {
           log.debug(trimmed);
         }
