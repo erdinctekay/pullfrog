@@ -712,7 +712,7 @@ function runDiffCoveragePreflight(params: { ctx: ToolContext }): void {
     .join("\n");
   throw new Error(
     `diff coverage pre-flight: some TOC regions were not read before review submission. ` +
-      `this is a one-time nudge — read the ranges below from ${coverageState.diffPath} on a best-effort basis, then call create_pull_request_review again with the same arguments. ` +
+      `this is a one-time nudge — read the ranges below from ${coverageState.diffPath} on a best-effort basis, then call create_pull_request_review again. ` +
       `you are NOT obligated to read generated artifacts (lockfiles like pnpm-lock.yaml / package-lock.json / yarn.lock / Cargo.lock; codegen output like *.gen.*, *.pb.go, *.generated.*; snapshot/fixture dirs like __snapshots__/; migration metadata like drizzle/meta/, prisma migration SQL). ` +
       `if every unread region is generated, retry immediately without reading. ` +
       `this pre-flight will not block again in this review session.\n\n` +
