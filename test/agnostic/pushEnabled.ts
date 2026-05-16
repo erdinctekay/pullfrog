@@ -18,8 +18,8 @@ const fixture = defineFixture(
 3. Report if it succeeded
 
 ## Test 2: Tag Operations
-1. Create a local tag using the git MCP tool: git tag -a test-tag-enabled -m "test tag"
-2. Try push_tags tool with tag "test-tag-enabled"
+1. Create a local tag using the git MCP tool: git tag -a test-tag-enabled-\${RANDOM} -m "test tag"
+2. Try push_tags tool with the tag you just created
 3. Report if tag push succeeded
 
 ## Test 3: Branch Deletion (cleanup)
