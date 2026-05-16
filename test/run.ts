@@ -2,9 +2,6 @@ import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
-import { runInDocker } from "../utils/docker.ts";
-import { ensureGitHubToken } from "../utils/github.ts";
-import { isInsideDocker } from "../utils/globals.ts";
 import { killTrackedChildren, setSignalHandler } from "../utils/subprocess.ts";
 import {
   type AgentResult,
@@ -37,17 +34,16 @@ import {
  *   - "agnostic": runs with opencode only, excluded when filtering by agent
  *   - "adhoc": excluded from default runs, must be explicitly requested
  *
- * by default, runs in a Docker container for isolation.
+ * runs in-process. for the GHA-like Linux container, invoke via
+ * `pnpm gha test/run.ts […]` (the `runtest` package script does this).
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const actionDir = join(__dirname, "..");
 
-// load .env files
 config({ path: join(actionDir, ".env") });
 config({ path: join(actionDir, "..", ".env") });
 
-const nodeModulesVolume = "pullfrog-action-test-node-modules";
 const mcpPortBase = 49000;
 let nextMcpPort = mcpPortBase;
 
@@ -55,25 +51,6 @@ function allocateMcpPort(): number {
   const port = nextMcpPort;
   nextMcpPort += 1;
   return port;
-}
-
-function buildNodeCmd(args: string[]): string {
-  const passArgs = args.map((arg) => `'${arg.replace(/'/g, "'\\''")}'`).join(" ");
-  return `node test/run.ts ${passArgs}`;
-}
-
-// run the test runner inside docker
-function runTestsInDocker(args: string[]): never {
-  const result = runInDocker({
-    actionDir,
-    args,
-    nodeCmd: buildNodeCmd(args),
-    volumeName: nodeModulesVolume,
-    envFilterMode: "allowlist",
-    onStart: () => console.log("» running tests in docker container...\n"),
-  });
-
-  process.exit(result.status ?? 1);
 }
 
 type TestInfo = {
@@ -393,14 +370,6 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  // run in Docker unless already inside
-  if (!isInsideDocker) {
-    // acquire token for docker if needed
-    await ensureGitHubToken();
-    runTestsInDocker(args);
-  }
-
-  // load all tests
   const allTests = await loadAllTests();
   const parsed = parseArgs(args, allTests);
 

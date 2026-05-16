@@ -1,0 +1,31 @@
+# the Dockerfile only `COPY`s docker-entrypoint.sh, so most of this is
+# defense-in-depth — modern docker BuildKit (default since docker 23)
+# already prunes unreferenced files from the build context. but:
+#  - documents intent for future maintainers who add `COPY . .`
+#  - resurfaces the bytes-saved win if someone disables BuildKit
+#    (DOCKER_BUILDKIT=0) or adopts a builder that doesn't prune
+#  - keeps `docker build` snappy even on cold builders that DO send
+#    everything
+
+# pnpm-managed workspace deps — large and never needed at build time
+node_modules/
+
+# secrets — must never enter an image, even by accident
+.env
+.env.*
+!.env.example
+
+# build outputs
+dist/
+build/
+*.log
+
+# editor / VCS noise
+.DS_Store
+.idea/
+.vscode/
+
+# tests + fixtures we don't need at build time
+coverage/
+test/
+.scripts/

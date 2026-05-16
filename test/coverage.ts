@@ -38,8 +38,12 @@ export const ALWAYS_RUN_ALL: string[] = [
   "action/utils/setup.ts",
   "action/utils/lifecycle.ts",
   "action/utils/install.ts",
-  "action/utils/docker.ts",
+  "action/utils/runFixture.ts",
   "action/utils/globals.ts",
+  // GHA-like container plumbing (changes invalidate every test's environment)
+  "action/Dockerfile",
+  "action/docker-entrypoint.sh",
+  "action/gha.ts",
   // MCP orchestrator (every test runs through it)
   "action/mcp/server.ts",
   "action/mcp/shared.ts",
