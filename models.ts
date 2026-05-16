@@ -189,15 +189,22 @@ export const providers = {
         openRouterResolve: "openrouter/x-ai/grok-4.3",
         preferred: true,
       },
+      // legacy aliases — xAI retired the entire fast/code-fast line on
+      // 2026-05-15 (https://docs.x.ai/developers/migration/may-15-deprecation)
+      // and now redirects every deprecated text-model slug to grok-4.3 at
+      // standard pricing. fall back to the live `xai/grok` so the alias
+      // chain resolves to grok-4.3 for both direct-key and OpenRouter users.
       "grok-fast": {
         displayName: "Grok Fast",
         resolve: "xai/grok-4-1-fast",
-        openRouterResolve: "openrouter/x-ai/grok-4.1-fast",
+        openRouterResolve: "openrouter/x-ai/grok-4.3",
+        fallback: "xai/grok",
       },
       "grok-code-fast": {
         displayName: "Grok Code Fast",
         resolve: "xai/grok-code-fast-1",
-        openRouterResolve: "openrouter/x-ai/grok-code-fast-1",
+        openRouterResolve: "openrouter/x-ai/grok-4.3",
+        fallback: "xai/grok",
       },
     },
   }),
