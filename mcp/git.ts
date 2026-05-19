@@ -490,6 +490,30 @@ export function GitTool(ctx: ToolContext) {
         }
       }
 
+      // `git merge-base --is-ancestor` uses exit codes as data: 0 = ancestor,
+      // 1 = not-an-ancestor, >1 = real error. Surface the binary answer
+      // instead of throwing on exit 1. see #766.
+      if (command === "merge-base" && args.includes("--is-ancestor")) {
+        let isAncestor = true;
+        $("git", [command, ...args], {
+          log: false,
+          onError: (r) => {
+            if (r.status === 1) {
+              isAncestor = false;
+              return;
+            }
+            const detail = [r.stderr, r.stdout]
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .join("\n");
+            throw new Error(
+              `git merge-base --is-ancestor failed (exit ${r.status}): ${detail || "Unknown error"}`
+            );
+          },
+        });
+        return { success: true, isAncestor };
+      }
+
       const output = $("git", [command, ...args], { log: false });
       const lineCount = output.split("\n").length;
       if (lineCount > COLLAPSE_THRESHOLD) {

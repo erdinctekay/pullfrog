@@ -86,8 +86,16 @@ export function $(cmd: string, args: string[], options?: ShellOptions): string {
       return stdout.trim();
     }
 
+    // many git subcommands write context-bearing diagnostics to stdout, not
+    // stderr (merge conflicts, cherry-pick rejections, diff --exit-code,
+    // ls-files --error-unmatch). Falling back to "Unknown error" robbed the
+    // agent of any signal and forced an extra MCP round-trip. see #766.
+    const detail = [stderr, stdout]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("\n");
     throw new Error(
-      `Command failed with exit code ${errorResult.status}: ${stderr || "Unknown error"}`
+      `Command failed with exit code ${errorResult.status}: ${detail || "Unknown error"}`
     );
   }
 

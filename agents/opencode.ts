@@ -19,7 +19,13 @@ import * as core from "@actions/core";
 import { pullfrogMcpName } from "../external.ts";
 import { BEDROCK_MODEL_ID_ENV, modelAliases } from "../models.ts";
 import type { ToolState } from "../toolState.ts";
-import { getIdleMs, markActivity } from "../utils/activity.ts";
+import {
+  getIdleMs,
+  isActivitySuspended,
+  markActivity,
+  resumeActivity,
+  suspendActivity,
+} from "../utils/activity.ts";
 import { type AgentDiagnostic, formatAgentHangBody } from "../utils/agentHangReport.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
 import { installCodexAuth } from "../utils/codexHome.ts";
@@ -651,6 +657,21 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         return;
       }
 
+      // suspend the activity watchdog across the tool call (issue #760).
+      // for `task` tool dispatches the injected plugin already reverbs
+      // child.stdout chunks, so this is mostly defense-in-depth there;
+      // for non-task MCP tools (checkout_pr, etc.) the suspend is the
+      // only thing keeping a multi-minute fetch from tripping the 300s
+      // spawn-level idle timer. gate by part status: bus-envelope
+      // re-dispatches at line 915 fire only on terminal statuses
+      // (`completed`/`error`) and never produce a paired `tool_result`,
+      // so suspending on those would leak the watchdog open until the
+      // 15min auto-resume — exactly the issue #12 zombie-run window.
+      const status = event.part?.state?.status;
+      if (status !== "completed" && status !== "error") {
+        suspendActivity();
+      }
+
       // when the orchestrator dispatches a subagent via the `task` tool, push
       // a label for the upcoming child session so its events are attributable.
       // record BEFORE label lookup: this event's session is the parent (whose
@@ -732,6 +753,7 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       }
     },
     tool_result: (event: OpenCodeToolResultEvent) => {
+      resumeActivity();
       const toolId = event.part?.callID || event.tool_id;
       const state = event.part?.state;
       const status = state?.status ?? event.status ?? "unknown";
@@ -979,13 +1001,15 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // wrapper would grow unbounded for multi-lens Reviews and previously
       // crashed the wrapper with RangeError at ~1 GiB. see issue #680.
       retain: "none",
-      // NB: we used to pass `isPausedExternally: isSubagentInFlight` to suspend
-      // the activity timer during subagent dispatches. unnecessary now that
-      // our injected plugin (action/agents/opencodePlugin.ts) re-emits
-      // subagent `message.part.updated` events on opencode's stdout — those
-      // arrive at child.stdout here, fire updateActivity(), and reset
-      // lastActivityTime naturally. verified empirically in PR #634
-      // (~3.3 plugin events/sec during a typical subagent run).
+      // suspend the spawn-level idle watchdog across MCP tool calls (issue
+      // #760). bracketed by suspendActivity()/resumeActivity() in the
+      // tool_use/tool_result handlers above, bounded by
+      // MAX_TOOL_CALL_SUSPENSION_MS in activity.ts. the injected plugin
+      // (action/agents/opencodePlugin.ts) re-emits subagent
+      // `message.part.updated` events on opencode's stdout, so subagent
+      // dispatches keep marking child.stdout activity as well — defense
+      // in depth (verified empirically in PR #634, ~3.3 plugin events/sec).
+      isPausedExternally: isActivitySuspended,
       onStdout: async (chunk) => {
         const text = chunk.toString();
         output.append(text);

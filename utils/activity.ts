@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { log } from "./log.ts";
 
 function isMonitorDebugEnabled(): boolean {
   return (
@@ -80,6 +81,19 @@ type WriteFunction = {
 let _lastActivity = performance.now();
 
 /**
+ * upper bound on how long a single tool call can suspend the activity
+ * watchdog. matched against the typical worst-case `checkout_pr`
+ * fetch+deepen on a large monorepo (issue #760: 4-5min) plus generous
+ * headroom for slower MCP tools, while still bounding the worst case if
+ * a tool genuinely hangs and `tool_result` never arrives — auto-resume
+ * fires here and the normal idle clock takes over from a fresh baseline.
+ */
+export const MAX_TOOL_CALL_SUSPENSION_MS = 15 * 60 * 1000;
+
+let _suspendedAt: number | null = null;
+let _suspensionTimer: NodeJS.Timeout | null = null;
+
+/**
  * mark activity to reset the no-output timeout.
  * call this whenever the agent emits any event, even if it isn't logged to stdout.
  */
@@ -88,10 +102,53 @@ export function markActivity(): void {
 }
 
 /**
- * get the time since last activity in milliseconds
+ * get the time since last activity in milliseconds.
+ * returns 0 while the watchdog is suspended (issue #760).
  */
 export function getIdleMs(): number {
+  if (_suspendedAt !== null) return 0;
   return Math.round(performance.now() - _lastActivity);
+}
+
+/**
+ * suspend the activity watchdog while a long-running, in-flight unit of
+ * work is happening (e.g. an MCP `tools/call` that synchronously awaits
+ * a multi-minute git fetch). bracket calls with `resumeActivity()` from
+ * the agent harness's `tool_use` / `tool_result` event handlers.
+ *
+ * - idempotent: nested suspends are no-ops; the first resume wins.
+ * - bounded: auto-resumes after `maxMs` so a buggy tool that never
+ *   produces a `tool_result` can't pin the watchdog open forever.
+ * - safe: only the *agent harness* (claude.ts / opencode.ts) on explicit,
+ *   paired CLI events should call this. NEVER blanket-suspend on internal
+ *   noise — that would resurrect issue #12 zombie runs.
+ */
+export function suspendActivity(maxMs: number = MAX_TOOL_CALL_SUSPENSION_MS): void {
+  if (_suspendedAt !== null) return;
+  _suspendedAt = performance.now();
+  _suspensionTimer = setTimeout(() => {
+    log.warning(`activity watchdog suspended >${Math.round(maxMs / 1000)}s — auto-resuming`);
+    resumeActivity();
+  }, maxMs);
+  _suspensionTimer.unref?.();
+}
+
+/**
+ * resume the activity watchdog. resets the idle baseline so a stale
+ * idle window before the suspend can't immediately re-fire.
+ */
+export function resumeActivity(): void {
+  if (_suspendedAt === null) return;
+  _suspendedAt = null;
+  if (_suspensionTimer) {
+    clearTimeout(_suspensionTimer);
+    _suspensionTimer = null;
+  }
+  _lastActivity = performance.now();
+}
+
+export function isActivitySuspended(): boolean {
+  return _suspendedAt !== null;
 }
 
 function wrapWrite(original: WriteFunction, onActivity: () => void): WriteFunction {

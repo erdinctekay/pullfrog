@@ -379,10 +379,30 @@ export async function acquireNewToken(opts?: AcquireTokenOptions): Promise<strin
         );
       },
     });
-  } else {
-    // local development via GitHub App
-    return await acquireTokenViaGitHubApp(opts);
   }
+  // running inside GitHub Actions but the OIDC env vars are absent — the
+  // workflow is missing `permissions: id-token: write`. surface an
+  // actionable, customer-facing message; the GitHub-App branch below is
+  // local-dev only. see #739.
+  if (process.env.GITHUB_ACTIONS === "true") {
+    throw new Error(
+      "missing `permissions: id-token: write` on the Pullfrog workflow job.\n" +
+        "\n" +
+        "Pullfrog mints short-lived GitHub App installation tokens via OIDC and\n" +
+        "requires `id-token: write` to be granted at the job level. add the\n" +
+        "following to your workflow yaml:\n" +
+        "\n" +
+        "  jobs:\n" +
+        "    pullfrog:\n" +
+        "      permissions:\n" +
+        "        id-token: write   # mint Pullfrog installation tokens via OIDC\n" +
+        "        contents: read    # for actions/checkout\n" +
+        "\n" +
+        "see https://docs.pullfrog.com/headless-action#required-permissions for the full template."
+    );
+  }
+  // local development via GitHub App
+  return await acquireTokenViaGitHubApp(opts);
 }
 
 export interface RepoContext {
