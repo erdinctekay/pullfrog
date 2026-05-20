@@ -244,11 +244,13 @@ For simple, well-defined tasks, skip the plan phase and go straight to build.`,
    - test changes, then review the diff before committing — verify only intended changes are present, no debug artifacts remain, no fix turned out to be bloat in context (revert any that did), and the changes are clean enough that a senior engineer would approve without hesitation
    - commit locally via shell (\`git add . && git commit -m "..."\`)
 
-6. Finalize:
+6. Finalize. Reply + resolve are paired write actions: do BOTH or NEITHER for each thread.
    - confirm a clean working tree, then push via \`${t("push_branch")}\` (same push/prepush guidance as Build mode in *SYSTEM*)
-   - reply to each comment **exactly once** using \`${t("reply_to_review_comment")}\` — do not re-emit the same call (the runtime dedupes identical bodies and the second call is wasted)
-   - resolve addressed threads via \`${t("resolve_review_thread")}\`
-   - call \`${t("report_progress")}\` with a brief summary (or the exact push error if push failed)`,
+   - **if push fails**, call \`${t("report_progress")}\` with the exact error and STOP — do NOT reply or resolve any thread until the fix is live on the remote. Resolving a thread without the fix landing misleads the reviewer.
+   - **on push success**, for each thread you acted on:
+     - reply ONCE via \`${t("reply_to_review_comment")}\`. The \`comment_id\` parameter takes the root comment's numeric \`id=\` (from the first \`comment author=...\` tag in the \`${t("get_review_comments")}\` output) — NOT the \`thread=\` value; that's a separate GraphQL ID used by resolve. The runtime dedupes identical bodies within a session.
+     - **immediately** call \`${t("resolve_review_thread")}\` with that thread's \`thread=\` value as \`thread_id\`. Resolve every thread where you (a) made the requested code change in full — partial fixes leave the thread open — OR (b) replied with a substantive answer the user explicitly asked for. Do NOT resolve threads where you pushed back on the request and the disagreement is unresolved; leave those open for the human to mediate.
+   - call \`${t("report_progress")}\` with a brief summary`,
     },
     // Review and IncrementalReview use a 0-or-2+ lens pattern. The default is
     // 0 lenses (orchestrator handles the review solo). Multi-lens (2+
@@ -412,7 +414,15 @@ ${PR_SUMMARY_FORMAT}`,
 
 3. **incremental scope**: if \`incrementalDiffPath\` is present, read it to see what changed since the last review. this is a range-diff that isolates the net changes, filtering out base branch noise. if not present, fall back to reviewing the full PR diff and determine what changed since Pullfrog's most recent review.
 
-4. **prior feedback**: fetch previous reviews via \`${t("list_pull_request_reviews")}\`. for the most recent Pullfrog review, call \`${t("get_review_comments")}\` with the review ID to retrieve specific prior line-level feedback. you'll use this to filter your aggregation in step 8 — anything already flagged in a prior review and not changed by the new commits should not be re-raised. you do NOT need to render this in the review body; the rolling PR summary snapshot is the durable record of what's been addressed.
+4. **prior feedback — read AND retire it**: fetch previous reviews via \`${t("list_pull_request_reviews")}\`, then call \`${t("get_review_comments")}\` on each prior Pullfrog review. Each thread renders as a section whose first line is a fenced tag \`comment author=<login> id=<fullDatabaseId> review=<reviewId> thread=<graphqlId>\`; section headers carry \`[RESOLVED]\` / \`[OUTDATED]\` when relevant. For every **open, Pullfrog-originated** thread, decide and act:
+
+   - **Pullfrog-originated** means the FIRST \`comment author=...\` tag in the section is \`author=pullfrog[bot]\`. The \`*\` marker on individual comments is unrelated — it flags whether a comment belongs to the queried review, not whether it is the thread root.
+   - **addressed?** read the file at the thread's anchor and judge whether the substantive concern is now resolved by the new commits. Lines being modified isn't enough: reformatting, renaming, or moving the same code elsewhere doesn't address a concern. If the comment raised multiple distinct concerns, ALL must be addressed. The \`[OUTDATED]\` tag means GitHub moved the anchor (line shift, force-push, rename) — it does NOT mean the concern was addressed; re-read the code at its new location before deciding.
+   - **if addressed**: call \`${t("reply_to_review_comment")}\` with the root tag's numeric \`id=\` as \`comment_id\` (NOT the \`thread=\` value — that's a separate GraphQL ID used only by resolve) and a one-line body (e.g. \`Addressed in <short-sha>.\`), then call \`${t("resolve_review_thread")}\` with the root tag's \`thread=\` value as \`thread_id\`. Do this BEFORE drafting the new review so the GitHub thread state aligns with the new review by the time it lands.
+   - **if uncertain or partially addressed**: leave open. False-positive resolutions erode trust faster than false negatives.
+   - **scope**: only retire Pullfrog-originated threads. Threads from human reviewers belong to those humans to resolve, even if the commit happened to address them.
+
+   The remaining open threads feed step 8's dedup filter — anything already flagged and unchanged by the new commits should not be re-raised. The rolling PR summary snapshot is the durable record of retire activity; you don't need to surface it in the review body.
 
 5. **triage**: orient on the *incremental* changes — domain, seams, external contracts, user-facing surfaces. pull as much context as you need to render a confident review: read related files, grep for callers of changed symbols, check tests that exercise the touched paths. **you are the synthesizer.**
 
