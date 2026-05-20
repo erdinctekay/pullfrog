@@ -13,15 +13,17 @@
  *
  * `"bedrock"` means the actual model ID comes from `BEDROCK_MODEL_ID`
  * (an AWS-canonical Bedrock model ID like `us.anthropic.claude-opus-4-7`
- * or `amazon.nova-pro-v1:0`). enterprise Bedrock customers self-select for
- * version control — silent alias bumps would break compliance review,
- * model-access enrollment, and provisioned-throughput contracts. so the
- * single `bedrock/byok` entry is a routing slug, not a model alias: the
- * harness reads `BEDROCK_MODEL_ID` and routes to claude-code (when the ID
- * contains "anthropic") or opencode (everything else, with an
- * `amazon-bedrock/` prefix).
+ * or `amazon.nova-pro-v1:0`). `"vertex"` means the actual model ID comes
+ * from `VERTEX_MODEL_ID` (a Vertex AI model ID like
+ * `claude-opus-4-1@20250805` or `gemini-2.5-pro`). enterprise hosted-model
+ * customers self-select for version control — silent alias bumps would break
+ * compliance review, model-access enrollment, and provisioned-throughput
+ * contracts. so the single `bedrock/byok` and `vertex/byok` entries are
+ * routing slugs, not model aliases: the harness reads the backend-specific
+ * env var and routes to claude-code for Anthropic IDs or opencode for
+ * everything else.
  */
-export type ModelRouting = "bedrock";
+export type ModelRouting = "bedrock" | "vertex";
 
 export interface ModelAlias {
   /** stable alias stored in DB, e.g. "anthropic/claude-opus" */
@@ -375,6 +377,25 @@ export const providers = {
       },
     },
   }),
+  vertex: provider({
+    displayName: "Google Vertex AI",
+    envVars: [
+      "VERTEX_SERVICE_ACCOUNT_JSON",
+      "GOOGLE_CLOUD_PROJECT",
+      "VERTEX_LOCATION",
+      "VERTEX_MODEL_ID",
+    ],
+    models: {
+      // single routing entry — the actual Vertex AI model ID is read from
+      // VERTEX_MODEL_ID at run time. see ModelRouting docs for why we don't
+      // catalog individual Vertex models.
+      byok: {
+        displayName: "Google Vertex AI",
+        resolve: "vertex",
+        routing: "vertex",
+      },
+    },
+  }),
   openrouter: provider({
     displayName: "OpenRouter",
     envVars: ["OPENROUTER_API_KEY"],
@@ -605,6 +626,9 @@ export function resolveOpenRouterModel(slug: string): string | undefined {
 /** env var that supplies the Bedrock model ID for the `bedrock/byok` slug. */
 export const BEDROCK_MODEL_ID_ENV = "BEDROCK_MODEL_ID";
 
+/** env var that supplies the Vertex AI model ID for the `vertex/byok` slug. */
+export const VERTEX_MODEL_ID_ENV = "VERTEX_MODEL_ID";
+
 /**
  * the Bedrock model ID passed to claude-code or opencode is whatever the
  * user set in `BEDROCK_MODEL_ID` — Pullfrog never resolves or upgrades it.
@@ -635,4 +659,14 @@ export function isBedrockAnthropicId(bedrockModelId: string): boolean {
   // IDs (anthropic.* / us.anthropic.*) and ARN-form IDs (where the relevant
   // foundation segment sits between `/` and `.` inside the resource name).
   return bedrockModelId.toLowerCase().split(/[./:]/).includes("anthropic");
+}
+
+/**
+ * Vertex Anthropic model IDs start with the Claude family name, e.g.
+ * `claude-opus-4-1@20250805`. partner-model resource paths can contain the
+ * substring "anthropic" elsewhere, so the Bedrock segment check does not
+ * transfer — anchor on the model ID prefix instead.
+ */
+export function isVertexAnthropicId(vertexModelId: string): boolean {
+  return /^claude-/i.test(vertexModelId.trim());
 }

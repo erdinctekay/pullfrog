@@ -16,7 +16,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
-import { BEDROCK_MODEL_ID_ENV, isBedrockAnthropicId } from "../models.ts";
+import {
+  BEDROCK_MODEL_ID_ENV,
+  isBedrockAnthropicId,
+  isVertexAnthropicId,
+  VERTEX_MODEL_ID_ENV,
+} from "../models.ts";
 
 import {
   getIdleMs,
@@ -39,6 +44,7 @@ import {
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import { applyClaudeVertexEnv } from "../utils/vertex.ts";
 import {
   buildLearningsReflectionPrompt,
   runPostRunRetryLoop,
@@ -825,36 +831,50 @@ const MANAGED_SETTINGS_PATH = `${MANAGED_SETTINGS_DIR}/managed-settings.json`;
 // tail, sed) and survives bypassPermissions mode. See wiki/codex-auth.md.
 const CODEX_AUTH_DENY_PATH = "~/.local/share/opencode/auth.json";
 
-const managedSettings = {
-  allowManagedPermissionRulesOnly: true,
-  allowManagedHooksOnly: true,
-  permissions: {
-    deny: [
-      "Read(//proc/**)",
-      "Read(//sys/**)",
-      "Grep(//proc/**)",
-      "Grep(//sys/**)",
-      "Edit(//proc/**)",
-      "Edit(//sys/**)",
-      "Glob(//proc/**)",
-      "Glob(//sys/**)",
-      `Read(${CODEX_AUTH_DENY_PATH})`,
-      `Grep(${CODEX_AUTH_DENY_PATH})`,
-      `Edit(${CODEX_AUTH_DENY_PATH})`,
-      `Glob(${CODEX_AUTH_DENY_PATH})`,
-    ],
-  },
-  sandbox: {
-    filesystem: {
-      denyRead: ["/proc", "/sys", CODEX_AUTH_DENY_PATH],
+function buildManagedSettings(ctx: AgentRunContext) {
+  const secretDenyPaths = ctx.secretDenyPaths ?? [];
+  const toolDeny = secretDenyPaths.flatMap((path) => [
+    `Read(${path}/**)`,
+    `Read(/${path}/**)`,
+    `Grep(${path}/**)`,
+    `Grep(/${path}/**)`,
+    `Edit(${path}/**)`,
+    `Edit(/${path}/**)`,
+    `Glob(${path}/**)`,
+    `Glob(/${path}/**)`,
+  ]);
+  return {
+    allowManagedPermissionRulesOnly: true,
+    allowManagedHooksOnly: true,
+    permissions: {
+      deny: [
+        "Read(//proc/**)",
+        "Read(//sys/**)",
+        "Grep(//proc/**)",
+        "Grep(//sys/**)",
+        "Edit(//proc/**)",
+        "Edit(//sys/**)",
+        "Glob(//proc/**)",
+        "Glob(//sys/**)",
+        `Read(${CODEX_AUTH_DENY_PATH})`,
+        `Grep(${CODEX_AUTH_DENY_PATH})`,
+        `Edit(${CODEX_AUTH_DENY_PATH})`,
+        `Glob(${CODEX_AUTH_DENY_PATH})`,
+        ...toolDeny,
+      ],
     },
-  },
-};
+    sandbox: {
+      filesystem: {
+        denyRead: ["/proc", "/sys", CODEX_AUTH_DENY_PATH, ...secretDenyPaths],
+      },
+    },
+  };
+}
 
-function installManagedSettings(): void {
+function installManagedSettings(ctx: AgentRunContext): void {
   if (process.env.CI !== "true") return;
 
-  const content = JSON.stringify(managedSettings, null, 2);
+  const content = JSON.stringify(buildManagedSettings(ctx), null, 2);
   try {
     execFileSync("sudo", ["mkdir", "-p", MANAGED_SETTINGS_DIR]);
     execFileSync("sudo", ["tee", MANAGED_SETTINGS_PATH], {
@@ -887,11 +907,19 @@ export const claude = agent({
       bedrockModelId !== undefined &&
       bedrockModelId === specifier &&
       isBedrockAnthropicId(specifier);
+    const vertexModelId = process.env[VERTEX_MODEL_ID_ENV]?.trim();
+    const isVertexRoute =
+      specifier !== undefined &&
+      vertexModelId !== undefined &&
+      vertexModelId === specifier &&
+      isVertexAnthropicId(specifier);
     const model = !specifier
       ? undefined
       : isBedrockRoute
         ? specifier
-        : stripProviderPrefix(specifier);
+        : isVertexRoute
+          ? undefined
+          : stripProviderPrefix(specifier);
 
     const homeEnv = {
       HOME: ctx.tmpdir,
@@ -913,7 +941,7 @@ export const claude = agent({
     const mcpConfigPath = writeMcpConfig(ctx);
     const effort = resolveEffort(model);
 
-    installManagedSettings();
+    installManagedSettings(ctx);
 
     // base args shared between initial run and continue runs
     const baseArgs = [
@@ -966,6 +994,10 @@ export const claude = agent({
     };
     if (isBedrockRoute) {
       env.CLAUDE_CODE_USE_BEDROCK = "1";
+    }
+    if (isVertexRoute) {
+      applyClaudeVertexEnv(env);
+      env.ANTHROPIC_MODEL = specifier;
     }
 
     // claude-code's `Vw()` resolver prefers ANTHROPIC_API_KEY over the OAuth

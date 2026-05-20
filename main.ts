@@ -49,6 +49,11 @@ import { resolveTimeoutMs, TIMEOUT_DISABLED } from "./utils/time.ts";
 import { Timer } from "./utils/timer.ts";
 import { createTodoTracker } from "./utils/todoTracking.ts";
 import { getJobToken, resolveTokens } from "./utils/token.ts";
+import {
+  cleanupVertexCredentials,
+  materializeVertexCredentials,
+  type VertexCredentials,
+} from "./utils/vertex.ts";
 import { resolveRun } from "./utils/workflow.ts";
 
 export { Inputs } from "./utils/payload.ts";
@@ -177,6 +182,7 @@ export async function main(): Promise<MainResult> {
   let toolContext: ToolContext | undefined;
   let progressCallbackDisabled = false;
   let todoTracker: ReturnType<typeof createTodoTracker> | undefined;
+  let vertexCredentials: VertexCredentials | undefined;
 
   try {
     if (payload.cwd && process.cwd() !== payload.cwd) {
@@ -232,6 +238,8 @@ export async function main(): Promise<MainResult> {
       );
       toolState.modelFallback = { from: fallback.from };
     }
+
+    vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
 
     const agent = resolveAgent({ model: resolvedModel });
 
@@ -475,6 +483,7 @@ export async function main(): Promise<MainResult> {
       resolvedModel,
       mcpServerUrl: mcpHttpServer.url,
       tmpdir,
+      secretDenyPaths: vertexCredentials ? [vertexCredentials.secretDir] : [],
       instructions,
       todoTracker,
       stopScript: runContext.repoSettings.stopScript,
@@ -619,5 +628,6 @@ export async function main(): Promise<MainResult> {
         await patchWorkflowRunFields(toolContext, patch);
       }
     }
+    cleanupVertexCredentials(vertexCredentials);
   }
 }

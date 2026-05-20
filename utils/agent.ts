@@ -4,10 +4,13 @@ import {
   BEDROCK_MODEL_ID_ENV,
   getModelProvider,
   isBedrockAnthropicId,
+  isVertexAnthropicId,
   resolveCliModel,
   resolveDisplayAlias,
+  VERTEX_MODEL_ID_ENV,
 } from "../models.ts";
 import { log } from "./cli.ts";
+import { VERTEX_SERVICE_ACCOUNT_JSON_ENV } from "./vertex.ts";
 
 function hasEnvVar(name: string): boolean {
   const val = process.env[name];
@@ -25,6 +28,10 @@ function hasBedrockAuth(): boolean {
   );
 }
 
+function hasVertexAuth(): boolean {
+  return hasEnvVar(VERTEX_SERVICE_ACCOUNT_JSON_ENV);
+}
+
 /**
  * resolve a single slug to its CLI-ready model string. routing aliases
  * (e.g. `bedrock/byok`) defer to their backing env var instead of the
@@ -40,11 +47,22 @@ function resolveSlug(slug: string): string | undefined {
     if (!bedrockId) {
       throw new Error(
         `${BEDROCK_MODEL_ID_ENV} env var is required when the model is set to "${slug}". ` +
-          `set it to an AWS Bedrock model ID (e.g. "us.anthropic.claude-opus-4-7", "amazon.nova-pro-v1:0"). ` +
+          `set it to an AWS Bedrock model ID from the Bedrock console. ` +
           `see https://docs.pullfrog.com/bedrock for setup.`
       );
     }
     return bedrockId;
+  }
+  if (alias?.routing === "vertex") {
+    const vertexId = process.env[VERTEX_MODEL_ID_ENV]?.trim();
+    if (!vertexId) {
+      throw new Error(
+        `${VERTEX_MODEL_ID_ENV} env var is required when the model is set to "${slug}". ` +
+          `set it to a Google Vertex AI model ID from Model Garden. ` +
+          `see https://docs.pullfrog.com/vertex for setup.`
+      );
+    }
+    return vertexId;
   }
   return resolveCliModel(slug);
 }
@@ -97,7 +115,14 @@ export function resolveAgent(ctx: { model?: string | undefined }): Agent {
     return isBedrockAnthropicId(ctx.model) ? agents.claude : agents.opencode;
   }
 
-  // 3. if model is Anthropic and Claude Code credentials are available, use Claude Code
+  // 3. Vertex routing: same shape as Bedrock, but Anthropic Vertex IDs are
+  //    anchored `claude-*` IDs and non-Anthropic models use opencode's
+  //    `google-vertex` provider.
+  if (ctx.model && hasVertexAuth() && process.env[VERTEX_MODEL_ID_ENV]?.trim() === ctx.model) {
+    return isVertexAnthropicId(ctx.model) ? agents.claude : agents.opencode;
+  }
+
+  // 4. if model is Anthropic and Claude Code credentials are available, use Claude Code
   if (ctx.model) {
     try {
       const provider = getModelProvider(ctx.model);
@@ -109,6 +134,6 @@ export function resolveAgent(ctx: { model?: string | undefined }): Agent {
     }
   }
 
-  // 4. default: OpenCode (universal, supports all providers)
+  // 5. default: OpenCode (universal, supports all providers)
   return agents.opencode;
 }

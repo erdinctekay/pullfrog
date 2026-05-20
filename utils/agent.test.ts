@@ -1,5 +1,9 @@
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveAgent, resolveModel } from "./agent.ts";
+import { cleanupVertexCredentials, materializeVertexCredentials } from "./vertex.ts";
 
 const savedEnv = { ...process.env };
 
@@ -12,6 +16,12 @@ const STRIPPED = [
   /^AWS_SESSION_TOKEN$/,
   /^AWS_REGION$/,
   /^BEDROCK_MODEL_ID$/,
+  /^GOOGLE_APPLICATION_CREDENTIALS$/,
+  /^GOOGLE_CLOUD_PROJECT$/,
+  /^VERTEX_SERVICE_ACCOUNT_JSON$/,
+  /^VERTEX_LOCATION$/,
+  /^VERTEX_MODEL_ID$/,
+  /^PULLFROG_SECRET_HOME$/,
   /^PULLFROG_MODEL$/,
   /^PULLFROG_AGENT$/,
 ];
@@ -83,6 +93,20 @@ describe("resolveAgent", () => {
       expect(resolveAgent({ model: "us.anthropic.claude-opus-4-7" }).name).toBe("opencode");
     });
   });
+
+  describe("vertex routing", () => {
+    it("routes Anthropic Vertex IDs to claude", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+      expect(resolveAgent({ model: "claude-opus-4-1@20250805" }).name).toBe("claude");
+    });
+
+    it("routes Gemini Vertex IDs to opencode", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.VERTEX_MODEL_ID = "gemini-2.5-pro";
+      expect(resolveAgent({ model: "gemini-2.5-pro" }).name).toBe("opencode");
+    });
+  });
 });
 
 describe("resolveModel", () => {
@@ -127,5 +151,48 @@ describe("resolveModel", () => {
   it("PULLFROG_MODEL=bedrock/byok throws if BEDROCK_MODEL_ID is missing", () => {
     process.env.PULLFROG_MODEL = "bedrock/byok";
     expect(() => resolveModel({ slug: "openai/gpt" })).toThrow("BEDROCK_MODEL_ID");
+  });
+
+  it("resolves vertex/byok to VERTEX_MODEL_ID", () => {
+    process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+    expect(resolveModel({ slug: "vertex/byok" })).toBe("claude-opus-4-1@20250805");
+  });
+
+  it("throws when vertex/byok is selected without VERTEX_MODEL_ID", () => {
+    expect(() => resolveModel({ slug: "vertex/byok" })).toThrow("VERTEX_MODEL_ID");
+  });
+
+  it("PULLFROG_MODEL=vertex/byok defers to VERTEX_MODEL_ID, not the sentinel", () => {
+    process.env.PULLFROG_MODEL = "vertex/byok";
+    process.env.VERTEX_MODEL_ID = "gemini-2.5-pro";
+    expect(resolveModel({ slug: "openai/gpt" })).toBe("gemini-2.5-pro");
+  });
+});
+
+describe("materializeVertexCredentials", () => {
+  it("writes service-account JSON outside tmpdir and defaults project from project_id", () => {
+    const dir = mkdtempSync(join(tmpdir(), "vertex-creds-test-"));
+    process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+    process.env.PULLFROG_SECRET_HOME = dir;
+    process.env.VERTEX_SERVICE_ACCOUNT_JSON = JSON.stringify({
+      project_id: "test-project",
+      client_email: "pullfrog@test-project.iam.gserviceaccount.com",
+    });
+
+    try {
+      const credentials = materializeVertexCredentials({ model: "claude-opus-4-1@20250805" });
+
+      if (!credentials) throw new Error("expected vertex credentials");
+      expect(credentials.credentialsPath).toContain(join(dir, ".pullfrog", "secrets"));
+      expect(process.env.GOOGLE_APPLICATION_CREDENTIALS).toBe(credentials.credentialsPath);
+      expect(process.env.GOOGLE_CLOUD_PROJECT).toBe("test-project");
+      expect(readFileSync(credentials.credentialsPath, "utf8")).toBe(
+        process.env.VERTEX_SERVICE_ACCOUNT_JSON
+      );
+      expect(statSync(credentials.credentialsPath).mode & 0o777).toBe(0o600);
+      cleanupVertexCredentials(credentials);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

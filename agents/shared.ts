@@ -131,6 +131,8 @@ export interface AgentRunContext {
   resolvedModel?: string | undefined;
   mcpServerUrl: string;
   tmpdir: string;
+  /** harness-owned secret paths that agent filesystem tools must never read. */
+  secretDenyPaths?: string[] | undefined;
   instructions: ResolvedInstructions;
   todoTracker?: TodoTracker | undefined;
   /**

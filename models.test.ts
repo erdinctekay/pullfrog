@@ -3,6 +3,7 @@ import {
   getModelEnvVars,
   getModelProvider,
   isBedrockAnthropicId,
+  isVertexAnthropicId,
   modelAliases,
   parseModel,
   providers,
@@ -255,6 +256,20 @@ describe("isBedrockAnthropicId", () => {
 
   it("is case-insensitive", () => {
     expect(isBedrockAnthropicId("US.ANTHROPIC.CLAUDE-OPUS-4-7")).toBe(true);
+  });
+});
+
+describe("isVertexAnthropicId", () => {
+  it("matches Claude Vertex IDs by anchored prefix", () => {
+    expect(isVertexAnthropicId("claude-opus-4-1@20250805")).toBe(true);
+  });
+
+  it("rejects Gemini IDs", () => {
+    expect(isVertexAnthropicId("gemini-2.5-pro")).toBe(false);
+  });
+
+  it("ignores Anthropic substrings outside the prefix", () => {
+    expect(isVertexAnthropicId("publishers/anthropic/models/claude-opus-4-1")).toBe(false);
   });
 });
 

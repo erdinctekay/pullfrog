@@ -22,6 +22,11 @@ const STRIPPED_PREFIXES_OR_NAMES = [
   /^AWS_SESSION_TOKEN$/,
   /^AWS_REGION$/,
   /^BEDROCK_MODEL_ID$/,
+  /^GOOGLE_APPLICATION_CREDENTIALS$/,
+  /^GOOGLE_CLOUD_PROJECT$/,
+  /^VERTEX_SERVICE_ACCOUNT_JSON$/,
+  /^VERTEX_LOCATION$/,
+  /^VERTEX_MODEL_ID$/,
 ];
 
 beforeEach(() => {
@@ -154,6 +159,76 @@ describe("validateAgentApiKey", () => {
       expect(() =>
         validateAgentApiKey({ ...base, model: "us.anthropic.claude-opus-4-6-v1" })
       ).toThrow("AWS_BEARER_TOKEN_BEDROCK");
+    });
+  });
+
+  describe("vertex routing slug", () => {
+    it("passes with service-account JSON + project + location + model id", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).not.toThrow();
+    });
+
+    it("passes when project is derivable from service-account JSON", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = JSON.stringify({ project_id: "test-project" });
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "gemini-2.5-pro";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).not.toThrow();
+    });
+
+    it("throws when VERTEX_MODEL_ID is missing", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_LOCATION = "us-east5";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).toThrow(
+        "VERTEX_MODEL_ID"
+      );
+    });
+
+    it("throws when VERTEX_LOCATION is missing", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).toThrow(
+        "VERTEX_LOCATION"
+      );
+    });
+
+    it("throws when GOOGLE_CLOUD_PROJECT is missing and not derivable", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).toThrow(
+        "GOOGLE_CLOUD_PROJECT"
+      );
+    });
+
+    it("throws when no auth path is set", () => {
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "claude-opus-4-1@20250805";
+      expect(() => validateAgentApiKey({ ...base, model: "vertex/byok" })).toThrow(
+        "VERTEX_SERVICE_ACCOUNT_JSON"
+      );
+    });
+
+    it("accepts a raw Vertex model ID (post-resolveModel) without throwing", () => {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = "{}";
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "gemini-2.5-pro";
+      expect(() => validateAgentApiKey({ ...base, model: "gemini-2.5-pro" })).not.toThrow();
+    });
+
+    it("throws on raw Vertex model ID when auth is missing", () => {
+      process.env.GOOGLE_CLOUD_PROJECT = "test-project";
+      process.env.VERTEX_LOCATION = "us-east5";
+      process.env.VERTEX_MODEL_ID = "gemini-2.5-pro";
+      expect(() => validateAgentApiKey({ ...base, model: "gemini-2.5-pro" })).toThrow(
+        "VERTEX_SERVICE_ACCOUNT_JSON"
+      );
     });
   });
 });

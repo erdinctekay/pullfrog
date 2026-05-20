@@ -40,6 +40,7 @@ import {
 import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
+import { resolveVertexOpenCodeModel } from "../utils/vertex.ts";
 import {
   PULLFROG_BUS_EVENT_TYPE,
   PULLFROG_OPENCODE_PLUGIN_FILENAME,
@@ -1130,7 +1131,14 @@ export const opencode = agent({
     const bedrockModelId = process.env[BEDROCK_MODEL_ID_ENV]?.trim();
     const isBedrockRoute =
       rawModel !== undefined && bedrockModelId !== undefined && bedrockModelId === rawModel;
-    const model = isBedrockRoute ? `amazon-bedrock/${rawModel}` : rawModel;
+    let model = rawModel;
+    if (isBedrockRoute) {
+      model = `amazon-bedrock/${rawModel}`;
+    }
+    const vertexModel = resolveVertexOpenCodeModel(rawModel);
+    if (vertexModel) {
+      model = vertexModel;
+    }
 
     const homeEnv = {
       HOME: ctx.tmpdir,

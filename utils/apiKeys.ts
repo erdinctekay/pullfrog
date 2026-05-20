@@ -3,8 +3,15 @@ import {
   getModelEnvVars,
   providers,
   resolveDisplayAlias,
+  VERTEX_MODEL_ID_ENV,
 } from "../models.ts";
 import { getApiUrl } from "./apiUrl.ts";
+import {
+  GOOGLE_CLOUD_PROJECT_ENV,
+  readProjectIdFromVertexServiceAccountJson,
+  VERTEX_LOCATION_ENV,
+  VERTEX_SERVICE_ACCOUNT_JSON_ENV,
+} from "./vertex.ts";
 
 const knownApiKeys: Set<string> = new Set(
   Object.values(providers).flatMap((p) => [...p.envVars, ...(p.managedCredentials ?? [])])
@@ -45,6 +52,21 @@ add the missing secret(s) to your GitHub repository at ${githubSecretsUrl}, then
 for full setup instructions, see https://docs.pullfrog.com/bedrock`;
 }
 
+function buildVertexSetupError(params: { owner: string; name: string; missing: string[] }): string {
+  const githubSecretsUrl = `https://github.com/${params.owner}/${params.name}/settings/secrets/actions`;
+
+  return `Google Vertex AI model selected but required configuration is missing: ${params.missing.join(", ")}.
+
+add the missing secret(s) to your GitHub repository at ${githubSecretsUrl}, then reference them in your workflow's \`env:\` block:
+
+  ${VERTEX_SERVICE_ACCOUNT_JSON_ENV}: \${{ secrets.${VERTEX_SERVICE_ACCOUNT_JSON_ENV} }}
+  ${GOOGLE_CLOUD_PROJECT_ENV}: my-project
+  ${VERTEX_LOCATION_ENV}: global
+  ${VERTEX_MODEL_ID_ENV}: <vertex-model-id>
+
+for full setup instructions, see https://docs.pullfrog.com/vertex`;
+}
+
 function hasEnvVar(name: string): boolean {
   const value = process.env[name];
   return typeof value === "string" && value.length > 0;
@@ -73,6 +95,23 @@ function validateBedrockSetup(params: { owner: string; name: string }): void {
   }
 }
 
+function validateVertexSetup(params: { owner: string; name: string }): void {
+  const hasAuth = hasEnvVar(VERTEX_SERVICE_ACCOUNT_JSON_ENV);
+  const hasProject =
+    hasEnvVar(GOOGLE_CLOUD_PROJECT_ENV) ||
+    readProjectIdFromVertexServiceAccountJson() !== undefined;
+
+  const missing: string[] = [];
+  if (!hasAuth) missing.push(VERTEX_SERVICE_ACCOUNT_JSON_ENV);
+  if (!hasProject) missing.push(GOOGLE_CLOUD_PROJECT_ENV);
+  if (!hasEnvVar(VERTEX_LOCATION_ENV)) missing.push(VERTEX_LOCATION_ENV);
+  if (!hasEnvVar(VERTEX_MODEL_ID_ENV)) missing.push(VERTEX_MODEL_ID_ENV);
+
+  if (missing.length > 0) {
+    throw new Error(buildVertexSetupError({ owner: params.owner, name: params.name, missing }));
+  }
+}
+
 export function validateAgentApiKey(params: {
   agent: { name: string };
   model: string | undefined;
@@ -90,15 +129,23 @@ export function validateAgentApiKey(params: {
       validateBedrockSetup({ owner: params.owner, name: params.name });
       return;
     }
+    if (alias?.routing === "vertex") {
+      validateVertexSetup({ owner: params.owner, name: params.name });
+      return;
+    }
 
-    // upstream `resolveModel` translates `bedrock/byok` into the raw Bedrock
-    // model ID (e.g. `us.anthropic.claude-opus-4-6-v1`), which has no `/`
+    // upstream `resolveModel` translates routing slugs into raw backend
+    // model IDs (e.g. `us.anthropic.claude-opus-4-6-v1`), which have no `/`
     // and so isn't parseable as `provider/model`. these IDs only reach this
-    // function via routing aliases, so re-run the bedrock setup check rather
+    // function via routing aliases, so re-run the matching setup check rather
     // than falling through to `getModelEnvVars` (which would throw inside
-    // parseModel). resolveModel itself already enforced BEDROCK_MODEL_ID,
-    // but auth + region are still validated here.
+    // parseModel). resolveModel itself already enforced the model-id env var,
+    // but auth + location/region are still validated here.
     if (!params.model.includes("/")) {
+      if (process.env[VERTEX_MODEL_ID_ENV]?.trim() === params.model) {
+        validateVertexSetup({ owner: params.owner, name: params.name });
+        return;
+      }
       validateBedrockSetup({ owner: params.owner, name: params.name });
       return;
     }
