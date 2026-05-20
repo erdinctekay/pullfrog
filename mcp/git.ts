@@ -253,6 +253,28 @@ export function PushBranchTool(ctx: ToolContext) {
       // validate push destination matches expected URL
       const pushDest = validatePushDestination(ctx, branch);
 
+      // backstop against subagent-induced cross-PR clobbers: a subagent
+      // shares cwd + toolState with the orchestrator, so its `checkout_pr(N)`
+      // moves HEAD to pr-N and persists pushDest pointing at the foreign
+      // PR's remote branch. refuse pr-N → origin/<other> pushes unless this
+      // run is itself scoped to PR N (zed-industries/cloud, 2026-05-18).
+      const prBranchMatch = branch.match(/^pr-(\d+)$/);
+      if (prBranchMatch && pushDest.remoteBranch !== branch) {
+        const prNumber = Number(prBranchMatch[1]);
+        const event = ctx.payload.event;
+        const runScoped = event.is_pr === true && event.issue_number === prNumber;
+        if (!runScoped) {
+          throw new Error(
+            `push blocked: local branch '${branch}' would push to '${pushDest.remoteName}/${pushDest.remoteBranch}', ` +
+              `but this run is not scoped to PR #${prNumber}. ` +
+              `the 'pr-${prNumber}' branch was created by a prior checkout_pr call (likely from a subagent — subagents share the working tree and toolState with the orchestrator). ` +
+              `you have probably landed your commit on the wrong branch. ` +
+              `switch to your own feature branch first (e.g. 'git checkout <feature-branch>') and then push. ` +
+              `if the push to PR #${prNumber} is intentional, this run needs to be triggered against that PR.`
+          );
+        }
+      }
+
       // block pushes to default branch in restricted mode
       if (pushPermission === "restricted" && pushDest.remoteBranch === defaultBranch) {
         throw new Error(

@@ -805,16 +805,14 @@ export function CheckoutPrTool(ctx: ToolContext) {
         return inFlight;
       }
 
-      // refuse to clobber an active checkout if the working tree is dirty —
-      // forces the agent to commit/push or discard before switching contexts
-      // instead of silently overwriting uncommitted work. `issueNumber`
-      // tracks any issue/PR the agent has touched (issues and PRs share
-      // GitHub's number space); the guard fires only when the agent is
-      // switching to a *different* number with a dirty tree, which captures
-      // the legitimate "stop, you have unsaved work" case regardless of
-      // whether the prior number was an issue or a PR.
-      const current = ctx.toolState.issueNumber;
-      if (current !== undefined && current !== pull_number) {
+      // refuse to clobber an uncommitted tree whenever this call would move
+      // HEAD away from the target pr-N branch. keyed off the live current
+      // branch (not toolState.issueNumber, which is also written by
+      // get_issue / get_issue_comments / get_issue_events and so doesn't
+      // mean "currently checked out"). catches the subagent-sharing-cwd
+      // case from zed-industries/cloud (2026-05-18).
+      const currentBranch = $("git", ["rev-parse", "--abbrev-ref", "HEAD"], { log: false }).trim();
+      if (currentBranch !== `pr-${pull_number}`) {
         const dirty = $("git", ["status", "--porcelain"], { log: false }).trim();
         if (dirty) {
           throw new Error(
