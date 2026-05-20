@@ -133,6 +133,16 @@ export function formatBillingErrorSummary(error: BillingError, owner: string): s
     ].join("\n");
   }
 
+  if (error.code === "router_monthly_limit") {
+    return [
+      "**Pullfrog Router hit its monthly spend limit.**",
+      "",
+      "Auto-reloads are paused for the rest of this UTC month. Ask your admin to raise the cap, or wait for it to reset at 00:00 UTC on the 1st.",
+      "",
+      `[Adjust limit →](${billingConsoleUrl(owner, "model-access")})`,
+    ].join("\n");
+  }
+
   if (error.needsReauthentication) {
     const code = error.declineCode ?? "authentication_required";
     return [
