@@ -83,7 +83,9 @@ async function plan(slug: string): Promise<Plan> {
   const cliPath = await installFromNpmTarball({
     packageName: "opencode-ai",
     version: getDevDependencyVersion("opencode-ai"),
-    executablePath: "bin/opencode",
+    // v1.14+: postinstall.mjs renames the platform-specific binary to
+    // `bin/opencode.exe` for every OS — see action/agents/opencode_v2.ts.
+    executablePath: "bin/opencode.exe",
     installDependencies: true,
   });
   return {

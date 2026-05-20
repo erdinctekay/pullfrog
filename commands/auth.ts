@@ -10,6 +10,7 @@
 // secrets API. used both for first-time setup of a Codex subscription on a
 // repo and for rotating a stale credential.
 
+import { spawn } from "node:child_process";
 import * as p from "@clack/prompts";
 import arg from "arg";
 import pc from "picocolors";
@@ -22,7 +23,6 @@ import {
   PULLFROG_API_URL,
   parseGitRemote,
   promptScope,
-  type SecretScope,
   setActiveSpin,
   setPullfrogSecret,
 } from "./_shared.ts";
@@ -36,6 +36,43 @@ const CODEX_AUTH_SECRET = "CODEX_AUTH_JSON";
 function stripAnsi(s: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escapes are control chars by design
   return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+/** matches the Codex device-auth verification URL printed by `codex login
+ * --device-auth`. captures the full URL (with query string) up to whitespace.
+ */
+const CODEX_DEVICE_URL_RE = /https:\/\/auth\.openai\.com\/codex\/device\S*/;
+
+/** best-effort cross-platform "open URL in default browser". swallows
+ * spawn errors and non-zero exits — the user can always copy-paste the URL
+ * Codex already printed. on Linux, falls back to `wslview` when `xdg-open`
+ * is missing (covers WSL where xdg-open isn't installed by default).
+ */
+function openInBrowser(url: string): void {
+  const platform = process.platform;
+  let cmd: string;
+  let args: string[];
+  if (platform === "darwin") {
+    cmd = "open";
+    args = [url];
+  } else if (platform === "win32") {
+    // `start` is a cmd.exe builtin. the empty "" is the window title
+    // (required when the next argument is quoted, which happens for
+    // URLs with `&`).
+    cmd = "cmd.exe";
+    args = ["/c", "start", "", url];
+  } else {
+    cmd = "xdg-open";
+    args = [url];
+  }
+  const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+  child.on("error", () => {
+    if (platform !== "linux") return;
+    const fallback = spawn("wslview", [url], { stdio: "ignore", detached: true });
+    fallback.on("error", () => {});
+    fallback.unref();
+  });
+  child.unref();
 }
 
 interface AuthCliParams {
@@ -60,11 +97,7 @@ function printCodexUsage(params: { stream: typeof console.log; prog: string }): 
   params.stream("mint a Codex subscription credential and save it as CODEX_AUTH_JSON.");
   params.stream("");
   params.stream("options:");
-  params.stream("  --scope <account|repo>  where to store the secret in Pullfrog. on");
-  params.stream("                          org-owned repos you're prompted to choose");
-  params.stream("                          interactively; user-owned repos always use");
-  params.stream("                          `account`. pass this flag to skip the prompt.");
-  params.stream("  -h, --help              show help");
+  params.stream("  -h, --help   show help");
 }
 
 export async function runCli(params: AuthCliParams): Promise<void> {
@@ -103,7 +136,6 @@ function parseCodexArgs(args: string[]) {
   return arg(
     {
       "--help": Boolean,
-      "--scope": String,
       "-h": "--help",
     },
     { argv: args }
@@ -126,26 +158,10 @@ async function runCodex(params: CodexCliParams): Promise<void> {
     return;
   }
 
-  const rawScope = parsed["--scope"];
-  let explicitScope: SecretScope | null = null;
-  if (rawScope !== undefined) {
-    if (rawScope === "account" || rawScope === "repo") {
-      explicitScope = rawScope;
-    } else {
-      console.error(`invalid --scope: ${rawScope} (must be "account" or "repo")\n`);
-      printCodexUsage({ stream: console.error, prog: params.prog });
-      process.exit(1);
-    }
-  }
-
-  await runCodexAuth({ explicitScope });
+  await runCodexAuth();
 }
 
-interface RunCodexAuthCtx {
-  explicitScope: SecretScope | null;
-}
-
-async function runCodexAuth(ctx: RunCodexAuthCtx): Promise<void> {
+async function runCodexAuth(): Promise<void> {
   p.intro(pc.bgGreen(pc.black(" pullfrog auth codex ")));
 
   const spin = p.spinner();
@@ -188,16 +204,10 @@ async function runCodexAuth(ctx: RunCodexAuthCtx): Promise<void> {
 
     // user-owned repos can only ever be "account" (Pullfrog has no per-repo
     // store for user accounts), so we never bother prompting. on org-owned
-    // repos, default to interactive prompt — matches `init`'s behavior —
-    // unless the caller passed `--scope` to skip it.
-    let scope: SecretScope;
-    if (ctx.explicitScope) {
-      scope = ctx.explicitScope;
-    } else if (status.isOrg) {
-      scope = await promptScope({ owner: remote.owner, repo: remote.repo });
-    } else {
-      scope = "account";
-    }
+    // repos, prompt interactively — matches `init`'s behavior.
+    const scope = status.isOrg
+      ? await promptScope({ owner: remote.owner, repo: remote.repo })
+      : "account";
 
     p.log.info(
       [
@@ -213,6 +223,9 @@ async function runCodexAuth(ctx: RunCodexAuthCtx): Promise<void> {
     // tracks the most recent exit so the retry prompt can tell the user
     // *why* no auth.json was written (timeout vs. early-exit).
     let lastTimedOut = false;
+    // gate so we don't re-launch the browser if Codex prints the URL
+    // more than once (e.g. on a retry attempt within the same flow).
+    let hasOpenedDeviceUrl = false;
     const auth = await mintCodexAuth({
       childStdio: "pipe",
       onChildLine: (line) => {
@@ -220,7 +233,17 @@ async function runCodexAuth(ctx: RunCodexAuthCtx): Promise<void> {
         // gray) so the user reads it as sub-process noise, not Pullfrog's
         // own prompts. the rail char matches @clack/prompts so the column
         // reads as one continuous flow.
-        process.stdout.write(`${pc.gray(p.S_BAR)}  ${pc.dim(stripAnsi(line))}\n`);
+        const stripped = stripAnsi(line);
+        process.stdout.write(`${pc.gray(p.S_BAR)}  ${pc.dim(stripped)}\n`);
+        if (hasOpenedDeviceUrl) return;
+        const match = stripped.match(CODEX_DEVICE_URL_RE);
+        if (!match) return;
+        hasOpenedDeviceUrl = true;
+        const url = match[0];
+        openInBrowser(url);
+        process.stdout.write(
+          `${pc.gray(p.S_BAR)}  ${pc.dim(`» opened ${url} in browser (paste manually if it didn't open)`)}\n`
+        );
       },
       onProgress: (event) => {
         if (event.kind === "start") {

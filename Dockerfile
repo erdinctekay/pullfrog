@@ -1,11 +1,11 @@
 # pullfrog GHA-like test container.
 #
-# baked once at image build time, used by `pnpm gha`. all runtime cost
-# (apt-get, useradd, sudoers wiring) is paid here so each `gha` invocation
+# baked once at image build time, used by `pnpm docker`. all runtime cost
+# (apt-get, useradd, sudoers wiring) is paid here so each `docker` invocation
 # is a single `docker run` with no in-container setup.
 #
-# rebuild is content-hash gated by gha.ts (Dockerfile + docker-entrypoint.sh).
-# bump anything in this file or the entrypoint and the next `pnpm gha` rebuilds.
+# rebuild is content-hash gated by docker.ts (Dockerfile + docker-entrypoint.sh).
+# bump anything in this file or the entrypoint and the next `pnpm docker` rebuilds.
 
 FROM ubuntu:24.04
 
@@ -59,7 +59,7 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && echo "testuser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/testuser \
     && chmod 0440 /etc/sudoers.d/testuser
 
-# layout matching the bind mount + named volume targets in gha.ts.
+# layout matching the bind mount + named volume targets in docker.ts.
 RUN mkdir -p /app/action /app/action/node_modules /tmp/home/.config /tmp/home/.cache \
     && chown -R testuser:testuser /app /tmp/home
 

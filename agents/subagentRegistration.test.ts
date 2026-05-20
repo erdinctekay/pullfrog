@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const claudeSource = readFileSync(join(__dirname, "claude.ts"), "utf-8");
-const opencodeSource = readFileSync(join(__dirname, "opencode.ts"), "utf-8");
+const opencodeSharedSource = readFileSync(join(__dirname, "opencodeShared.ts"), "utf-8");
+const opencodeV2Source = readFileSync(join(__dirname, "opencode_v2.ts"), "utf-8");
 
 /**
  * The Claude Code `--agents` JSON and OpenCode `agent` config block are the
@@ -25,16 +26,16 @@ describe("subagent registration source asserts", () => {
     });
   });
 
-  describe("opencode.ts buildReviewerAgentConfig", () => {
+  describe("opencodeShared.ts buildReviewerAgentConfig", () => {
     it("registers reviewfrog with mode: subagent", () => {
-      expect(opencodeSource).toMatch(/\[REVIEWER_AGENT_NAME\]:[^}]*mode:\s*"subagent"/s);
+      expect(opencodeSharedSource).toMatch(/\[REVIEWER_AGENT_NAME\]:[^}]*mode:\s*"subagent"/s);
     });
     it("uses deriveSubagentModels for the reviewer model override", () => {
-      expect(opencodeSource).toMatch(/deriveSubagentModels\(/);
-      expect(opencodeSource).toMatch(/overrides\.reviewer/);
+      expect(opencodeSharedSource).toMatch(/deriveSubagentModels\(/);
+      expect(opencodeSharedSource).toMatch(/overrides\.reviewer/);
     });
-    it("passes orchestrator model to buildReviewerAgentConfig", () => {
-      expect(opencodeSource).toMatch(/buildReviewerAgentConfig\(model\)/);
+    it("v2 runner passes orchestrator model to buildReviewerAgentConfig", () => {
+      expect(opencodeV2Source).toMatch(/buildReviewerAgentConfig\(model\)/);
     });
   });
 });

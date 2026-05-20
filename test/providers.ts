@@ -33,6 +33,7 @@ export type ProviderEntry = {
 const SHARED_OPENCODE_COVERAGE = [
   "action/models.ts",
   "action/agents/opencode.ts",
+  "action/agents/opencode_v2.ts",
   "action/agents/opencodePlugin.ts",
 ];
 

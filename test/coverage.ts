@@ -40,10 +40,10 @@ export const ALWAYS_RUN_ALL: string[] = [
   "action/utils/install.ts",
   "action/utils/runFixture.ts",
   "action/utils/globals.ts",
-  // GHA-like container plumbing (changes invalidate every test's environment)
+  // local docker container plumbing (changes invalidate every test's environment)
   "action/Dockerfile",
   "action/docker-entrypoint.sh",
-  "action/gha.ts",
+  "action/docker.ts",
   // MCP orchestrator (every test runs through it)
   "action/mcp/server.ts",
   "action/mcp/shared.ts",

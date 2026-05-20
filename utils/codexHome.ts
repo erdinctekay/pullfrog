@@ -1,8 +1,17 @@
 // Codex-to-OpenCode auth bridging for the action runtime.
 //
 // `pullfrog auth codex` stores a Codex CLI `auth.json` blob in the Pullfrog
-// secret store. At runtime the harness injects it as `CODEX_AUTH_JSON` in
-// process.env (via `dbSecrets` in main.ts). This utility:
+// per-org secret store (production Postgres) — NOT a GitHub Actions secret.
+// This is non-negotiable: the OAuth refresh chain rotates on every use, and
+// `entryPost.ts` writes the rotated chain back via `PUT /api/runtime/secret`
+// after each run. GH Actions secrets are immutable at runtime, so a token
+// stashed there silently expires on the first refresh (~1h). See
+// wiki/codex-auth.md for the full constraint.
+//
+// At runtime, `CODEX_AUTH_JSON` lands in process.env via `runContext.dbSecrets`
+// merged in main.ts — sourced from Pullfrog Postgres through the OIDC-validated
+// run-context endpoint, never from `${{ secrets.CODEX_AUTH_JSON }}` in
+// workflow yaml. This utility:
 //
 //   1. parses + validates that env value
 //   2. converts Codex's shape `{ auth_mode, tokens: { access_token, refresh_token, ... } }`

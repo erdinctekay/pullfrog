@@ -57,10 +57,13 @@ const crossagentTests = getTestNamesFromDir("crossagent");
 const agnosticTests = getTestNamesFromDir("agnostic");
 const adhocTests = getTestNamesFromDir("adhoc");
 
-// all provider API key names + GITHUB_TOKEN + model overrides
+// all provider API key names + managed credentials (e.g. Codex auth blob)
+// + GITHUB_TOKEN + model overrides
 const expectedAgentEnvVars = [
   "GITHUB_TOKEN",
-  ...new Set(Object.values(providers).flatMap((p) => [...p.envVars])),
+  ...new Set(
+    Object.values(providers).flatMap((p) => [...p.envVars, ...(p.managedCredentials ?? [])])
+  ),
   "PULLFROG_MODEL",
 ].sort();
 

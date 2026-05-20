@@ -6,21 +6,28 @@
 // auth.json during the run, the refreshed token must land back in Pullfrog
 // even when the main step died unexpectedly.
 //
+// THIS IS WHY `CODEX_AUTH_JSON` HAS TO LIVE IN PULLFROG'S OWN SECRET STORE,
+// NOT IN GITHUB ACTIONS SECRETS. The refresh chain rotates on every use; this
+// hook PUTs the rotated chain back to Pullfrog Postgres so the next run starts
+// from a fresh token. GH Actions secrets are read-only at runtime — there is
+// no API to write them back from inside a job — so a token stashed there
+// silently goes stale on the first refresh and the next run fails. See
+// wiki/codex-auth.md.
+//
 // Today's only job: detect a Codex auth refresh by diffing the on-disk
 // auth.json against the original refresh token (saved to GH Actions state
-// by action/agents/opencode.ts), convert OpenCode's auth shape back to
-// Codex CLI shape, and PUT it to /api/runtime/secret.
+// by action/agents/opencode_v2.ts — see also the legacy v1 file kept as
+// reference at action/agents/opencode.ts), convert OpenCode's auth shape
+// back to Codex CLI shape, and PUT it to /api/runtime/secret.
 //
 // Silent no-op when the main step didn't materialize Codex auth (no state
 // saved). Best-effort: failures are logged but never throw — the workflow
 // is already done, and a missed refresh write-back means the user re-runs
 // `pullfrog auth codex` next time the chain breaks.
-//
-// See wiki/codex-auth.md for the full flow.
 
 import { existsSync, readFileSync } from "node:fs";
 import * as core from "@actions/core";
-import { getApiUrl } from "./utils/apiUrl.ts";
+import { apiFetch } from "./utils/apiFetch.ts";
 import { detectCodexRefresh } from "./utils/codexHome.ts";
 
 async function main(): Promise<void> {
@@ -64,9 +71,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  const url = `${getApiUrl()}/api/runtime/secret`;
   try {
-    const response = await fetch(url, {
+    // route through apiFetch so the Vercel preview-deployment SSO gate gets
+    // the `x-vercel-protection-bypass` header/query (raw fetch silently 401s
+    // against preview envs — production is unaffected but every preview-run
+    // refresh would be lost). see action/utils/apiFetch.ts.
+    const response = await apiFetch({
+      path: "/api/runtime/secret",
       method: "PUT",
       headers: {
         authorization: `Bearer ${state.apiToken}`,

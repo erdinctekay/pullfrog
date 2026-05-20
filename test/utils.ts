@@ -152,6 +152,8 @@ export interface ValidationResult {
   canceled: boolean;
   checks: ValidationCheck[];
   output: string;
+  skipped?: boolean;
+  skipReason?: string;
 }
 
 export type ValidatorFn = (result: AgentResult) => ValidationCheck[];
@@ -332,6 +334,12 @@ export interface TestRunnerOptions {
   // trigger this test in CI. omit to opt out of filtering (test always runs
   // — the defensive default). see action/test/coverage.ts.
   coverage?: string[];
+  /** evaluated at test-runtime (after `pnpm install`, before agent spawn).
+   * return a non-empty reason string to skip the test entirely — the runner
+   * records a passing-with-skipped result so the matrix doesn't fail-fast
+   * cancel the rest of the jobs. used to gate tests on optional secrets
+   * (e.g. codex-auth needs `CODEX_AUTH_JSON`, which forks won't have). */
+  skipIf?: () => string | null;
 }
 
 export type TestTag = "adhoc" | "agnostic" | "security";
@@ -340,8 +348,9 @@ export function printSingleValidation(validation: ValidationResult): void {
   const checksStr = validation.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");
   const color = AGENT_COLORS[validation.agent] ?? "";
   const canceledNote = validation.canceled ? " (canceled)" : "";
+  const skippedNote = validation.skipped ? ` (skipped: ${validation.skipReason ?? ""})` : "";
   console.log(
-    `\n${color}[${validation.test}][${validation.agent}]${RESET} ${checksStr}${canceledNote}`
+    `\n${color}[${validation.test}][${validation.agent}]${RESET} ${checksStr}${canceledNote}${skippedNote}`
   );
 }
 
@@ -353,8 +362,16 @@ export function printResults(validations: ValidationResult[]): void {
 
   for (const v of validations) {
     const color = AGENT_COLORS[v.agent] ?? "";
-    const status = v.canceled ? "❌ canceled" : v.passed ? "✅ pass" : "❌ fail";
-    const checkCols = v.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");
+    const status = v.canceled
+      ? "❌ canceled"
+      : v.skipped
+        ? "⏭  skipped"
+        : v.passed
+          ? "✅ pass"
+          : "❌ fail";
+    const checkCols = v.skipped
+      ? `(skipped: ${v.skipReason ?? ""})`
+      : v.checks.map((c) => `${c.name}=${c.passed ? "✓" : "✗"}`).join(" ");
     console.log(
       `${status}  ${v.test.padEnd(12)}  ${color}${v.agent.padEnd(10)}${RESET}  ${checkCols}`
     );
@@ -362,5 +379,7 @@ export function printResults(validations: ValidationResult[]): void {
   console.log("-".repeat(70));
 
   const passed = validations.filter((v) => v.passed);
-  console.log(`\n${passed.length}/${validations.length} passed`);
+  const skipped = validations.filter((v) => v.skipped).length;
+  const skippedNote = skipped > 0 ? ` (${skipped} skipped)` : "";
+  console.log(`\n${passed.length}/${validations.length} passed${skippedNote}`);
 }

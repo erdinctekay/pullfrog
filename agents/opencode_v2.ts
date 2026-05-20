@@ -1,15 +1,39 @@
 /**
- * OpenCode agent — secure harness around OpenCode CLI.
+ * OpenCode agent — secure harness around OpenCode CLI (v2 / opencode-ai >=1.14.x).
  *
- * transparently wraps OpenCode with a security layer:
- * - bash: "deny" via OPENCODE_CONFIG_CONTENT (agent cannot shell out)
- * - OPENCODE_PERMISSION: filesystem sandbox — deny all external paths except /tmp
- * - MCP ShellTool provides restricted shell (filtered env, no secrets)
- * - MCP server injected alongside project config (not replacing)
- * - ASKPASS handles git auth separately (token never in subprocess env)
+ * Adapted from `./opencode.ts` for the SDK-v2 / Effect-ts CLI rewrite that
+ * landed in the `opencode-ai@1.14.x` line and is current at `1.15.x`. The
+ * legacy file is kept as `./opencode.ts` for reference / quick revert; the
+ * agent registry (`./index.ts`) imports this module instead.
  *
- * the agent process itself gets full env (needs LLM API keys, PATH, etc.).
- * security is enforced at the tool layer, not the process layer.
+ * Differences vs the v1 harness:
+ *   - NDJSON event set is now `tool_use | step_start | step_finish | text |
+ *     reasoning | error`. `init`, `message`, `result`, and standalone
+ *     `tool_result` are no longer emitted by `cli/cmd/run.ts emit()`. The
+ *     v2 `tool_use` event covers both the completion and the error terminal
+ *     states (read `part.state.status`); the per-call duration tracking that
+ *     was on the v1 `tool_result` handler now lives on `tool_use`.
+ *   - `reasoning` events (Gemini thinking blocks etc.) only emit when the
+ *     CLI is invoked with `--thinking`. Always passed in `baseArgs`.
+ *   - The `task` tool's callID is now stable across the whole `tool-input-*
+ *     → tool-call → tool-result/tool-error` chain (v1 had a callID-mismatch
+ *     quirk that forced a FIFO fallback on the parent). Subagent-finish
+ *     attribution is exact-match-only — the FIFO scaffolding is gone.
+ *   - `experimental.batch_tool` is declared-but-inert at v1.15.0 (no read
+ *     site upstream). Removed from the injected config until upstream wires
+ *     it back; keeping the flag would just be dead config.
+ *
+ * Identical to v1:
+ *   - bash: "deny" via OPENCODE_CONFIG_CONTENT (agent cannot shell out)
+ *   - OPENCODE_PERMISSION filesystem sandbox — deny all external paths except /tmp
+ *   - MCP ShellTool provides restricted shell (filtered env, no secrets)
+ *   - MCP server injected via `mcp.<name> = { type: "remote", url }`
+ *   - ASKPASS handles git auth separately (token never in subprocess env)
+ *   - bus-event plugin (`opencodePlugin.ts`) re-emits subagent
+ *     `message.part.updated` events that the CLI's run-loop filters out by
+ *     `part.sessionID !== sessionID`. Plugin discovery path
+ *     (`<XDG_CONFIG_HOME>/opencode/{plugin,plugins}/*.{ts,js}`) and
+ *     `bus.subscribeAll()` are unchanged at v1.15.0.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,13 +42,7 @@ import * as core from "@actions/core";
 import { pullfrogMcpName } from "../external.ts";
 import { BEDROCK_MODEL_ID_ENV } from "../models.ts";
 import type { ToolState } from "../toolState.ts";
-import {
-  getIdleMs,
-  isActivitySuspended,
-  markActivity,
-  resumeActivity,
-  suspendActivity,
-} from "../utils/activity.ts";
+import { markActivity } from "../utils/activity.ts";
 import { type AgentDiagnostic, formatAgentHangBody } from "../utils/agentHangReport.ts";
 import { formatJsonValue, log } from "../utils/cli.ts";
 import { installCodexAuth } from "../utils/codexHome.ts";
@@ -37,7 +55,6 @@ import {
   spawn,
   TailBuffer,
 } from "../utils/subprocess.ts";
-import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import {
@@ -68,12 +85,11 @@ import {
   MAX_STDERR_LINES,
 } from "./shared.ts";
 
-// re-export for the existing test (`./opencode.test.ts`) — once v1 is
-// retired this module collapses and the test imports from opencodeShared.
-export { geminiHighThinkingOverrides } from "./opencodeShared.ts";
+// v1.14+ npm package: postinstall.mjs renames the platform-specific native
+// binary to `bin/opencode.exe` for every OS (incl. linux/darwin).
+const installCli = () => installOpencodeCli({ binPath: "bin/opencode.exe" });
 
-// v1.4-era npm package shipped a per-platform binary directly at this path.
-const installCli = () => installOpencodeCli({ binPath: "bin/opencode" });
+// ── config ─────────────────────────────────────────────────────────────────────
 
 // NOTE: OpenCode's per-call `max_tokens` defaults to 32_000. We previously
 // overrode this via `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX = 5000` in #616
@@ -95,6 +111,11 @@ const installCli = () => installOpencodeCli({ binPath: "bin/opencode" });
 // top-level `limit.output` config field has no read site (silently dropped
 // on merge in session/llm.ts), so the env var is the only working knob.
 
+// `geminiHighThinkingOverrides` is shared with v1 — imported above. The merge
+// order in v1.15 (`base ← model.options ← agent.options ← variant`,
+// `session/llm.ts:141`) means our `provider.google.models[id].options` config
+// still flows through unmodified.
+
 function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): string {
   const config: OpenCodeConfig = {
     permission: {
@@ -114,19 +135,12 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
       log.info(`» subagent models: reviewfrog=${reviewerModel}`);
       return cfg;
     })(),
-    // NOTE: `experimental.batch_tool` was enabled in #719 to bundle 1-25
-    // independent tool calls into one round trip, but the batch tool rejects
-    // MCP/"external" tools with `"Tool '<name>' not in registry. External
-    // tools (MCP, environment) cannot be batched - call them directly."`
-    // (anomalyco/opencode PR #2983 design). when a model emits parallel
-    // tool_use blocks containing `pullfrog_*` calls, opencode internally
-    // routes them through batch — they all fail, the model misreads the
-    // error as "the tool doesn't exist", and gives up. caught in CI by
-    // `restricted-opencode` after a `lens:` subagent dispatched parallel
-    // `pullfrog_shell` calls and concluded shell was unavailable.
-    // native parallel tool_use (multiple tool_use blocks per assistant
-    // message) still works without batch_tool for both built-in and MCP
-    // tools, so we lose only the batch wrapper, not parallelism.
+    // NB: `experimental.batch_tool: true` was opt-in at v1.4.x but is
+    // declared-but-inert at v1.15.0 — the schema accepts it (`config/config.ts`)
+    // and the SDK exposes the type, but no runtime call site reads it. removed
+    // here to avoid carrying dead config; re-add when upstream wires the batch
+    // tool back. see wiki/prompt.md and the v2 plan doc for the audit trail.
+    //
     // gemini-3 thinking pinned to high for review depth; gpt and anthropic
     // effort set elsewhere (gpt: upstream default, anthropic: --effort flag in claude.ts).
     provider: { google: { models: geminiHighThinkingOverrides() } },
@@ -145,23 +159,12 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
 }
 
 // ── NDJSON event types ─────────────────────────────────────────────────────────
-
-interface OpenCodeInitEvent {
-  type: "init";
-  timestamp?: string;
-  session_id?: string;
-  model?: string;
-  [key: string]: unknown;
-}
-
-interface OpenCodeMessageEvent {
-  type: "message";
-  timestamp?: string;
-  role?: "user" | "assistant";
-  content?: string;
-  delta?: boolean;
-  [key: string]: unknown;
-}
+//
+// Mirrors `cli/cmd/run.ts emit()` at opencode-ai v1.15.0. The CLI writes one
+// envelope per call: `{ type, timestamp, sessionID, ...payload }`. Six event
+// types: tool_use, step_start, step_finish, text, reasoning, error.
+// `init`, `message`, `result`, and standalone `tool_result` are NOT emitted
+// at v1.14+ — their handlers in v1 were dead and were dropped here.
 
 interface OpenCodeTextEvent {
   type: "text";
@@ -226,27 +229,25 @@ interface OpenCodeToolUseEvent {
   [key: string]: unknown;
 }
 
-interface OpenCodeToolResultEvent {
-  type: "tool_result";
+/**
+ * Reasoning (thinking) part — only emitted when the CLI is invoked with
+ * `--thinking`. Shape mirrors `TextPart`: a finished part has
+ * `time?.end !== undefined`. Gemini's `thoughtSignature` round-trip,
+ * OpenAI reasoning, and Anthropic extended-thinking all flow through here.
+ */
+interface OpenCodeReasoningEvent {
+  type: "reasoning";
   timestamp?: number;
   sessionID?: string;
-  part?: { callID?: string; state?: ToolPartState };
-  tool_id?: string;
-  status?: "success" | "error";
-  output?: string;
-  [key: string]: unknown;
-}
-
-interface OpenCodeResultEvent {
-  type: "result";
-  timestamp?: string;
-  status?: "success" | "error";
-  stats?: {
-    total_tokens?: number;
-    input_tokens?: number;
-    output_tokens?: number;
-    duration_ms?: number;
-    tool_calls?: number;
+  part?: {
+    id?: string;
+    sessionID?: string;
+    messageID?: string;
+    type?: string;
+    text?: string;
+    time?: { start?: number; end?: number };
+    metadata?: Record<string, unknown>;
+    [key: string]: unknown;
   };
   [key: string]: unknown;
 }
@@ -266,15 +267,12 @@ interface OpenCodeErrorEvent {
 }
 
 /**
- * Envelope event emitted by our `.opencode/plugin/pullfrog-events.ts` (the
- * source lives in `opencodePlugin.ts`). The plugin subscribes to opencode's
- * bus via `bus.subscribeAll()` and re-emits non-orchestrator
- * `message.part.updated` events on stdout so subagent activity surfaces here.
- *
- * `bus_event.properties.part` matches the same `Part` shape that opencode's
- * `cli/cmd/run.ts` uses to drive its own emit() calls, so we can route the
- * inner part through the existing `tool_use` / `step_start` / `step_finish`
- * / `text` handlers by synthesizing the equivalent OpenCode-style event.
+ * Envelope our injected plugin (`opencodePlugin.ts`) writes to stdout per
+ * non-orchestrator `message.part.updated` bus event, so subagent activity
+ * surfaces in the parent stream that the CLI run loop would otherwise
+ * filter (`cli/cmd/run.ts` checks `part.sessionID === sessionID`).
+ * `bus_event.properties.part` matches opencode's `Part` shape so we can
+ * route through the same handlers as orchestrator events.
  */
 interface OpenCodeBusEnvelopeEvent {
   type: "pullfrog_bus_event";
@@ -284,28 +282,40 @@ interface OpenCodeBusEnvelopeEvent {
       part?: {
         sessionID?: string;
         type?: string;
-        time?: { end?: number | string };
-        state?: { status?: string };
-        [key: string]: unknown;
+        tool?: string;
+        callID?: string;
+        time?: { start?: number; end?: number };
+        state?: { status?: string; input?: unknown };
       };
-      [key: string]: unknown;
     };
-    [key: string]: unknown;
   };
-  [key: string]: unknown;
 }
 
 type OpenCodeEvent =
-  | OpenCodeInitEvent
-  | OpenCodeMessageEvent
   | OpenCodeTextEvent
+  | OpenCodeReasoningEvent
   | OpenCodeStepStartEvent
   | OpenCodeStepFinishEvent
   | OpenCodeToolUseEvent
-  | OpenCodeToolResultEvent
-  | OpenCodeResultEvent
   | OpenCodeErrorEvent
   | OpenCodeBusEnvelopeEvent;
+
+// ── helpers ─────────────────────────────────────────────────────────────────────
+
+/** Format `part.time` as a `(X.Ys)` suffix when both endpoints are present. */
+function formatPartDuration(time: { start?: number; end?: number } | undefined): string {
+  if (!time || typeof time.start !== "number" || typeof time.end !== "number") return "";
+  if (time.end <= time.start) return "";
+  return ` (${((time.end - time.start) / 1000).toFixed(1)}s)`;
+}
+
+/** Extract the terminal-state payload (output on completed, error on error). */
+function terminalPayload(state: ToolPartState | undefined): string | undefined {
+  if (!state) return undefined;
+  if (state.status === "completed") return state.output;
+  if (state.status === "error") return state.error;
+  return undefined;
+}
 
 // ── runner ──────────────────────────────────────────────────────────────────────
 
@@ -333,19 +343,20 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   let accumulatedCostUsd = 0;
   let tokensLogged = false;
   const toolCallTimings = new Map<string, number>();
-  let currentStepId: string | null = null;
-  let currentStepType: string | null = null;
-  let stepHistory: Array<{ stepId: string; stepType: string; toolCalls: string[] }> = [];
+  // event-to-event silence detector for the "no activity for Xs" diagnostic.
+  // local to this runner so chunk-level `markActivity()` (which feeds the
+  // outer spawn activityTimeout) doesn't reset it on every chunk arrival.
+  let lastEventAt = performance.now();
+  // hoisted above `handlers` so closure capture is initialized before any
+  // handler can fire — defensive against future refactors that might invoke
+  // a handler synchronously during setup.
+  const recentStderr: string[] = [];
+  let lastProviderError: string | null = null;
+  let agentErrorEvent: OpenCodeErrorEvent | null = null;
 
-  // per-session labeler so parallel subagent log lines can be differentiated.
-  // the orchestrator's task tool_use events seed the labeler; the next
-  // previously-unseen sessionID consumes the head of the pending-label queue.
-  // upstream opencode's `cli/cmd/run.ts` filters subagent events out of its
-  // NDJSON stream (`part.sessionID !== sessionID`), so we ship a per-run
-  // plugin (`action/agents/opencodePlugin.ts`, written into the tmpdir at
-  // setup) that re-emits non-orchestrator `message.part.updated` events. those
-  // arrive here as `pullfrog_bus_event` envelopes and feed the labeler with
-  // real data per subagent session.
+  // per-session labeler. opencode's CLI run loop filters subagent events
+  // (`part.sessionID !== sessionID`); our injected plugin re-emits them as
+  // `pullfrog_bus_event` envelopes so the labeler sees real subagent data.
   const labeler = new SessionLabeler();
   function eventLabel(event: Record<string, unknown>): string {
     const sid = event.sessionID ?? event.session_id;
@@ -355,66 +366,29 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
     return label === ORCHESTRATOR_LABEL ? message : formatWithLabel(label, message);
   }
 
-  // one ThinkingTimer per session — sharing a single timer across sessions
-  // conflated cross-session interleaving (parent thinks → child tool_call,
-  // or child returns → parent dispatches next) as parent thinking time. each
-  // timer formats its log lines through the session label so the "thought
-  // for X" attribution is visible in the merged stream.
-  const thinkingTimers = new Map<string, ThinkingTimer>();
-  function timerFor(label: string): ThinkingTimer {
-    let t = thinkingTimers.get(label);
-    if (!t) {
-      const formatLine = (line: string) =>
-        label === ORCHESTRATOR_LABEL ? line : formatWithLabel(label, line);
-      t = new ThinkingTimer(formatLine);
-      thinkingTimers.set(label, t);
-    }
-    return t;
-  }
-
-  // tracks per-task dispatch metadata so the matching tool_result can log a
-  // labeled "» subagent finished: lens=X duration=Ys" line. this is the most
-  // useful per-lens observability available given that subagent-internal
-  // events aren't streamed.
+  // tracks per-task dispatch metadata so the matching tool_use(completed)
+  // can log a labeled "» subagent finished: lens=X duration=Ys" line.
   //
-  // matching strategy is hybrid because opencode does NOT reliably emit a
-  // tool_result with a callID equal to the originating tool_use.callID for
-  // the `task` tool (verified empirically in T3 — 5 task dispatches recorded
-  // here, 0 finish lines fired, yet aggregation succeeded so results did
-  // arrive on the stream). we keep an exact-match Map for the fast path, and
-  // also a FIFO queue for the fallback path where the callID mismatches.
-  // the queue + map share entries by reference so popping one removes both.
+  // v2 simplification: at v1.15, opencode keeps a single stable callID across
+  // the whole `tool-input-* → tool-call → tool-result/tool-error` chain
+  // (`session/processor.ts:282-330,418,448`). The v1-era hybrid exact+FIFO
+  // matcher is gone; we use exact-match only.
   interface TaskDispatch {
     label: string;
     startedAt: number;
     toolUseCallID: string;
   }
   const taskDispatchByCallID = new Map<string, TaskDispatch>();
-  const pendingTaskDispatches: TaskDispatch[] = [];
-  // every non-task tool_use callID we've observed. lets us tell, on a
-  // tool_result, whether its callID belongs to a known non-task tool (in
-  // which case we never fall back to FIFO) or is unrecognised (in which case
-  // a long-output result is a strong "this is probably a task result with a
-  // mismatched callID" signal).
-  const knownNonTaskCallIDs = new Set<string>();
 
-  function emitSubagentFinished(
-    dispatch: TaskDispatch,
-    status: string,
-    output: unknown,
-    matchKind: "exact" | "fifo"
-  ) {
+  function emitSubagentFinished(dispatch: TaskDispatch, status: string, output: unknown) {
     const subagentDuration = performance.now() - dispatch.startedAt;
     const outputStr = typeof output === "string" ? output : "";
     const outputPreview = outputStr.length > 120 ? `${outputStr.slice(0, 120)}…` : outputStr;
-    const matchSuffix = matchKind === "fifo" ? " [fifo-matched]" : "";
     log.info(
-      `» subagent finished: ${dispatch.label} (${(subagentDuration / 1000).toFixed(1)}s, status=${status})${matchSuffix}` +
+      `» subagent finished: ${dispatch.label} (${(subagentDuration / 1000).toFixed(1)}s, status=${status})` +
         (outputPreview ? ` — ${outputPreview.replace(/\n/g, " ")}` : "")
     );
     taskDispatchByCallID.delete(dispatch.toolUseCallID);
-    const idx = pendingTaskDispatches.indexOf(dispatch);
-    if (idx >= 0) pendingTaskDispatches.splice(idx, 1);
   }
 
   function buildUsage(): AgentUsage | undefined {
@@ -433,65 +407,6 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
   }
 
   const handlers = {
-    init: (event: OpenCodeInitEvent) => {
-      // bind this sessionID to a label so subsequent events (tool_use,
-      // tool_result, text, message) route to the right prefix. for the
-      // first session this is "orchestrator"; for subagents it pops from
-      // the pending-dispatch queue.
-      const label = labeler.labelFor(event.session_id ?? null);
-      log.debug(
-        withLabel(
-          label,
-          `» ${params.label} init: session_id=${event.session_id || "unknown"}, model=${event.model || "unknown"}`
-        )
-      );
-      log.debug(withLabel(label, `» ${params.label} init event (full): ${JSON.stringify(event)}`));
-      // only reset run-wide state on the orchestrator's init — child sessions
-      // emit their own init events and we don't want them to clobber the
-      // parent's accumulated counters.
-      if (label === ORCHESTRATOR_LABEL) {
-        finalOutput = "";
-        accumulatedTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-        accumulatedCostUsd = 0;
-        tokensLogged = false;
-      } else {
-        log.info(`» ${params.label} subagent init: ${label} (session ${event.session_id || "?"})`);
-      }
-    },
-    message: (event: OpenCodeMessageEvent) => {
-      const label = eventLabel(event);
-      if (event.role === "assistant" && event.content?.trim()) {
-        const message = event.content.trim();
-        if (event.delta) {
-          log.debug(
-            withLabel(
-              label,
-              `» ${params.label} thinking: ${message.substring(0, 300)}${message.length > 300 ? "..." : ""}`
-            )
-          );
-        } else {
-          log.debug(
-            withLabel(
-              label,
-              `» ${params.label} message (${event.role}): ${message.substring(0, 100)}${message.length > 100 ? "..." : ""}`
-            )
-          );
-          // same reasoning as `text` handler — only orchestrator's non-delta
-          // assistant message is the run output; subagent reports stay scoped
-          // to the box / debug log.
-          if (label === ORCHESTRATOR_LABEL) {
-            finalOutput = message;
-          }
-        }
-      } else if (event.role === "user") {
-        log.debug(
-          withLabel(
-            label,
-            `» ${params.label} message (${event.role}): ${event.content?.substring(0, 100) || ""}${event.content && event.content.length > 100 ? "..." : ""}`
-          )
-        );
-      }
-    },
     text: (event: OpenCodeTextEvent) => {
       if (event.part?.text?.trim()) {
         const message = event.part.text.trim();
@@ -506,195 +421,116 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
         }
       }
     },
-    step_start: (event: OpenCodeStepStartEvent) => {
-      const stepType = event.part?.type || "unknown";
-      const stepId = event.part?.id || "unknown";
-      currentStepId = stepId;
-      currentStepType = stepType;
-      stepHistory.push({ stepId, stepType, toolCalls: [] });
-    },
-    step_finish: async (event: OpenCodeStepFinishEvent) => {
-      const stepId = event.part?.id || "unknown";
-      const eventTokens = event.part?.tokens;
-      if (eventTokens) {
-        accumulatedTokens.input += eventTokens.input || 0;
-        accumulatedTokens.output += eventTokens.output || 0;
-        accumulatedTokens.cacheRead += eventTokens.cache?.read || 0;
-        accumulatedTokens.cacheWrite += eventTokens.cache?.write || 0;
+    /**
+     * Reasoning blocks (only emitted when `--thinking` is set in baseArgs).
+     * `part.time.{start,end}` give us a precise duration from opencode
+     * itself. Not folded into `finalOutput` — that's the final answer,
+     * not inner monologue.
+     */
+    reasoning: (event: OpenCodeReasoningEvent) => {
+      const text = event.part?.text?.trim();
+      if (!text) return;
+      const label = eventLabel(event);
+      const durationStr = formatPartDuration(event.part?.time);
+      const preview = text.length > 280 ? `${text.slice(0, 280)}…` : text;
+      log.info(withLabel(label, `» thinking${durationStr}: ${preview.replace(/\n+/g, " ")}`));
+      if (text.length > 280) {
+        log.debug(withLabel(label, `» thinking (full): ${text}`));
       }
-      // step_finish.part.cost is a per-step delta (not a running total) —
-      // OpenCode emits varying per-event values that sum to the session cost.
-      // verified empirically across Anthropic, OpenAI, Gemini, xAI, DeepSeek,
-      // Moonshot, and OpenRouter (see pullfrog-baseline/opencode-*.log).
-      // guard against NaN/Infinity — a single poison value would make the
-      // running total un-recoverable for the rest of the session.
+    },
+    // step_start carries no information we surface today (token / cost are
+    // reported on step_finish). explicit no-op so the dispatcher doesn't
+    // log "unhandled event" for every step.
+    step_start: () => {},
+    step_finish: (event: OpenCodeStepFinishEvent) => {
+      const t = event.part?.tokens;
+      if (t) {
+        accumulatedTokens.input += t.input || 0;
+        accumulatedTokens.output += t.output || 0;
+        accumulatedTokens.cacheRead += t.cache?.read || 0;
+        accumulatedTokens.cacheWrite += t.cache?.write || 0;
+        // TODO: capture `t.reasoning` once `AgentUsage` grows a
+        // `reasoningTokens` field. Today these tokens are silently dropped
+        // from the token table for reasoning-heavy models (Gemini-3 thinking
+        // pinned high, OpenAI o-/gpt-5-codex, Anthropic extended-thinking) —
+        // USD totals stay correct because `part.cost` covers them.
+      }
+      // `part.cost` is a per-step delta, not a running total. verified
+      // across Anthropic, OpenAI, Gemini, xAI, DeepSeek, Moonshot,
+      // OpenRouter sub-providers. guard NaN/Infinity so a single poison
+      // value can't tank the running total for the rest of the session.
       if (typeof event.part?.cost === "number" && Number.isFinite(event.part.cost)) {
         accumulatedCostUsd += event.part.cost;
       }
-      if (currentStepId === stepId) {
-        currentStepId = null;
-        currentStepType = null;
-      }
     },
+    /**
+     * Tool lifecycle event — at v1.15 a single event covers both completed
+     * and error terminal states (read `part.state.status`). Subagent tool
+     * parts arrive here via the bus-envelope re-emit too.
+     */
     tool_use: (event: OpenCodeToolUseEvent) => {
       const toolName = event.part?.tool;
       const toolId = event.part?.callID;
+      const state = event.part?.state;
       if (!toolName || !toolId) {
         log.info(
           `» tool_use event missing toolName or toolId: ${JSON.stringify(event).substring(0, 500)}`
         );
         return;
       }
-
-      // suspend the activity watchdog across the tool call (issue #760).
-      // for `task` tool dispatches the injected plugin already reverbs
-      // child.stdout chunks, so this is mostly defense-in-depth there;
-      // for non-task MCP tools (checkout_pr, etc.) the suspend is the
-      // only thing keeping a multi-minute fetch from tripping the 300s
-      // spawn-level idle timer. gate by part status: bus-envelope
-      // re-dispatches at line 915 fire only on terminal statuses
-      // (`completed`/`error`) and never produce a paired `tool_result`,
-      // so suspending on those would leak the watchdog open until the
-      // 15min auto-resume — exactly the issue #12 zombie-run window.
-      const status = event.part?.state?.status;
-      if (status !== "completed" && status !== "error") {
-        suspendActivity();
-      }
-
-      // when the orchestrator dispatches a subagent via the `task` tool, push
-      // a label for the upcoming child session so its events are attributable.
-      // record BEFORE label lookup: this event's session is the parent (whose
-      // label is already bound); the dispatch label is for the next new
-      // sessionID that appears.
-      if (toolName === "task") {
-        // may have been pre-registered via the plugin's early task-dispatch
-        // announcement (`pullfrog_bus_event` handler). dedupe on callID so
-        // we don't record the same dispatch twice (which would corrupt the
-        // FIFO label queue).
-        if (!taskDispatchByCallID.has(toolId)) {
-          const taskInput = (event.part?.state?.input ?? {}) as {
-            description?: string;
-            subagent_type?: string;
-            prompt?: string;
-          };
-          const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
-          // dual-index by callID (fast path) AND in a FIFO queue (fallback path
-          // for when opencode's task tool_result carries a different callID).
-          const dispatch: TaskDispatch = {
-            label: dispatchedLabel,
-            startedAt: performance.now(),
-            toolUseCallID: toolId,
-          };
-          taskDispatchByCallID.set(toolId, dispatch);
-          pendingTaskDispatches.push(dispatch);
-          log.info(
-            `» dispatching subagent: ${dispatchedLabel}` +
-              (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
-          );
-        }
-      } else {
-        // remember non-task callIDs so a later tool_result with that callID
-        // is correctly identified as not-a-task (and we don't FIFO-pop a
-        // pending task by mistake).
-        knownNonTaskCallIDs.add(toolId);
-      }
-
+      const status = state?.status;
+      const isTerminal = status === "completed" || status === "error";
       const label = eventLabel(event);
 
-      if (stepHistory.length > 0) {
-        stepHistory[stepHistory.length - 1]!.toolCalls.push(toolName);
-      }
-
-      if (params.onToolUse) {
-        params.onToolUse({
-          toolName,
-          input: event.part?.state?.input,
+      // seed the labeler's pending-queue on the FIRST observation of a `task`
+      // dispatch, before the subagent's first message.part.updated fires.
+      // v1.15 keeps callID stable across the lifecycle, so dedupe is by callID.
+      if (toolName === "task" && !taskDispatchByCallID.has(toolId)) {
+        const taskInput = (state?.input ?? {}) as {
+          description?: string;
+          subagent_type?: string;
+          prompt?: string;
+        };
+        const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
+        taskDispatchByCallID.set(toolId, {
+          label: dispatchedLabel,
+          startedAt: performance.now(),
+          toolUseCallID: toolId,
         });
+        log.info(
+          `» dispatching subagent: ${dispatchedLabel}` +
+            (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
+        );
       }
 
-      timerFor(label).markToolCall();
-      const inputFormatted = formatJsonValue(event.part?.state?.input || {});
-      const toolCallLine =
+      params.onToolUse?.({ toolName, input: state?.input });
+
+      // record start time on first observation; the bus-envelope re-emit can
+      // route the same callID through more than once, so guard the set.
+      if (!toolCallTimings.has(toolId)) {
+        toolCallTimings.set(toolId, performance.now());
+      }
+
+      const inputFormatted = formatJsonValue(state?.input || {});
+      const callLine =
         inputFormatted !== "{}" ? `» ${toolName}(${inputFormatted})` : `» ${toolName}()`;
-      log.info(withLabel(label, toolCallLine));
+      log.info(withLabel(label, callLine));
 
-      if (event.part?.state?.status === "completed" && event.part.state.output) {
-        log.debug(withLabel(label, `  output: ${event.part.state.output}`));
+      if (state?.status === "completed") {
+        log.debug(withLabel(label, `  output: ${state.output}`));
       }
-      // surface tool errors at info level. opencode emits tool parts at
-      // status="error" through the same `tool_use` event the CLI's run-loop
-      // (and our injected plugin for subagent parts) emits — without this
-      // branch the only signal in the user's logs is `» <tool>(...)` with
-      // no indication the call failed.
-      if (event.part?.state?.status === "error") {
-        log.info(withLabel(label, `» tool call failed: ${event.part.state.error}`));
+      if (state?.status === "error") {
+        log.info(withLabel(label, `» tool call failed: ${state.error}`));
       }
 
-      // agent's explicit MCP report_progress takes priority over todo tracking
-      if (toolName.includes("report_progress") && params.todoTracker) {
-        log.debug("» report_progress detected, disabling todo tracking");
-        params.todoTracker.cancel();
-      }
+      if (isTerminal) {
+        const dispatch = toolName === "task" ? taskDispatchByCallID.get(toolId) : undefined;
+        if (dispatch) emitSubagentFinished(dispatch, status, terminalPayload(state));
 
-      // parse todowrite events for live progress tracking
-      if (toolName === "todowrite" && params.todoTracker?.enabled) {
-        params.todoTracker.update(event.part?.state?.input);
-      }
-    },
-    tool_result: (event: OpenCodeToolResultEvent) => {
-      resumeActivity();
-      const toolId = event.part?.callID || event.tool_id;
-      const state = event.part?.state;
-      const status = state?.status ?? event.status ?? "unknown";
-      const payload =
-        state?.status === "completed"
-          ? state.output
-          : state?.status === "error"
-            ? state.error
-            : event.output;
-      const label = eventLabel(event);
-
-      timerFor(label).markToolResult();
-
-      // surface subagent completion at info level — opencode otherwise hides
-      // per-task timing in debug-only logs, so a parallel multi-lens fan-out
-      // looks like N dispatches followed by a long quiet gap then a single
-      // assistant turn. with this line you can see each lens finishing.
-      //
-      // matching is hybrid: exact callID first; FIFO fallback when the
-      // tool_result's callID is unrecognised. opencode does not consistently
-      // surface matching callIDs for the `task` tool, so the FIFO path is the
-      // one that fires in practice. we only fall through to FIFO when the
-      // callID is brand-new (not in `knownNonTaskCallIDs`) so genuinely
-      // non-task tool_results never accidentally pop a pending task.
-      if (taskDispatchByCallID.size > 0 || pendingTaskDispatches.length > 0) {
-        if (toolId && taskDispatchByCallID.has(toolId)) {
-          const dispatch = taskDispatchByCallID.get(toolId);
-          if (dispatch) emitSubagentFinished(dispatch, status, payload, "exact");
-        } else {
-          const callIDIsKnownNonTask = toolId ? knownNonTaskCallIDs.has(toolId) : false;
-          if (!callIDIsKnownNonTask && pendingTaskDispatches.length > 0) {
-            const dispatch = pendingTaskDispatches[0]!;
-            emitSubagentFinished(dispatch, status, payload, "fifo");
-          }
-        }
-      }
-
-      if (toolId) {
         const toolStartTime = toolCallTimings.get(toolId);
-        if (toolStartTime) {
+        if (toolStartTime !== undefined) {
           const toolDuration = performance.now() - toolStartTime;
           toolCallTimings.delete(toolId);
-          const stepContext = currentStepId ? ` (step=${currentStepType || "unknown"})` : "";
-          log.debug(
-            withLabel(
-              label,
-              `» ${params.label} tool_result${stepContext}: id=${toolId}, status=${status}, duration=${Math.round(toolDuration)}ms`
-            )
-          );
-          if (payload) {
-            log.debug(withLabel(label, `  output: ${payload}`));
-          }
           if (toolDuration > 5000) {
             log.info(
               withLabel(
@@ -705,10 +541,16 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           }
         }
       }
-      if (status === "error") {
-        log.info(withLabel(label, `» tool call failed: ${payload ?? "(no error message)"}`));
-      } else if (payload) {
-        log.debug(withLabel(label, `tool output: ${payload}`));
+
+      if (toolName.includes("report_progress") && params.todoTracker) {
+        log.debug("» report_progress detected, disabling todo tracking");
+        params.todoTracker.cancel();
+      }
+
+      // todowrite input is identical across pending/running/completed; update
+      // once on the terminal observation to avoid redundant work.
+      if (toolName === "todowrite" && params.todoTracker?.enabled && isTerminal) {
+        params.todoTracker.update(state?.input);
       }
     },
     error: (event: OpenCodeErrorEvent) => {
@@ -721,43 +563,19 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       const errorMessage = event.error?.data?.message || event.error?.name || JSON.stringify(event);
       log.info(`» ${params.label} error event: ${errorName}: ${errorMessage}`);
     },
-    result: async (event: OpenCodeResultEvent) => {
-      const status = event.status || "unknown";
-      const duration = event.stats?.duration_ms || 0;
-      const toolCalls = event.stats?.tool_calls || 0;
-      log.info(
-        `» ${params.label} result: status=${status}, duration=${duration}ms, tool_calls=${toolCalls}`
-      );
-
-      if (event.status === "error") {
-        log.info(`» ${params.label} failed: ${JSON.stringify(event)}`);
-      } else {
-        // the final `result` event only carries input_tokens/output_tokens and
-        // no cache breakdown — accumulatedTokens (summed across step_finish
-        // events) is strictly more accurate, so we prefer it unconditionally.
-        log.info(`» run complete: tool_calls=${toolCalls}, duration=${duration}ms`);
-
-        if (
-          (accumulatedTokens.input > 0 ||
-            accumulatedTokens.output > 0 ||
-            accumulatedTokens.cacheRead > 0 ||
-            accumulatedTokens.cacheWrite > 0) &&
-          !tokensLogged
-        ) {
-          logTokenTable({ ...accumulatedTokens, costUsd: accumulatedCostUsd });
-          tokensLogged = true;
-        }
-      }
-    },
+    /**
+     * Bus envelope (re-emitted by `opencodePlugin.ts`). Synthesizes a
+     * CLI-style event for each part type and routes it through the
+     * orchestrator's handlers — same labeling / attribution / logging path.
+     * Mirrors the dispatch in upstream's `cli/cmd/run.ts` `loop()`.
+     *
+     * NOT routed: subagent `step-start` / `step-finish`. step_finish carries
+     * `tokens` and `cost` that the orchestrator's handler folds into run-wide
+     * accumulators — double-counting subagent tokens would inflate usage
+     * telemetry. text/tool_use already gate on ORCHESTRATOR_LABEL inside their
+     * handlers for the same reason.
+     */
     [PULLFROG_BUS_EVENT_TYPE]: async (event: OpenCodeBusEnvelopeEvent) => {
-      // surface subagent activity that opencode's CLI run-loop discards (it
-      // filters `part.sessionID !== sessionID`). our injected plugin
-      // (action/agents/opencodePlugin.ts) re-emits non-orchestrator
-      // `message.part.updated` bus events; here we synthesize the equivalent
-      // CLI-style event for each known part type and dispatch through the
-      // existing handlers so labeling, attribution, and logging all reuse the
-      // same code path as the orchestrator's events. mirrors the dispatch
-      // logic in opencode-ai's `cli/cmd/run.ts` `loop()` function.
       const busEvent = event.bus_event;
       if (!busEvent || busEvent.type !== "message.part.updated") return;
       const part = busEvent.properties?.part;
@@ -765,42 +583,27 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       const sessionID = part.sessionID;
       const partType = part.type;
 
-      // early task dispatch: the orchestrator's task tool fires bus events at
-      // status=running BEFORE the subagent's first message.part.updated, but
-      // the CLI's run-loop only emits the matching tool_use NDJSON event at
-      // status=completed (after the subagent finishes). without
-      // pre-registering the dispatch label here, the labeler binds the
-      // subagent's sessionID to a generic `subagent#N` fallback before the
-      // CLI's tool_use ever fires recordTaskDispatch. dedupe against
-      // taskDispatchByCallID so the late tool_use handler doesn't double-add.
       if (partType === "tool") {
         const status = part.state?.status;
-        const partWithToolFields = part as {
-          tool?: string;
-          callID?: string;
-          state?: { status?: string; input?: unknown };
-        };
-        // only running (not pending) — at pending state.input is still {}.
-        // by running, the LLM has filled in description/subagent_type/prompt.
-        // mirrors the same check in the plugin source.
-        const isOrchestratorTaskDispatch =
-          partWithToolFields.tool === "task" && status === "running";
-        if (isOrchestratorTaskDispatch) {
-          const callID = partWithToolFields.callID;
-          if (typeof callID === "string" && !taskDispatchByCallID.has(callID)) {
-            const taskInput = (partWithToolFields.state?.input ?? {}) as {
+        // Early task-dispatch announce: the CLI's NDJSON `tool_use` event for
+        // a `task` call only fires at status=completed (after the subagent
+        // finishes), but we need to bind a label to the subagent's sessionID
+        // BEFORE its first message.part.updated. only fire on status=running
+        // — at "pending", state.input is still {} and the lens label can't be
+        // derived. dedupe against the late tool_use handler via callID.
+        if (part.tool === "task" && status === "running" && part.callID) {
+          if (!taskDispatchByCallID.has(part.callID)) {
+            const taskInput = (part.state?.input ?? {}) as {
               description?: string;
               subagent_type?: string;
               prompt?: string;
             };
             const dispatchedLabel = labeler.recordTaskDispatch(taskInput);
-            const dispatch: TaskDispatch = {
+            taskDispatchByCallID.set(part.callID, {
               label: dispatchedLabel,
               startedAt: performance.now(),
-              toolUseCallID: callID,
-            };
-            taskDispatchByCallID.set(callID, dispatch);
-            pendingTaskDispatches.push(dispatch);
+              toolUseCallID: part.callID,
+            });
             log.info(
               `» dispatching subagent: ${dispatchedLabel}` +
                 (taskInput.subagent_type ? ` (subagent_type=${taskInput.subagent_type})` : "")
@@ -809,44 +612,19 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           return;
         }
         if (status !== "completed" && status !== "error") return;
-        await handlers.tool_use({
-          type: "tool_use",
-          sessionID,
-          part,
-        } as OpenCodeToolUseEvent);
+        await handlers.tool_use({ type: "tool_use", sessionID, part } as OpenCodeToolUseEvent);
         return;
       }
-      // intentionally NOT routing subagent step_start / step_finish through
-      // the orchestrator's handlers:
-      //   - step_finish carries `tokens` and `cost` and the handler folds
-      //     them into the run-wide accumulators. surfacing subagent steps
-      //     here would inflate the orchestrator's usage telemetry — and
-      //     either double-count (if opencode also bills child tokens back
-      //     up to the parent session) or just over-report. the existing
-      //     init/message/text handlers all gate on ORCHESTRATOR_LABEL for
-      //     the same reason.
-      //   - step_start mutates `currentStepId` / `currentStepType` /
-      //     `stepHistory`, which are orchestrator-scoped — using them to
-      //     attribute subagent activity in the orchestrator's tool-use
-      //     timing log would be wrong.
-      // the subagent's tool calls and text still surface (handled below)
-      // — that's the user-visible activity.
       if (partType === "step-start" || partType === "step-finish") return;
       if (partType === "text" && part.time?.end !== undefined) {
-        await handlers.text({
-          type: "text",
-          sessionID,
-          part,
-        } as OpenCodeTextEvent);
+        handlers.text({ type: "text", sessionID, part } as OpenCodeTextEvent);
         return;
+      }
+      if (partType === "reasoning" && part.time?.end !== undefined) {
+        handlers.reasoning({ type: "reasoning", sessionID, part } as OpenCodeReasoningEvent);
       }
     },
   };
-
-  const recentStderr: string[] = [];
-
-  let lastProviderError: string | null = null;
-  let agentErrorEvent: OpenCodeErrorEvent | null = null;
 
   // shared with main.ts via toolState. updated in place as events stream and
   // stderr accumulates so the outer activity-timeout catch sees the same
@@ -890,15 +668,13 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       // wrapper would grow unbounded for multi-lens Reviews and previously
       // crashed the wrapper with RangeError at ~1 GiB. see issue #680.
       retain: "none",
-      // suspend the spawn-level idle watchdog across MCP tool calls (issue
-      // #760). bracketed by suspendActivity()/resumeActivity() in the
-      // tool_use/tool_result handlers above, bounded by
-      // MAX_TOOL_CALL_SUSPENSION_MS in activity.ts. the injected plugin
-      // (action/agents/opencodePlugin.ts) re-emits subagent
-      // `message.part.updated` events on opencode's stdout, so subagent
-      // dispatches keep marking child.stdout activity as well — defense
-      // in depth (verified empirically in PR #634, ~3.3 plugin events/sec).
-      isPausedExternally: isActivitySuspended,
+      // NB: we used to pass `isPausedExternally: isSubagentInFlight` to suspend
+      // the activity timer during subagent dispatches. unnecessary now that
+      // our injected plugin (action/agents/opencodePlugin.ts) re-emits
+      // subagent `message.part.updated` events on opencode's stdout — those
+      // arrive at child.stdout here, fire updateActivity(), and reset
+      // lastActivityTime naturally. verified empirically in PR #634
+      // (~3.3 plugin events/sec during a typical subagent run).
       onStdout: async (chunk) => {
         const text = chunk.toString();
         output.append(text);
@@ -924,18 +700,24 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
           diagnostic.eventCount = eventCount;
           log.debug(JSON.stringify(event, null, 2));
 
-          const timeSinceLastActivity = getIdleMs();
-          if (timeSinceLastActivity > 10000) {
+          // sample BEFORE the per-event marker — `lastEventAt` is local to
+          // this runner so it isn't reset by the chunk-level `markActivity()`
+          // above (which exists to feed spawn's outer activityTimeout).
+          // measures real event-to-event silence; the previous sampling
+          // against the module-level idle counter was always ~0ms because
+          // the chunk-level reset happened µs earlier.
+          const idleMs = performance.now() - lastEventAt;
+          if (idleMs > 10000) {
             const activeToolCalls = toolCallTimings.size;
             const toolCallInfo =
               activeToolCalls > 0
                 ? ` (waiting for ${activeToolCalls} tool call${activeToolCalls > 1 ? "s" : ""})`
                 : ` (${params.label} may be processing internally - LLM calls, planning, etc.)`;
             log.info(
-              `» no activity for ${(timeSinceLastActivity / 1000).toFixed(1)}s${toolCallInfo} (${eventCount} events processed so far)`
+              `» no activity for ${(idleMs / 1000).toFixed(1)}s${toolCallInfo} (${eventCount} events processed so far)`
             );
           }
-          markActivity();
+          lastEventAt = performance.now();
 
           const handler = handlers[event.type as keyof typeof handlers];
           if (!handler) {
@@ -977,25 +759,19 @@ async function runOpenCode(params: RunParams): Promise<AgentResult> {
       params.todoTracker?.cancel();
     }
 
-    // any pending task dispatches that never got a matching tool_result are
-    // surfaced here so the gap is visible rather than silently swallowed.
-    // this happens when opencode delivers the subagent's reply through a
-    // path other than tool_result (e.g. inlined into the next assistant
-    // message). flushing here is best-effort attribution — the durations
-    // reported are upper bounds (the subagent could have finished any time
-    // between dispatch and run-end), but the labels and ordering are exact.
-    //
-    // NB: the `result` event handler is dead in opencode (opencode never
-    // emits a `result`-typed event), which is why this flush lives here in
-    // the post-subprocess block instead.
-    if (pendingTaskDispatches.length > 0) {
-      for (const dispatch of [...pendingTaskDispatches]) {
+    // any task dispatches that didn't see a terminal tool_use are surfaced
+    // here so the gap is visible rather than silently swallowed. v2 reaches
+    // here much less often than v1 (callIDs are stable, so terminal tool_use
+    // matches the dispatch exactly), but a subagent reply that arrives via
+    // an assistant message rather than the task tool's terminal state can
+    // still leave the dispatch open. durations reported are upper bounds.
+    if (taskDispatchByCallID.size > 0) {
+      for (const dispatch of taskDispatchByCallID.values()) {
         const elapsed = performance.now() - dispatch.startedAt;
         log.info(
-          `» subagent finished (inferred at run-end): ${dispatch.label} (≤${(elapsed / 1000).toFixed(1)}s) — no matching tool_result observed; subagent reply likely arrived via assistant message`
+          `» subagent finished (inferred at run-end): ${dispatch.label} (≤${(elapsed / 1000).toFixed(1)}s) — no terminal tool_use observed; reply likely arrived via assistant message`
         );
       }
-      pendingTaskDispatches.length = 0;
       taskDispatchByCallID.clear();
     }
 
@@ -1170,8 +946,13 @@ export const opencode = agent({
     // see action/utils/codexHome.ts and wiki/codex-auth.md.
     const codexAuth = installCodexAuth();
 
-    // base args shared between initial run and continue runs
-    const baseArgs = ["run", "--format", "json", "--print-logs"];
+    // base args shared between initial run and continue runs.
+    // `--thinking` is required at v1.14+ to surface `reasoning` NDJSON events
+    // — the CLI's run loop suppresses reasoning emission unless this flag is
+    // set (`cli/cmd/run.ts:241,671`). Without it Gemini-3 / OpenAI-reasoning /
+    // Anthropic-extended-thinking blocks would silently disappear from the
+    // log even though the model produced them.
+    const baseArgs = ["run", "--format", "json", "--print-logs", "--thinking"];
 
     // OPENCODE_PERMISSION has absolute highest precedence (merged after managed/MDM configs).
     // external_directory gates ALL native filesystem tools (Read, Write, Edit, Glob, Grep, etc.)
@@ -1181,9 +962,21 @@ export const opencode = agent({
       external_directory: { "*": "deny", "/tmp/*": "allow" },
     });
 
+    const repoDir = process.cwd();
+
+    // CRITICAL: opencode-ai >=1.14 reads `process.env.PWD` first when
+    // resolving the SDK client's `directory` parameter (see upstream
+    // `cli/cmd/run.ts:282` — `Filesystem.resolve(process.env.PWD ?? process.cwd())`).
+    // We pass `cwd: repoDir` to spawn but the child inherits the harness's
+    // PWD via `...process.env`, which (when running through the test runner /
+    // GHA wrapper) is a different directory. Without overriding PWD, opencode
+    // creates *two* instances — one at `process.cwd()` (correct) and one at
+    // `PWD` (wrong) — and the agent's session runs in the wrong-cwd one,
+    // missing the project's `.opencode/skills/` and `.claude/skills/`.
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...homeEnv,
+      PWD: repoDir,
       OPENCODE_CONFIG_CONTENT: buildSecurityConfig(ctx, model),
       OPENCODE_PERMISSION: permissionOverride,
       GOOGLE_GENERATIVE_AI_API_KEY:
@@ -1211,8 +1004,6 @@ export const opencode = agent({
         })
       );
     }
-
-    const repoDir = process.cwd();
 
     log.debug(`» starting Pullfrog (OpenCode): ${cliPath} ${baseArgs.join(" ")}`);
     log.debug(`» working directory: ${repoDir}`);

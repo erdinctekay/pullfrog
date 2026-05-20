@@ -949,9 +949,20 @@ export const claude = agent({
     // bedrock run; if the user has set the env var manually for some other
     // reason (e.g. always-Bedrock org policy), `...process.env` already
     // carries it through and we don't disturb it.
+    const repoDir = process.cwd();
+
+    // PWD must match the spawn cwd (see opencode_v2.ts for the analogous fix).
+    // claude-code 2.1.x reads `process.env.PWD` and registers it as a "session"
+    // additional-working-directory when it differs from `process.cwd()` (per
+    // the bundled cli.js — `let H=process.env.PWD; if(H && H !== Y7() && ...)
+    // j.set(H, {path: H, source: "session"})`). Inheriting harness PWD via
+    // `...process.env` ends up adding the wrong dir to the agent's allowed
+    // working set under `pnpm runtest` / `pnpm play`, which silently confuses
+    // path-relative tools.
     const env: Record<string, string | undefined> = {
       ...process.env,
       ...homeEnv,
+      PWD: repoDir,
     };
     if (isBedrockRoute) {
       env.CLAUDE_CODE_USE_BEDROCK = "1";
@@ -966,8 +977,6 @@ export const claude = agent({
       );
       delete env.ANTHROPIC_API_KEY;
     }
-
-    const repoDir = process.cwd();
 
     log.info(`» effort: ${effort}`);
     log.debug(`» starting Pullfrog (Claude Code): node ${baseArgs.join(" ")}`);

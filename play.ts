@@ -1,5 +1,11 @@
 // thin CLI for ad-hoc fixture runs against the Pullfrog action.
-// for the GHA-like containerized version, run `pnpm gha play.ts […]`.
+//
+// invoke from the repo root:
+//   pnpm play [args…]            # host, in-process — fast iteration (default)
+//   pnpm play:docker [args…]     # local docker container that mocks GHA
+//   pnpm docker play.ts [args…]  # explicit container form (equivalent to `pnpm play:docker`)
+//
+// see wiki/docker.md for when host vs container matters.
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import arg from "arg";
@@ -38,19 +44,19 @@ if (isDirectExecution) {
 
   if (args["--help"]) {
     log.info(`
-Usage: node play.ts [--raw <input>]
+Usage: pnpm play         [--raw <input>]   (host, in-process; this entry)
+       pnpm play:docker  [--raw <input>]   (local docker container that mocks GHA)
 
-Run the Pullfrog action against an inline fixture. Host-side, in-process.
-For a GHA-like Linux container, use \`pnpm gha play.ts […]\` instead.
+Run the Pullfrog action against an inline fixture.
 
 Options:
   --raw <input>    raw string used as the prompt, or JSON object as full fixture
   -h, --help       show this message
 
 Examples:
-  node play.ts
-  node play.ts --raw "Hello world"
-  node play.ts --raw '{"prompt":"Hi","timeout":"5s"}'
+  pnpm play
+  pnpm play --raw "Hello world"
+  pnpm play --raw '{"prompt":"Hi","timeout":"5s"}'
     `);
     process.exit(0);
   }

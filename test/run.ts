@@ -19,23 +19,25 @@ import {
 /**
  * unified test runner for all agent tests.
  *
- * usage: node test/run.ts [filters...]
+ * invoke from the repo root:
+ *   pnpm runtest [filters…]            # host, in-process — fast iteration (default)
+ *   pnpm runtest:docker [filters…]     # local docker container that mocks GHA
+ *   pnpm docker test/run.ts [filters…] # explicit container form (equivalent to `pnpm runtest:docker`)
  *
  * filters can be test names, tags, or agent names:
- *   node test/run.ts               # run all tests (excludes adhoc-tagged tests)
- *   node test/run.ts smoke         # run tests named "smoke" or tagged "smoke"
- *   node test/run.ts opencode      # run all tests for opencode only
- *   node test/run.ts security      # run all tests tagged "security"
- *   node test/run.ts agnostic      # run all agnostic-tagged tests (with opencode)
- *   node test/run.ts adhoc         # run all adhoc-tagged tests
- *   node test/run.ts smoke opencode # run smoke tests for opencode only
+ *   pnpm runtest                    # run all tests (excludes adhoc-tagged tests)
+ *   pnpm runtest smoke              # run tests named "smoke" or tagged "smoke"
+ *   pnpm runtest opencode           # run all tests for opencode only
+ *   pnpm runtest security           # run all tests tagged "security"
+ *   pnpm runtest agnostic           # run all agnostic-tagged tests (with opencode)
+ *   pnpm runtest adhoc              # run all adhoc-tagged tests
+ *   pnpm runtest smoke opencode     # run smoke tests for opencode only
  *
  * special tags:
  *   - "agnostic": runs with opencode only, excluded when filtering by agent
  *   - "adhoc": excluded from default runs, must be explicitly requested
  *
- * runs in-process. for the GHA-like Linux container, invoke via
- * `pnpm gha test/run.ts […]` (the `runtest` package script does this).
+ * see wiki/docker.md for when host vs container matters.
  */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -259,6 +261,28 @@ function shouldRetry(result: AgentResult, validation: ValidationResult): RetryDe
 
 async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
   const testConfig = ctx.testInfo.config;
+
+  // runtime-evaluated skip: gate on env (e.g. CODEX_AUTH_JSON for codex-auth).
+  // skipped runs short-circuit before any agent spawn AND count as passing so
+  // a missing optional secret doesn't fail-fast cancel the rest of the matrix.
+  const skipReason = testConfig.skipIf?.();
+  if (skipReason) {
+    const prefix = getPrefix({ test: ctx.testInfo.name, agent: ctx.agent });
+    console.log(`${prefix} ⏭  skipped: ${skipReason}`);
+    const skipped: ValidationResult = {
+      test: ctx.testInfo.name,
+      agent: ctx.agent,
+      passed: true,
+      canceled: false,
+      checks: [],
+      output: `skipped: ${skipReason}`,
+      skipped: true,
+      skipReason,
+    };
+    ctx.results.set(getRunKey(ctx.testInfo.name, ctx.agent), skipped);
+    return skipped;
+  }
+
   const env: Record<string, string> = {};
   if (testConfig.env) {
     const entries = Object.entries(testConfig.env);

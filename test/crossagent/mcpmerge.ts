@@ -44,5 +44,5 @@ export const test: TestRunnerOptions = {
   repoSetup:
     'mkdir -p /tmp/pullfrog-mcp-secret && printf "%s" "$PULLFROG_MCP_SECRET" > /tmp/pullfrog-mcp-secret/secret.txt',
   // any MCP-layer change can affect repo-MCP merging; agents own MCP wiring.
-  coverage: ["action/mcp/**", "action/agents/{claude,opencode}.ts"],
+  coverage: ["action/mcp/**", "action/agents/{claude,opencode,opencode_v2}.ts"],
 };

@@ -44,8 +44,8 @@ fi
 # this idempotent and fast (~1.5s when nothing changed).
 #
 # the lockfile lives IN the shared node_modules volume so concurrent
-# `pnpm gha` invocations (e.g. `pnpm play` in one terminal and
-# `pnpm runtest` in another) serialize their install instead of racing.
+# `pnpm docker` invocations (e.g. `pnpm play:docker` in one terminal and
+# `pnpm runtest:docker` in another) serialize their install instead of racing.
 # `flock -w 120` waits up to 2min before giving up — well under any
 # real-world install time but short enough to surface true deadlocks.
 mkdir -p /app/action/node_modules

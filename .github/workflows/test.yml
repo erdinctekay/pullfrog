@@ -30,6 +30,7 @@ jobs:
         agent: [claude, opencode]
         test:
           [
+            codex-auth,
             mcpmerge,
             nobash,
             restricted,
@@ -41,6 +42,8 @@ jobs:
         exclude:
           - agent: claude
             test: skill-invoke-opencode
+          - agent: claude
+            test: codex-auth
           - agent: opencode
             test: skill-invoke-claude
     env:
@@ -59,6 +62,13 @@ jobs:
       AWS_REGION: us-east-1
       BEDROCK_MODEL_ID: us.anthropic.claude-opus-4-6-v1
       PULLFROG_MODEL: ${{ vars.PULLFROG_MODEL }}
+      # CI smoke-testing shortcut only — production stores this in Pullfrog's
+      # per-org secret store (Postgres), set via `pullfrog auth codex`. GH
+      # Actions secrets are immutable at runtime so the post-hook can't write
+      # back the rotated refresh token; CI accepts the staleness and we
+      # manually re-provision when smoke tests start failing. Do not copy this
+      # pattern into user-facing workflows. See wiki/codex-auth.md.
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4

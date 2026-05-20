@@ -1,11 +1,21 @@
-// run any node script inside the pullfrog GHA-like container.
+// run any node script inside the pullfrog local docker container that
+// mocks the GHA `ubuntu-24.04` runner environment. NOT a real GitHub
+// Actions runner — for the real thing, see `.github/workflows/*.yml`
+// and `action/commands/gha.ts` (the action's GHA entry point).
 //
 // usage:
-//   pnpm gha <script> [args…]   # run script in container
-//   pnpm gha --shell             # interactive bash (requires TTY)
-//   pnpm gha --build [--no-cache]   # force-rebuild image
-//   pnpm gha --clean             # prune orphan images/volumes
-//   pnpm gha --doctor            # versions of every baked tool
+//   pnpm docker <script> [args…]    # run script in container
+//   pnpm docker --shell             # interactive bash (requires TTY)
+//   pnpm docker --build [--no-cache] # force-rebuild image
+//   pnpm docker --clean             # prune orphan images/volumes
+//   pnpm docker --doctor            # versions of every baked tool
+//
+// the action's two main entrypoints default to the host (fast iteration).
+// `:docker` suffix wraps this script:
+//   pnpm play [args…]               # host (this is the fast default)
+//   pnpm play:docker [args…]        # === pnpm docker play.ts [args…]
+//   pnpm runtest [filters…]         # host
+//   pnpm runtest:docker [filters…]  # === pnpm docker test/run.ts [filters…]
 //
 // the container is a baked ubuntu:24.04 image (see Dockerfile) with the
 // same toolset as GHA `ubuntu-24.04` runners. host env passes through
@@ -66,7 +76,7 @@ const HOST_ONLY_VARS = new Set([
   "COLORTERM",
   "ITERM_PROFILE",
   "ITERM_SESSION_ID",
-  // outer-CI workflow-run identifiers — when `pnpm runtest smoke` runs inside
+  // outer-CI workflow-run identifiers — when the test suite runs inside
   // pullfrog/app's CI, these refer to pullfrog/app's run, NOT the test repo
   // the harness is acting against (e.g. pullfrog/test-repo). Anything inside
   // the action that uses them as keys to look up state on the test repo (most
@@ -97,11 +107,11 @@ type Args = {
 };
 
 /**
- * parses gha-level flags up to (but not including) the first positional
+ * parses docker-level flags up to (but not including) the first positional
  * argument. anything after the first positional, or after a literal `--`,
  * passes through verbatim to the inner script. this prevents
- * `pnpm gha test/run.ts --build` from intercepting `--build` as a
- * gha flag.
+ * `pnpm docker test/run.ts --build` from intercepting `--build` as a
+ * docker flag.
  */
 function parseArgs(argv: string[]): Args {
   const out: Args = {
@@ -140,17 +150,23 @@ function parseArgs(argv: string[]): Args {
 }
 
 function showHelp(): void {
-  process.stdout.write(`Usage: pnpm gha <script> [args…]
-       pnpm gha --shell
-       pnpm gha --build [--no-cache]
-       pnpm gha --clean
-       pnpm gha --doctor
+  process.stdout.write(`Usage: pnpm docker <script> [args…]
+       pnpm docker --shell
+       pnpm docker --build [--no-cache]
+       pnpm docker --clean
+       pnpm docker --doctor
 
-Run a node script inside the pullfrog GHA-like container. Mirrors the
-GitHub Actions ubuntu-24.04 runner toolset (gh, jq, python3, sudo, +
+Run a node script inside the pullfrog local docker container that mocks
+the GHA ubuntu-24.04 runner toolset (gh, jq, python3, sudo, +
 build-essential / wget / xz / file). Host env passes through verbatim.
 The host is reachable from inside the container at host.docker.internal
 (useful for scripts that hit your local dev server).
+
+The action's two main entrypoints have host (fast) and docker variants:
+  pnpm play [args…]               # host — the fast default
+  pnpm play:docker [args…]        # === pnpm docker play.ts [args…]
+  pnpm runtest [filters…]         # host
+  pnpm runtest:docker [filters…]  # === pnpm docker test/run.ts [filters…]
 
 Options:
   --build      rebuild the current image (otherwise rebuilt automatically
@@ -160,7 +176,7 @@ Options:
                useful when an apt mirror or base image changed.
   --shell      drop into an interactive bash inside the container.
                requires a TTY.
-  --clean      prune orphaned pullfrog-gha:* images and node_modules
+  --clean      prune orphaned pullfrog-docker:* images and node_modules
                volumes whose hash doesn't match the current Dockerfile.
   --doctor     print version info for tools inside the container (node,
                pnpm, gh, jq, git, python3, ssh, …). useful for diagnosing
@@ -169,24 +185,24 @@ Options:
 
 Pass-through:
   Anything after the first positional argument (or after a literal \`--\`)
-  goes to the inner script verbatim. so \`pnpm gha test/run.ts --build\`
-  passes \`--build\` to test/run.ts, not to gha.
+  goes to the inner script verbatim. so \`pnpm docker test/run.ts --build\`
+  passes \`--build\` to test/run.ts, not to docker.
 
 Examples:
-  pnpm gha play.ts
-  pnpm gha play.ts --raw '{"prompt":"hi"}'
-  pnpm gha test/run.ts smoke
-  pnpm gha --shell
-  pnpm gha --build              # build image, then exit
-  pnpm gha --build --no-cache   # rebuild from scratch
-  pnpm gha --clean              # reclaim disk from old image hashes
-  pnpm gha --doctor             # fidelity audit
+  pnpm docker play.ts
+  pnpm docker play.ts --raw '{"prompt":"hi"}'
+  pnpm docker test/run.ts smoke
+  pnpm docker --shell
+  pnpm docker --build              # build image, then exit
+  pnpm docker --build --no-cache   # rebuild from scratch
+  pnpm docker --clean              # reclaim disk from old image hashes
+  pnpm docker --doctor             # fidelity audit
 `);
 }
 
 function ensureDocker(): void {
   if (platform() === "win32") {
-    fail("pnpm gha is not supported on native windows. use wsl2.");
+    fail("pnpm docker is not supported on native windows. use wsl2.");
   }
   const probe = spawnSync("docker", ["info"], { stdio: "ignore" });
   if (probe.status !== 0) {
@@ -208,15 +224,15 @@ function imageRefFor(ctx: { dockerfile: string; entrypoint: string }): ImageRef 
     .digest("hex")
     .slice(0, 12);
   return {
-    tag: `pullfrog-gha:${hash}`,
+    tag: `pullfrog-docker:${hash}`,
     // version the volume by image hash so a stale node_modules cache from
     // an old image (e.g. different node major) can't poison a new image.
-    volumeName: `pullfrog-gha-node-modules-${hash}`,
+    volumeName: `pullfrog-docker-node-modules-${hash}`,
   };
 }
 
 /**
- * remove pullfrog-gha:* images and pullfrog-gha-node-modules-* volumes
+ * remove pullfrog-docker:* images and pullfrog-docker-node-modules-* volumes
  * whose hash doesn't match the current Dockerfile + entrypoint. each
  * Dockerfile/entrypoint edit creates a fresh hash and orphans the prior
  * pair; without periodic cleanup these accumulate (~600MB image + ~200MB
@@ -228,7 +244,7 @@ function cleanOrphans(currentRef: ImageRef): void {
   });
   const images = (imgList.stdout ?? "")
     .split("\n")
-    .filter((s) => s.startsWith("pullfrog-gha:") && s !== currentRef.tag);
+    .filter((s) => s.startsWith("pullfrog-docker:") && s !== currentRef.tag);
   if (images.length > 0) {
     process.stderr.write(`» removing ${images.length} orphan image(s): ${images.join(", ")}\n`);
     spawnSync("docker", ["image", "rm", "-f", ...images], { stdio: "inherit" });
@@ -236,7 +252,7 @@ function cleanOrphans(currentRef: ImageRef): void {
   const volList = spawnSync("docker", ["volume", "ls", "-q"], { encoding: "utf8" });
   const volumes = (volList.stdout ?? "")
     .split("\n")
-    .filter((s) => s.startsWith("pullfrog-gha-node-modules-") && s !== currentRef.volumeName);
+    .filter((s) => s.startsWith("pullfrog-docker-node-modules-") && s !== currentRef.volumeName);
   if (volumes.length > 0) {
     process.stderr.write(`» removing ${volumes.length} orphan volume(s): ${volumes.join(", ")}\n`);
     spawnSync("docker", ["volume", "rm", ...volumes], { stdio: "inherit" });
@@ -362,7 +378,7 @@ function initVolumeOwnership(ctx: { ref: ImageRef; uid: number; gid: number }): 
 type EnvParts = { envFile: string; multiLineFlags: string[] };
 
 function buildEnvParts(env: NodeJS.ProcessEnv): EnvParts {
-  const dir = join(tmpdir(), "pullfrog-gha");
+  const dir = join(tmpdir(), "pullfrog-docker");
   mkdirSync(dir, { recursive: true });
   const envFile = join(dir, `env-${process.pid}-${Date.now()}.list`);
   const lines: string[] = [];
