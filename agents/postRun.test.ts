@@ -6,6 +6,7 @@ function makeToolState(overrides: Partial<ToolState> = {}): ToolState {
   return {
     progressComment: undefined,
     hadProgressComment: true,
+    prepushFailureCount: 0,
     backgroundProcesses: new Map(),
     usageEntries: [],
     ...overrides,

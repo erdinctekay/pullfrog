@@ -37,7 +37,6 @@ export const ALWAYS_RUN_ALL: string[] = [
   "action/index.ts",
   "action/cli.ts",
   "action/utils/setup.ts",
-  "action/utils/lifecycle.ts",
   "action/utils/install.ts",
   "action/utils/runFixture.ts",
   "action/utils/globals.ts",

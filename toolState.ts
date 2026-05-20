@@ -89,6 +89,10 @@ export interface ToolState {
   // then from checkoutSha when review.ts detects new commits mid-review
   beforeSha?: string;
   selectedMode?: string;
+  // number of prepush hook failures this run. push_branch runs the hook
+  // while this is 0 and skips it once non-zero; never decremented within
+  // a run.
+  prepushFailureCount: number;
   backgroundProcesses: Map<string, BackgroundProcess>;
   browserDaemon?: BrowserDaemon | undefined;
   review?: {
@@ -186,6 +190,7 @@ export function initToolState(params: InitToolStateParams): ToolState {
   return {
     progressComment: resolved,
     hadProgressComment: !!resolved,
+    prepushFailureCount: 0,
     backgroundProcesses: new Map(),
     usageEntries: [],
   };

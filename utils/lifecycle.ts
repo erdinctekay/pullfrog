@@ -12,22 +12,37 @@ export interface ExecuteLifecycleHookParams {
   script: string | null;
 }
 
+/** structured failure info — `output` on the `exit` variant is trimmed
+ * stderr, falling back to stdout when stderr is empty. */
+export type LifecycleHookFailure =
+  | { kind: "exit"; exitCode: number; output: string }
+  | { kind: "timeout" }
+  | { kind: "spawn"; spawnError: string };
+
 export interface LifecycleHookResult {
   /**
    * human-readable warning when the hook failed. includes retry guidance:
    * transient spawn/exit errors are worth retrying, timeouts and
    * persistent failures are not. absent when the hook succeeded or was
-   * skipped.
+   * skipped. setup/post-checkout callers surface this verbatim; prepush
+   * builds its own message from `failure` instead.
    */
   warning?: string;
+  /**
+   * structured failure info — undefined when the hook succeeded or was
+   * skipped. lets callers compose their own messaging without parsing the
+   * `warning` string.
+   */
+  failure?: LifecycleHookFailure;
 }
 
 /**
  * execute a lifecycle hook script if one is configured.
  *
  * soft-fails: instead of throwing on hook errors, returns a warning string
- * so callers can choose whether to surface it (mcp tools) or upgrade it to
- * a fatal error (setup/prepush). timeouts are flagged as non-retryable.
+ * (and structured failure info) so callers can choose whether to surface
+ * it (mcp tools) or upgrade it to a fatal error (setup). timeouts are
+ * flagged as non-retryable in the warning text.
  */
 export async function executeLifecycleHook(
   params: ExecuteLifecycleHookParams
@@ -50,6 +65,7 @@ export async function executeLifecycleHook(
     if (result.exitCode !== 0) {
       const output = (result.stderr || result.stdout).trim();
       return {
+        failure: { kind: "exit", output, exitCode: result.exitCode },
         warning:
           `lifecycle hook '${params.event}' failed with exit code ${result.exitCode}. ` +
           `output: ${output || "(empty)"}. ` +
@@ -67,6 +83,7 @@ export async function executeLifecycleHook(
     if (isTimeout) {
       const minutes = Math.round(LIFECYCLE_HOOK_TIMEOUT_MS / 60000);
       return {
+        failure: { kind: "timeout" },
         warning:
           `lifecycle hook '${params.event}' timed out after ${minutes}min. ` +
           `do NOT retry — the script is likely hung or doing too much work. ` +
@@ -75,6 +92,7 @@ export async function executeLifecycleHook(
     }
     const msg = err instanceof Error ? err.message : String(err);
     return {
+      failure: { kind: "spawn", spawnError: msg },
       warning:
         `lifecycle hook '${params.event}' failed to spawn: ${msg}. ` +
         `this is likely a transient failure — retry the operation.`,

@@ -3,7 +3,7 @@ import { type } from "arktype";
 import type { StoredPushDest } from "../toolState.ts";
 import { log } from "../utils/cli.ts";
 import { $git, $gitFetchWithDeepen } from "../utils/gitAuth.ts";
-import { executeLifecycleHook } from "../utils/lifecycle.ts";
+import { executeLifecycleHook, type LifecycleHookFailure } from "../utils/lifecycle.ts";
 import { $ } from "../utils/shell.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -221,7 +221,7 @@ export function PushBranchTool(ctx: ToolContext) {
       'Example: `push_branch({})` to push the current branch. Example: `push_branch({ branchName: "pr-1" })` to push a specific local branch. ' +
       "If specifying branchName, use the LOCAL branch name (e.g., 'pr-1'), not the remote branch name. " +
       "The correct remote and remote branch are determined automatically from branch config set by checkout_pr. " +
-      "Requires a clean working tree. Runs the repository prepush hook (if configured) before the network push — hook failure means tests/lint or similar in that script failed, not necessarily a Pullfrog timeout. " +
+      "Requires a clean working tree. Runs the repository prepush hook (if configured) — best-effort. If the hook fails, the tool returns the failure output and every subsequent call this run skips the hook. " +
       "Never force push unless explicitly requested. Pushes to the default branch are blocked in restricted mode. " +
       "If the response reports a timeout, the underlying push may have actually succeeded — verify with `git log origin/<branch>` (or this tool with command 'log') before retrying, otherwise you'll push a duplicate.",
     parameters: PushBranch,
@@ -243,7 +243,10 @@ export function PushBranchTool(ctx: ToolContext) {
       if (status) {
         throw new Error(
           `push blocked: working tree is not clean (tracked changes and/or untracked files). commit, discard, or remove stray artifacts before pushing.\n\n` +
-            `git status:\n${status}`
+            `git status:\n${status}` +
+            (ctx.toolState.prepushFailureCount > 0
+              ? "\n\nnote: the prepush hook failed earlier this run — once the working tree is clean, push_branch will skip the hook."
+              : "")
         );
       }
 
@@ -265,27 +268,31 @@ export function PushBranchTool(ctx: ToolContext) {
         ? ["--force", "-u", pushDest.remoteName, refspec]
         : ["-u", pushDest.remoteName, refspec];
 
-      // prepush failure should block the push — a passing hook is the gate
-      // that protects main from bad pushes.
-      const prepushHook = await executeLifecycleHook({
-        event: "prepush",
-        script: ctx.prepushScript,
-      });
-      if (prepushHook.warning) {
-        throw new Error(prepushHook.warning);
-      }
+      const prepushSkipped = ctx.toolState.prepushFailureCount > 0;
+      if (prepushSkipped) {
+        log.info(`» skipping prepush hook (failed earlier this run)`);
+      } else if (ctx.prepushScript) {
+        const prepushHook = await executeLifecycleHook({
+          event: "prepush",
+          script: ctx.prepushScript,
+        });
+        if (prepushHook.failure) {
+          ctx.toolState.prepushFailureCount += 1;
+          throw new Error(buildPrepushFailureMessage(prepushHook.failure, ctx.payload.shell));
+        }
 
-      // re-verify clean working tree after prepush. a hook that writes tracked
-      // files (formatter, type generator, build artifacts) would leave those
-      // changes uncommitted — pushing now would silently drop them, and the
-      // agent would report a "successful push" of code the hook had expected
-      // to be included.
-      const postHookStatus = $("git", ["status", "--porcelain"], { log: false });
-      if (postHookStatus) {
-        throw new Error(
-          `push blocked: the prepush hook modified the working tree. those changes are not included in the push. commit or discard them (or change the hook to not mutate tracked files) before retrying.\n\n` +
-            `git status:\n${postHookStatus}`
-        );
+        // re-verify clean working tree after prepush. a hook that writes tracked
+        // files (formatter, type generator, build artifacts) would leave those
+        // changes uncommitted — pushing now would silently drop them, and the
+        // agent would report a "successful push" of code the hook had expected
+        // to be included.
+        const postHookStatus = $("git", ["status", "--porcelain"], { log: false });
+        if (postHookStatus) {
+          throw new Error(
+            `push blocked: the prepush hook modified the working tree. those changes are not included in the push. commit or discard them (or change the hook to not mutate tracked files) before retrying.\n\n` +
+              `git status:\n${postHookStatus}`
+          );
+        }
       }
 
       log.debug(`pushing ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch}`);
@@ -359,16 +366,48 @@ export function PushBranchTool(ctx: ToolContext) {
         `» pushed branch ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch} (sha ${pushedSha})`
       );
 
+      const baseMsg = `successfully pushed ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch}`;
+      const message = prepushSkipped
+        ? `${baseMsg} (prepush hook skipped — failed earlier this run).`
+        : baseMsg;
+
       return {
         success: true,
         branch,
         remoteBranch: pushDest.remoteBranch,
         remote: pushDest.remoteName,
         force,
-        message: `successfully pushed ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch}`,
+        prepushSkipped,
+        message,
       };
     }),
   });
+}
+
+/** agent-facing prepush failure message: script output + bypass guidance,
+ * with no generic lifecycle retry advice (which would conflict). */
+function buildPrepushFailureMessage(
+  failure: LifecycleHookFailure,
+  shell: ToolContext["payload"]["shell"]
+): string {
+  const header =
+    failure.kind === "exit"
+      ? `prepush hook failed with exit code ${failure.exitCode}.\n\nscript output:\n${failure.output || "(empty)"}`
+      : failure.kind === "timeout"
+        ? `prepush hook timed out — the script is hung or doing too much work.`
+        : `prepush hook failed to spawn: ${failure.spawnError}.`;
+
+  const ifRealBug =
+    shell === "disabled"
+      ? `fix it before pushing again — shell access is disabled in this run, so you can't re-run the hook command yourself.`
+      : `run the hook command yourself via the shell tool to iterate (push_branch will NOT re-run it).`;
+
+  return (
+    `${header}\n\n` +
+    `this repo's prepush hook is best-effort: the next push_branch call will SKIP the hook and proceed. ` +
+    `if the failure is unrelated to your changes (pre-existing breakage, flaky check), just call push_branch again. ` +
+    `if it could be a real bug in your code, ${ifRealBug}`
+  );
 }
 
 // commands that require authentication - redirect to dedicated tools.

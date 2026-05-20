@@ -77,6 +77,8 @@ export const test: TestRunnerOptions = {
   coverage: [
     "action/utils/gitAuth.ts",
     "action/utils/gitAuthServer.ts",
+    "action/utils/lifecycle.ts",
+    "action/toolState.ts",
     "action/mcp/git.ts",
     "action/mcp/checkout.ts",
   ],
