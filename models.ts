@@ -184,7 +184,7 @@ export const providers = {
       },
       "gemini-flash": {
         displayName: "Gemini Flash",
-        resolve: "google/gemini-3-flash-preview",
+        resolve: "google/gemini-3.5-flash",
         openRouterResolve: "openrouter/google/gemini-3-flash-preview",
       },
     },
