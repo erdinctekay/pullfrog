@@ -30,7 +30,6 @@ import {
 import { log, writeSummary } from "./cli.ts";
 import { reportErrorToComment } from "./errorReport.ts";
 import type { ResolvedPayload } from "./payload.ts";
-import { type AccountPlan, isInfraCovered } from "./runContext.ts";
 
 export interface OidcCredentials {
   requestUrl: string;
@@ -129,9 +128,16 @@ async function buildProxyTokenHeaders(ctx: {
  * Decide whether this run needs a minted proxy key and, if so, mint and
  * inject it as `OPENROUTER_API_KEY`. Mutates `payload.proxyModel` on success.
  *
+ * `ctx.proxyModel` IS the signal — the server (`run-context/route.ts`) is
+ * the authority on "should this run use the Router". It already knows the
+ * full picture (OSS, plan, wallet balance, modelAccessMode) and only sets
+ * `proxyModel` when the gate passes. The action just trusts that signal
+ * and mints. Re-deriving the gate locally was redundant and was strictly
+ * more restrictive (no balance check), which made signup-credit runs on
+ * no-card private repos silently fall through to BYOK.
+ *
  * Skipped when:
  *   - `PULLFROG_MODEL` env override is set (BYOK escape hatch)
- *   - `isInfraCovered({ oss, plan })` is false (BYOK account on a paid run)
  *   - `proxyModel` is not set on the run context
  *   - no OIDC credentials available and not talking to a localhost API
  *
@@ -140,7 +146,6 @@ async function buildProxyTokenHeaders(ctx: {
 async function resolveProxyModel(ctx: {
   payload: ResolvedPayload;
   oss: boolean;
-  plan: AccountPlan;
   proxyModel?: string | undefined;
   oidcCredentials: OidcCredentials | null;
   repo: { owner: string; name: string };
@@ -148,8 +153,7 @@ async function resolveProxyModel(ctx: {
   // env override = BYOK escape hatch, don't proxy
   if (process.env.PULLFROG_MODEL?.trim()) return;
 
-  const needsProxy = isInfraCovered({ isOss: ctx.oss, plan: ctx.plan }) && ctx.proxyModel;
-  if (!needsProxy) return;
+  if (!ctx.proxyModel) return;
 
   // dev affordance: when talking to a localhost API, the server-side
   // x-dev-repo bypass replaces OIDC verification, so a play run can
@@ -184,7 +188,6 @@ async function resolveProxyModel(ctx: {
 export async function runProxyResolution(ctx: {
   payload: ResolvedPayload;
   oss: boolean;
-  plan: AccountPlan;
   proxyModel?: string | undefined;
   oidcCredentials: OidcCredentials | null;
   repo: { owner: string; name: string };
@@ -194,7 +197,6 @@ export async function runProxyResolution(ctx: {
     await resolveProxyModel({
       payload: ctx.payload,
       oss: ctx.oss,
-      plan: ctx.plan,
       proxyModel: ctx.proxyModel,
       oidcCredentials: ctx.oidcCredentials,
       repo: ctx.repo,

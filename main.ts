@@ -163,7 +163,6 @@ export async function main(): Promise<MainResult> {
   await runProxyResolution({
     payload,
     oss: runContext.oss,
-    plan: runContext.plan,
     proxyModel: runContext.proxyModel,
     oidcCredentials,
     repo: runContext.repo,

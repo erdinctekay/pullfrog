@@ -48,15 +48,6 @@ export interface RepoSettings {
  */
 export type AccountPlan = "none" | "payg";
 
-/**
- * "Is Pullfrog absorbing marginal infra cost for this repo?" — composite
- * predicate over the two orthogonal dimensions (repo-level OSS, account-level
- * plan). Mirrors `isInfraCovered` in the server's `utils/billing.ts`.
- */
-export function isInfraCovered(params: { isOss: boolean; plan: AccountPlan }): boolean {
-  return params.isOss || params.plan === "payg";
-}
-
 export interface RunContext {
   settings: RepoSettings;
   apiToken: string;
