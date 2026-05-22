@@ -27,7 +27,7 @@ export const test: TestRunnerOptions = {
   env: {
     PULLFROG_DISABLE_SECURITY_INSTRUCTIONS: "1",
     PULLFROG_MODEL: "vertex/byok",
-    VERTEX_MODEL_ID: "claude-haiku-4-5@20251001",
+    VERTEX_MODEL_ID: "claude-opus-4-1@20250805",
     VERTEX_LOCATION: "global",
   },
   coverage: [
