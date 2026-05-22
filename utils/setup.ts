@@ -221,5 +221,37 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
   // disable credential helpers to prevent prompts and ensure clean auth state
   $("git", ["config", "--local", "credential.helper", ""], { cwd: repoDir });
 
+  // pin the run-entry HEAD for the checkout_pr initial-branch invariant; see
+  // captureInitialHead for the named-branch vs detached split and why it
+  // matters (zed-industries/cloud 2026-05-18 cross-PR clobber shape).
+  params.toolState.initialHead = captureInitialHead(repoDir);
+
   log.info("» git authentication configured");
+}
+
+/**
+ * snapshot the current HEAD as either a branch name (when on a named branch)
+ * or a literal SHA (when detached). used by setupGit to pin the run-entry
+ * position and by checkout_pr to compare the live HEAD against it.
+ *
+ * splitting the two cases is load-bearing: `git rev-parse --abbrev-ref HEAD`
+ * returns the sentinel string `"HEAD"` on detached entry — which is the
+ * default `actions/checkout` state for `pull_request` events. storing that
+ * raw string would make any future detached state (including a subagent's
+ * `git checkout --detach <sha>`) compare equal.
+ */
+export function captureInitialHead(
+  repoDir: string
+): { kind: "branch"; name: string } | { kind: "detached"; sha: string } {
+  try {
+    const name = $("git", ["symbolic-ref", "--short", "HEAD"], {
+      cwd: repoDir,
+      log: false,
+    }).trim();
+    if (name) return { kind: "branch", name };
+  } catch {
+    // detached HEAD — fall through
+  }
+  const sha = $("git", ["rev-parse", "HEAD"], { cwd: repoDir, log: false }).trim();
+  return { kind: "detached", sha };
 }

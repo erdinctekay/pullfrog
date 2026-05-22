@@ -62,6 +62,19 @@ export interface ToolState {
   // push destination set by checkout_pr - used as primary source in push_branch
   // because git config reads can fail in certain environments
   pushDest?: StoredPushDest;
+  // HEAD identity captured by setupGit at run start. load-bearing for the
+  // checkout_pr initial-branch invariant: the only sanctioned HEAD positions
+  // when calling checkout_pr are the run-entry HEAD or the target `pr-N`.
+  // blocks the zed-style cross-PR clobber where a subagent left HEAD on
+  // someone else's `pr-X` and the orchestrator's next checkout_pr inherited
+  // that position.
+  //
+  // discriminated by `kind` because `git rev-parse --abbrev-ref HEAD` returns
+  // the literal sentinel string `"HEAD"` on detached entry, which is the
+  // default state from `actions/checkout` on `pull_request` events (it
+  // checks out the merge commit as a detached SHA). without the kind tag,
+  // detached-entry runs would trivially accept any future detached state.
+  initialHead?: { kind: "branch"; name: string } | { kind: "detached"; sha: string };
   // issue or PR number (same number space in GitHub)
   issueNumber?: number;
   // PR HEAD sha at checkout time — used to detect new commits pushed during a review

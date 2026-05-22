@@ -201,7 +201,25 @@ export function computeModes(agentId: AgentId): Mode[] {
 
    Otherwise delegate the \`${REVIEWER_AGENT_NAME}\` subagent to review your diff with fresh eyes against YOUR TASK. The subagent's baked-in system prompt enforces a non-mutative + non-recursive contract: read-only file/search/web tools and read-only MCP queries only; no writes, shell side effects, state-changing MCP calls, or nested subagent dispatch. Enforcement is prose-only — restate the constraint in your dispatch instructions and do not relax it.
 
-   Provide the subagent with YOUR TASK, the output of \`git diff origin/<base-branch>\` (single-rev form, no \`HEAD\` — this compares the working tree against the remote base and captures committed + staged + unstaged work; \`main...HEAD\` and \`--cached\` both miss the uncommitted edits Build self-review runs on, since self-review happens BEFORE the commit), and a tight summary (not raw output) of any lint/typecheck/test failures you fixed during build — what broke, root cause, the fix — so it can check that fixes addressed root causes rather than suppressed symptoms; say "no build-phase failures" if the build path was clean. Instruct it to flag bugs, logic errors, missing edge cases, gaps between request and diff, and unintended changes.
+   Compose your \`${REVIEWER_AGENT_NAME}\` dispatch prompt using this template verbatim, substituting the \`<...>\` placeholders. The preamble aligns the orchestrator side of the dispatch contract with the reviewer's baked-in system prompt — both ends say the same thing about where the work lives and what to do on an empty diff.
+
+   \`\`\`
+   ## What you're reviewing
+   This is a PRE-COMMIT Build-mode self-review. The work to review lives in the working tree (uncommitted), NOT in committed history.
+
+   Branch: <branch> (off <base>)
+   Canonical diff command: git diff origin/<base>
+
+   If that command returns empty, treat it as "no changes — nothing to review" and stop per your system prompt. Do not search for the work elsewhere.
+
+   ## Your task
+   <YOUR TASK content>
+
+   ## Build-phase failures
+   <tight summary — what broke, root cause, the fix — or "no build-phase failures">
+   \`\`\`
+
+   Follow the template with the diff content (\`git diff origin/<base-branch>\`, single-rev form — \`main...HEAD\` and \`--cached\` both miss the uncommitted edits self-review runs on) and your task brief. Instruct the subagent to flag bugs, logic errors, missing edge cases, gaps between request and diff, and unintended changes.
 
    Delegation + research discipline (distilled from \`/anneal\` canonical — these are codified learnings from many review rounds, not theoretical best practices):
    - Do NOT summarize what you implemented — that biases the subagent toward validating the shape of your solution rather than questioning it.

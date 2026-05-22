@@ -185,7 +185,7 @@ export async function fetchAndFormatPrDiff(
   return { ...formatFilesWithLineNumbers(files), files };
 }
 
-import type { GitContext } from "../utils/setup.ts";
+import { captureInitialHead, type GitContext } from "../utils/setup.ts";
 
 export type PrData = {
   number: number;
@@ -613,6 +613,19 @@ export async function checkoutPrBranch(
  */
 const inFlightCheckouts = new Map<number, Promise<CheckoutPrResult>>();
 
+type InitialHead = NonNullable<ToolContext["toolState"]["initialHead"]>;
+
+function headsEqual(a: InitialHead, b: InitialHead): boolean {
+  if (a.kind === "branch" && b.kind === "branch") return a.name === b.name;
+  if (a.kind === "detached" && b.kind === "detached") return a.sha === b.sha;
+  return false;
+}
+
+function describeHead(h: InitialHead): string {
+  if (h.kind === "branch") return `branch \`${h.name}\``;
+  return `detached HEAD \`${h.sha}\``;
+}
+
 export function CheckoutPrTool(ctx: ToolContext) {
   const runCheckout = async (pull_number: number): Promise<CheckoutPrResult> => {
     const prResponse = await ctx.octokit.rest.pulls.get({
@@ -807,19 +820,50 @@ export function CheckoutPrTool(ctx: ToolContext) {
         return inFlight;
       }
 
-      // refuse to clobber an uncommitted tree whenever this call would move
-      // HEAD away from the target pr-N branch. keyed off the live current
-      // branch (not toolState.issueNumber, which is also written by
-      // get_issue / get_issue_comments / get_issue_events and so doesn't
-      // mean "currently checked out"). catches the subagent-sharing-cwd
-      // case from zed-industries/cloud (2026-05-18).
-      const currentBranch = $("git", ["rev-parse", "--abbrev-ref", "HEAD"], { log: false }).trim();
-      if (currentBranch !== `pr-${pull_number}`) {
-        const dirty = $("git", ["status", "--porcelain"], { log: false }).trim();
-        if (dirty) {
+      // unconditional refusal: any dirty working tree blocks checkout_pr, even
+      // when HEAD is already on pr-N. no stashing, no live-HEAD escape hatch.
+      // shared-cwd subagents made "carry edits along" semantics dangerous
+      // (zed-industries/cloud, 2026-05-18) — forcing commit/discard before
+      // any PR-context op eliminates the entire carry-forward failure class.
+      const dirty = $("git", ["status", "--porcelain"], { log: false }).trim();
+      if (dirty) {
+        throw new Error(
+          `cannot checkout PR #${pull_number} while the working tree has uncommitted changes. ` +
+            `commit (then push if needed), or discard with \`git restore --staged --worktree .\` / \`git clean -fd\` before retrying. ` +
+            `this refusal is unconditional — even re-checking-out the PR you're already on is refused, ` +
+            `because shared-working-tree subagents make carry-forward edits unsafe. dirty paths:\n${dirty}`
+        );
+      }
+
+      // initial-branch invariant: the only sanctioned HEAD positions for a
+      // checkout_pr call are (a) the run-entry HEAD captured by setupGit, or
+      // (b) `pr-${pull_number}` for idempotent same-PR re-checkout (e.g.
+      // re-fetch after the PR head moved). anything else means a subagent
+      // silently parked HEAD on another PR, which is the zed-industries/cloud
+      // (2026-05-18) cross-PR clobber shape. uses the same live probe (not
+      // toolState.issueNumber, poisonable per the PR #796 review) and
+      // discriminates branch vs detached so detached-entry runs don't get a
+      // trivial "any future detached state matches" carve-out.
+      const initialHead = ctx.toolState.initialHead;
+      if (initialHead) {
+        const currentHead = captureInitialHead(process.cwd());
+        const targetBranch = `pr-${pull_number}`;
+        const onTarget = currentHead.kind === "branch" && currentHead.name === targetBranch;
+        const onInitial = headsEqual(currentHead, initialHead);
+        if (!onTarget && !onInitial) {
+          const recoverCmd =
+            initialHead.kind === "branch"
+              ? `git checkout ${initialHead.name}`
+              : `git checkout ${initialHead.sha}`;
           throw new Error(
-            `cannot checkout PR #${pull_number} while the working tree has uncommitted changes. ` +
-              `commit, push, or discard them before switching. dirty paths:\n${dirty}`
+            `cannot checkout PR #${pull_number} from ${describeHead(currentHead)}. ` +
+              `the only sanctioned HEAD positions for checkout_pr are the run-entry HEAD ` +
+              `(${describeHead(initialHead)}) or the target PR's branch (\`${targetBranch}\`, idempotent re-checkout). ` +
+              `recover with \`${recoverCmd}\` first — if that would carry uncommitted ` +
+              `work along, commit or discard it (\`git restore --staged --worktree .\` / \`git clean -fd\`) before switching. ` +
+              `routing around this via the \`git\` tool's \`checkout\`/\`switch\` subcommands is not sanctioned: ` +
+              `this guard exists to prevent the shared-working-tree cross-PR clobber pattern from the ` +
+              `zed-industries/cloud (2026-05-18) incident.`
           );
         }
       }

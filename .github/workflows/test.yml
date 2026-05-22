@@ -38,7 +38,7 @@ jobs:
             skill-invoke-opencode,
             smoke,
             token-exfil,
-            vertex-claude,
+            # vertex-claude,  # disabled: 0 anthropic quota on pullfrog GCP vertex
             vertex-opencode,
           ]
         exclude:
