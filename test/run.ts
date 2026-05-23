@@ -312,7 +312,7 @@ async function runTestForAgent(ctx: RunContext): Promise<ValidationResult> {
     } else {
       const defaultModels: Record<string, string> = {
         claude: "anthropic/claude-sonnet-4-6",
-        opencode: "moonshotai/kimi-k2",
+        opencode: "anthropic/claude-sonnet-4-6",
       };
       const model = defaultModels[ctx.agent];
       if (model) {
