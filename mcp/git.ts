@@ -197,6 +197,12 @@ const TRANSIENT_PATTERNS: RegExp[] = [
   /returned error: 5\d\d/i,
   /HTTP 429/,
   /returned error: 429/i,
+  // github installation tokens can 401 for seconds after minting while
+  // replicating (@octokit/auth-app retries the same class). git push
+  // surfaces it as "Invalid username or token", distinct from 403
+  // permission denied — safe to backoff-retry with the same token.
+  /Invalid username or token/,
+  /Authentication failed for 'https:\/\/github\.com\//,
 ];
 
 export function classifyPushError(msg: string): PushErrorKind {
