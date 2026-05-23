@@ -16,7 +16,7 @@ inputs:
     description: "Working directory for the agent (defaults to GITHUB_WORKSPACE)"
     required: false
   push:
-    description: "Git push permission: disabled (read-only, can't push) or enabled (can push). Default: enabled"
+    description: "Git push permission: disabled (read-only), restricted (push feature branches only — blocks pushes to the default branch, branch deletion, and tag pushes), or enabled (full push access). Default: enabled"
     required: false
   shell:
     description: "Shell permission: disabled, restricted (filters secrets from env vars), or enabled. Public repos default to restricted for security; private repos default to enabled."
