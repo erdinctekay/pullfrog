@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import actionPackageJson from "./package.json" with { type: "json" };
@@ -125,9 +126,22 @@ function createRuntimeContext(): RuntimeContext {
   };
 }
 
+// $GITHUB_WORKSPACE is the customer's repo. running `npx --yes pullfrog@…`
+// there makes npm read THEIR `package.json` first, which on npm v11+ enforces
+// `devEngines.packageManager` and aborts the bootstrap with EBADDEVENGINES
+// before the agent ever boots. our bootstrap doesn't need anything from the
+// customer's tree — a freshly-created tmpdir is package.json-free and
+// parent-less, so npm walks up to `/` finding nothing. see #837.
+//
+// `mkdtempSync` (vs raw `tmpdir()`): `$TMPDIR` is overridable from a prior
+// `$GITHUB_ENV` step, and a customer-authored or compromised prior step
+// could plant `node_modules/pullfrog/` in the resolved tmpdir to hijack
+// `npx --yes pullfrog@<version>` resolution. a fresh per-invocation
+// subdirectory is mode 0700 and not pre-writable by anything earlier in
+// the job.
 function runCommand(params: { context: RuntimeContext; command: string; args: string[] }): void {
   execFileSync(params.command, params.args, {
-    cwd: process.env.GITHUB_WORKSPACE || params.context.actionRoot,
+    cwd: mkdtempSync(join(tmpdir(), "pullfrog-bootstrap-")),
     stdio: "inherit",
     env: params.context.env,
   });

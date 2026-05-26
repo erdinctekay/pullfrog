@@ -81,12 +81,13 @@ export async function finalizeSuccessRun(input: {
   await persistRunArtifacts(input.toolContext);
 
   // shared rendering for the !success branch — same classifier as the
-  // outer catch path (BillingError reclassify → hang → api-key → generic),
-  // so a harness-returned `{success: false}` lands an actionable error
-  // block in the job summary alongside the matching body in the progress
-  // comment. hang and generic get the `### ❌ Pullfrog failed` H3 banner;
-  // BillingError and api-key render their own provider-specific framing
-  // (no banner). renders once; reused for both surfaces below.
+  // outer catch path (BillingError reclassify → hang → BYOK billing →
+  // api-key → generic), so a harness-returned `{success: false}` lands an
+  // actionable error block in the job summary alongside the matching body
+  // in the progress comment. hang and generic get the `### ❌ Pullfrog
+  // failed` H3 banner; BillingError, BYOK billing, and api-key render
+  // their own provider-specific framing (no banner). renders once; reused
+  // for both surfaces below.
   const rendered = !input.result.success
     ? renderRunError({
         errorMessage: input.result.error || "agent run failed",
@@ -95,12 +96,20 @@ export async function finalizeSuccessRun(input: {
       })
     : null;
 
-  if (rendered && input.toolState.progressComment) {
-    await reportErrorToComment({ toolState: input.toolState, error: rendered.comment }).catch(
-      (error) => {
-        log.debug(`failure error report failed: ${error}`);
-      }
-    );
+  // `createIfMissing: true` is load-bearing for silent triggers
+  // (IncrementalReview / pull_request_synchronize / auto-label) that have
+  // no progress comment to update — without it, terminal failures like
+  // BYOK billing exhaustion land only in the GH job summary, which most
+  // users never open. `reportErrorToComment` no-ops when both progress
+  // comment AND issue context are absent. see #835.
+  if (rendered) {
+    await reportErrorToComment({
+      toolState: input.toolState,
+      error: rendered.comment,
+      createIfMissing: true,
+    }).catch((error) => {
+      log.debug(`failure error report failed: ${error}`);
+    });
   }
 
   // create_pull_request_review owns its own deletion (see mcp/review.ts), so
@@ -141,6 +150,13 @@ export async function finalizeSuccessRun(input: {
  *
  * `lastProgressBody` and the usage table are appended to the summary so the
  * partial work the agent did before failing isn't lost.
+ *
+ * `createIfMissing: true` is symmetric with `finalizeSuccessRun` — silent
+ * triggers (IncrementalReview / pull_request_synchronize / auto-label) that
+ * throw past `finalizeSuccessRun` (e.g. timeout race kills the agent
+ * mid-billing-exhausted-retry) reach this catch path with no progress
+ * comment to update, and without `createIfMissing` the terminal error
+ * lands only in the GH job summary that most users never open. see #835.
  */
 export async function writeRunErrorOutputs(input: {
   rendered: RenderedRunError;
@@ -155,7 +171,11 @@ export async function writeRunErrorOutputs(input: {
   } catch {}
 
   try {
-    await reportErrorToComment({ toolState: input.toolState, error: input.rendered.comment });
+    await reportErrorToComment({
+      toolState: input.toolState,
+      error: input.rendered.comment,
+      createIfMissing: true,
+    });
   } catch {
     // error reporting failed, but don't let it mask the original error
   }

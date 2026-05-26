@@ -12,6 +12,11 @@ export interface HandleAgentResultParams {
 
 export async function handleAgentResult(ctx: HandleAgentResultParams): Promise<MainResult> {
   if (!ctx.result.success) {
+    // rendering + posting for the `!success` branch lives in
+    // `finalizeSuccessRun` (called immediately before this function) so the
+    // BYOK billing-exhausted, hang, and api-key bodies land on a single
+    // surface — both for runs with a pre-existing progress comment AND for
+    // silent triggers via `createIfMissing`. see #835.
     return {
       success: false,
       error: ctx.result.error || "Agent execution failed",

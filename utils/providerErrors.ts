@@ -1,5 +1,8 @@
 type ProviderErrorPattern = { regex: RegExp; label: string };
 
+/** Stable label for the BYOK provider-billing-exhausted classification. */
+export const PROVIDER_BILLING_EXHAUSTED_LABEL = "provider billing exhausted";
+
 // status codes are only treated as provider errors when they are adjacent to
 // a recognised status key. this rejects commit SHAs that happen to contain
 // "429", version strings, file hashes, etc.
@@ -9,14 +12,16 @@ const PROVIDER_ERROR_PATTERNS: ProviderErrorPattern[] = [
   // billing-payload patterns come BEFORE bare status-code patterns. providers
   // commonly return 401 / 429 for billing/quota exhaustion (OpenCode Zen
   // `CreditsError` / `FreeUsageLimitError`, Gemini `RESOURCE_EXHAUSTED` +
-  // "spending cap", Anthropic "Insufficient balance"). these are non-retryable
-  // and require user-billing action — distinct from a transient auth error or
-  // rate-limit. status-code patterns would otherwise win and surface
-  // "auth error (401)" / "rate limited (429)" with no billing hint. see #778.
-  { regex: /\bCreditsError\b/, label: "provider billing exhausted" },
-  { regex: /\bFreeUsageLimitError\b/, label: "provider billing exhausted" },
-  { regex: /Insufficient balance/i, label: "provider billing exhausted" },
-  { regex: /spending cap/i, label: "provider billing exhausted" },
+  // "spending cap", Anthropic "Insufficient balance" / "credit balance is
+  // too low"). these are non-retryable and require user-billing action —
+  // distinct from a transient auth error or rate-limit. status-code patterns
+  // would otherwise win and surface "auth error (401)" / "rate limited (429)"
+  // with no billing hint. see #778, #835.
+  { regex: /\bCreditsError\b/, label: PROVIDER_BILLING_EXHAUSTED_LABEL },
+  { regex: /\bFreeUsageLimitError\b/, label: PROVIDER_BILLING_EXHAUSTED_LABEL },
+  { regex: /Insufficient balance/i, label: PROVIDER_BILLING_EXHAUSTED_LABEL },
+  { regex: /credit balance is too low/i, label: PROVIDER_BILLING_EXHAUSTED_LABEL },
+  { regex: /spending cap/i, label: PROVIDER_BILLING_EXHAUSTED_LABEL },
   // auth patterns must come BEFORE rate-limit patterns. OpenRouter 401 error
   // payloads carry `x-ratelimit-*` response headers in the dump, and the
   // free-form rate-limit regex below would otherwise win on word-boundary
@@ -141,4 +146,27 @@ const ROUTER_KEYLIMIT_EXHAUSTED_PATTERN =
 
 export function isRouterKeylimitExhaustedError(text: string): boolean {
   return ROUTER_KEYLIMIT_EXHAUSTED_PATTERN.test(text);
+}
+
+/**
+ * BYOK billing-exhausted: provider rejected the request because the user's
+ * provider wallet is empty (DeepSeek "Insufficient Balance", Anthropic
+ * "credit balance is too low", OpenCode Zen `CreditsError` /
+ * `FreeUsageLimitError`, Gemini "spending cap"). Distinct from
+ * `isRouterKeylimitExhaustedError` — that's Pullfrog's Router wallet, this
+ * is the user's own provider account.
+ */
+export function isProviderBillingExhausted(text: string): boolean {
+  return findProviderErrorMatch(text)?.label === PROVIDER_BILLING_EXHAUSTED_LABEL;
+}
+
+/**
+ * Extract `providerID=foo` from agent error logs (OpenCode emits this on
+ * `provider error detected (...)` lines). Returns the lowercase provider
+ * slug, or null when absent. Used to render a provider-specific dashboard
+ * link in the BYOK billing-exhausted summary.
+ */
+export function extractProviderId(text: string): string | null {
+  const match = text.match(/\bproviderID=([a-z0-9_-]+)/i);
+  return match ? match[1].toLowerCase() : null;
 }

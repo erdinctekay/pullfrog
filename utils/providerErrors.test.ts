@@ -1,6 +1,8 @@
 import {
   detectProviderError,
+  extractProviderId,
   findProviderErrorMatch,
+  isProviderBillingExhausted,
   isRouterKeylimitExhaustedError,
 } from "./providerErrors.ts";
 
@@ -102,6 +104,15 @@ describe("detectProviderError", () => {
 
     it("classifies bare 'Insufficient balance' as billing exhausted", () => {
       expect(detectProviderError("error: Insufficient balance")).toBe("provider billing exhausted");
+    });
+
+    it("classifies Anthropic 'credit balance is too low' as billing exhausted (#835)", () => {
+      // Anthropic-direct BYOK returns this string verbatim when the user's
+      // Anthropic console credit balance can't cover the request. distinct
+      // wording from "Insufficient balance" used by DeepSeek / OpenCode Zen.
+      const stderr =
+        "APIError: 400 Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+      expect(detectProviderError(stderr)).toBe("provider billing exhausted");
     });
   });
 
@@ -210,6 +221,47 @@ describe("findProviderErrorMatch", () => {
 
   it("returns null when no pattern matches", () => {
     expect(findProviderErrorMatch("just some normal log line\nnothing wrong here")).toBeNull();
+  });
+});
+
+describe("isProviderBillingExhausted (#835)", () => {
+  it("matches DeepSeek 'Insufficient Balance' payloads", () => {
+    expect(isProviderBillingExhausted("AI_APICallError: Insufficient Balance")).toBe(true);
+  });
+
+  it("matches Anthropic 'credit balance is too low' payloads", () => {
+    expect(
+      isProviderBillingExhausted("Your credit balance is too low to access the Anthropic API")
+    ).toBe(true);
+  });
+
+  it("matches OpenCode Zen CreditsError / FreeUsageLimitError", () => {
+    expect(isProviderBillingExhausted("CreditsError: out of credit")).toBe(true);
+    expect(isProviderBillingExhausted("FreeUsageLimitError: limit hit")).toBe(true);
+  });
+
+  it("returns false for unrelated provider errors", () => {
+    expect(isProviderBillingExhausted('{"statusCode": 401}')).toBe(false);
+    expect(isProviderBillingExhausted("rate_limit_exceeded")).toBe(false);
+    expect(isProviderBillingExhausted("just some log noise")).toBe(false);
+  });
+});
+
+describe("extractProviderId", () => {
+  it("parses providerID= from OpenCode harness logs", () => {
+    expect(
+      extractProviderId(
+        'ERROR providerID=deepseek modelID=deepseek-v4-pro error={"name":"AI_APICallError"}'
+      )
+    ).toBe("deepseek");
+  });
+
+  it("lowercases the captured slug", () => {
+    expect(extractProviderId("providerID=Anthropic modelID=claude")).toBe("anthropic");
+  });
+
+  it("returns null when providerID is absent", () => {
+    expect(extractProviderId("APIError: Insufficient Balance")).toBeNull();
   });
 });
 
