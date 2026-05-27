@@ -14,7 +14,7 @@
 
 <br/>
 
-> **🚀 Pullfrog is in beta!** We're onboarding users in waves. [Get on the waitlist →](https://pullfrog.com/join-waitlist)
+> **🚀 Pullfrog is now generally available!** [Get started →](https://pullfrog.com/console)
 
 <br/>
 

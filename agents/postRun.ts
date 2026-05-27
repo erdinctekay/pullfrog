@@ -371,10 +371,16 @@ export async function runPostRunRetryLoop<R extends AgentResult>(params: {
       if (params.canResume && !params.canResume(result)) break;
       log.info("» post-run reflection: nudging agent to update learnings if relevant");
       const preReflection = result;
+      // reflection is a meta-turn for editing the learnings file. it must not
+      // affect the user-visible `result` output: some models (notably Gemini
+      // Pro) re-trigger on the initial "call set_output when done" system
+      // instruction and clobber the task-turn value. snapshot + restore.
+      const preReflectionOutput = params.ctx.toolState.output;
       const reflectionResult = await params.resume({
         prompt: pendingReflection,
         previousResult: result,
       });
+      params.ctx.toolState.output = preReflectionOutput;
       aggregatedUsage = mergeAgentUsage(aggregatedUsage, reflectionResult.usage);
       pendingReflection = undefined;
       if (!reflectionResult.success) {

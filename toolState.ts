@@ -170,7 +170,7 @@ export interface ToolState {
   // the error-path / exit-signal callers from a redundant second PATCH
   // after the success path already persisted.
   learningsPersistAttempted?: boolean;
-  output?: string;
+  output?: string | undefined;
   usageEntries: AgentUsage[];
   model?: string | undefined;
   // set by main.ts when the BYOK fallback engaged (configured model needed
