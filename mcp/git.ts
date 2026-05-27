@@ -520,7 +520,9 @@ export function GitTool(ctx: ToolContext) {
   return tool({
     name: "git",
     description:
-      "Run a git subcommand. `command` is a single subcommand; flags and positional args go in `args`. " +
+      "Run a git subcommand. `command` is the subcommand ONLY — never repeat it inside `args`. " +
+      "`args` is optional; omit it entirely for no-flag invocations like plain `git status`. " +
+      'Example: `git({ command: "status" })` for plain `git status`. ' +
       'Example: `git({ command: "log", args: ["--oneline", "-n", "20"] })`. ' +
       'Example: `git({ command: "diff", args: ["origin/main..HEAD"] })`. ' +
       "For push/fetch, use the dedicated MCP tools (push_branch, git_fetch). " +
@@ -529,6 +531,21 @@ export function GitTool(ctx: ToolContext) {
     execute: execute(async (params) => {
       const command = params.command;
       const args = params.args ?? [];
+
+      // guard: {command:"status",args:["status"]} → `git status status`, where
+      // git silently treats args[0] as a pathspec. when nothing matches the
+      // path, status prints "nothing to commit, working tree clean" even on a
+      // dirty tree — a real model failure mode that burned a ~$3 run before
+      // self-correction. generalises to every subcommand (`diff diff`,
+      // `log log`, etc.).
+      if (args[0]?.toLowerCase() === command.toLowerCase()) {
+        throw new Error(
+          `git ${command}: '${args[0]}' duplicates the subcommand — drop args[0] ` +
+            `(the subcommand only belongs in 'command'). git would otherwise parse it as ` +
+            `a pathspec and silently return empty/clean output when nothing matches. ` +
+            `if you really meant a pathspec named '${args[0]}', use args: ["--", "${args[0]}"].`
+        );
+      }
 
       const redirect = AUTH_REQUIRED_REDIRECT[command];
       if (redirect) {
