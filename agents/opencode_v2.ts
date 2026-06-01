@@ -69,6 +69,7 @@ import { trackChild, untrackChild } from "../utils/subprocess.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { resolveVertexOpenCodeModel } from "../utils/vertex.ts";
+import { GIT_NATIVE_READ_DENY_OPENCODE, GIT_NATIVE_WRITE_DENY_OPENCODE } from "./nativeFsDenies.ts";
 import {
   PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME,
   PULLFROG_OPENCODE_GATE_PLUGIN_SOURCE,
@@ -959,16 +960,19 @@ export const opencode = agent({
     // codex auth lives at /var/lib/pullfrog/opencode/auth.json in CI (see codexHome.ts),
     // which is outside /tmp/* — deny-default protects it from native FS tools.
     //
-    // edit rule denies git config / hooks / attributes inside the project
-    // root (see opencode.ts for the same shape and rationale).
+    // read + edit rules deny git surfaces INSIDE the project root, where
+    // external_directory short-circuits (Instance.containsPath). edit denies
+    // ALL of .git (blanket write — nothing legit writes .git via native tools;
+    // MCP git tools run in the action process, outside this gate); read denies
+    // only .git/config (narrow — broad .git read-blocks break orientation reads
+    // like .git/HEAD, and ASKPASS keeps live tokens out of .git/config). `*` is
+    // recursive in opencode's Wildcard dialect. grep/glob match the search
+    // pattern not a filepath, so they can't be path-denied (documented in
+    // wiki/security.md). canonical surfaces: action/agents/nativeFsDenies.ts.
     const permissionOverride = JSON.stringify({
       external_directory: { "*": "deny", "/tmp/*": "allow" },
-      edit: {
-        "*": "allow",
-        ".git/config": "deny",
-        ".git/hooks/*": "deny",
-        ".git/info/attributes": "deny",
-      },
+      read: { "*": "allow", ...GIT_NATIVE_READ_DENY_OPENCODE },
+      edit: { "*": "allow", ...GIT_NATIVE_WRITE_DENY_OPENCODE },
     });
 
     const repoDir = process.cwd();

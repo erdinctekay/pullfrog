@@ -137,19 +137,22 @@ const SOCKET_CLEANUP = [
 //      a per-namespace tmpfs that the GHA runner never sees. our own action
 //      process writes core.setOutput / core.saveState outside the namespace,
 //      so legitimate outputs are unaffected. requires RUNNER_TEMP to be set.
-//   3. self-bind + remount-ro on .git/config, .git/hooks (dir), and
-//      .git/info/attributes (specific file, pre-created from the action
-//      process via ensureGitAttributesFile so the bind always succeeds).
-//      We bind .git/info/attributes specifically instead of the whole
-//      .git/info/ directory so .git/info/exclude — a legitimate per-repo
-//      ignore file that some workflows edit — remains writable.
-//      Prevents agent-planted git filters / hooks from firing in downstream
-//      workflow steps (the threat survives ASKPASS because hooks fire after
-//      auth and our $git() uses -c core.hooksPath to override its own hooks,
-//      but downstream `git` invocations in later steps DON'T get that
-//      protection — see wiki/security.md "Filesystem Sandbox"). Does not
-//      cover `~/.gitconfig` or `/etc/gitconfig` — see "Scope and Limitations"
-//      in wiki/security.md for the rationale.
+//   3. self-bind + remount-ro on the ENTIRE <repoRoot>/.git directory.
+//      A blanket ro-bind is free: nothing legitimately writes .git from
+//      bash (commits go through our $git(), whose binary runs OUTSIDE this
+//      namespace, so it's unaffected; bash `git` is already blocked). It
+//      robustly covers every code-exec surface an enumerated list would miss
+//      — .git/config, .git/config.worktree, .git/modules/*/config (all carry
+//      core.hooksPath / filter / alias / credential.helper exec vectors),
+//      plus .git/hooks/* and .git/info/attributes. Prevents agent-planted git
+//      filters / hooks from firing in downstream workflow steps (the threat
+//      survives ASKPASS because hooks fire after auth and our $git() uses -c
+//      core.hooksPath to override its own hooks, but downstream `git`
+//      invocations in later steps DON'T get that protection — see
+//      wiki/security.md "Filesystem Sandbox"). CONSEQUENCE: .git/info/exclude
+//      (a legit per-repo ignore file) is now read-only too — accepted, the
+//      narrow earlier bind list left it writable. Does not cover `~/.gitconfig`
+//      or `/etc/gitconfig` — see "Scope and Limitations" in wiki/security.md.
 //
 // these mounts run as root inside the namespace (before `exec su -p` drops
 // to runner). after the drop, runner has no CAP_SYS_ADMIN in the host, so
@@ -177,7 +180,7 @@ function buildFsMounts(repoDir: string): string {
     `mkdir -p /var/lib/pullfrog 2>/dev/null;`,
     `mount -t tmpfs tmpfs /var/lib/pullfrog 2>/dev/null;`,
     `[ -n "$RUNNER_TEMP" ] && [ -d "$RUNNER_TEMP/_runner_file_commands" ] && mount -t tmpfs tmpfs "$RUNNER_TEMP/_runner_file_commands" 2>/dev/null;`,
-    `for path in '${escaped}/.git/config' '${escaped}/.git/hooks' '${escaped}/.git/info/attributes'; do [ -e "$path" ] || continue; mount --bind "$path" "$path" 2>/dev/null && mount -o remount,bind,ro "$path" 2>/dev/null; done;`,
+    `[ -e '${escaped}/.git' ] && mount --bind '${escaped}/.git' '${escaped}/.git' 2>/dev/null && mount -o remount,bind,ro '${escaped}/.git' 2>/dev/null;`,
   ].join(" ");
 }
 
@@ -210,24 +213,6 @@ function resolveRepoRoot(): string {
   return _repoRoot;
 }
 
-/** ensure .git/info/attributes exists so the FS_MOUNTS bind always succeeds.
- * pre-creating an empty file from the action process means the agent can't
- * slip in a pre-bind write that gets ro-locked-in. idempotent — `flag: "a"`
- * preserves any existing content. */
-let _gitAttributesEnsured = false;
-function ensureGitAttributesFile(repoRoot: string): void {
-  if (_gitAttributesEnsured) return;
-  _gitAttributesEnsured = true;
-  const attrPath = join(repoRoot, ".git", "info", "attributes");
-  try {
-    // .git/info/ exists in any git repo; no need to mkdir it
-    writeFileSync(attrPath, "", { flag: "a" });
-  } catch {
-    // not a git repo / no write perms / no .git/info — the bind in
-    // FS_MOUNTS will skip via [ -e ] guard, harmless
-  }
-}
-
 function spawnShell(params: SpawnParams): ChildProcess {
   const spawnOpts = { env: params.env, cwd: params.cwd, stdio: params.stdio, detached: true };
   const sandboxMethod = detectSandboxMethod();
@@ -244,7 +229,6 @@ function spawnShell(params: SpawnParams): ChildProcess {
   // have been chdir'd to payload.cwd in main.ts). resolveRepoRoot prefers
   // $GITHUB_WORKSPACE in CI and falls back to `git rev-parse`.
   const repoRoot = resolveRepoRoot();
-  ensureGitAttributesFile(repoRoot);
   const fsMounts = buildFsMounts(repoRoot);
 
   if (sandboxMethod === "unshare") {

@@ -51,6 +51,7 @@ import {
   CLAUDE_PRETOOL_GATE_SOURCE,
 } from "./claudePretoolGate.ts";
 import { startGateServer } from "./gateServer.ts";
+import { GIT_NATIVE_READ_DENY_CLAUDE, GIT_NATIVE_WRITE_DENY_CLAUDE } from "./nativeFsDenies.ts";
 import { finalizeAgentResult } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME, REVIEWER_SYSTEM_PROMPT } from "./reviewer.ts";
 import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
@@ -847,7 +848,9 @@ const MANAGED_SETTINGS_PATH = `${MANAGED_SETTINGS_DIR}/managed-settings.json`;
 // it cannot be overridden by user, project, or local settings — safe against malicious PRs.
 //
 // permissions.deny blocks native tools (Read, Grep, Edit, Glob) from accessing /proc and /sys,
-// plus any path passed in via ctx.secretDenyPaths (codex auth dir, vertex creds dir, etc.).
+// the git surfaces (blanket Edit(.git/**) write deny + narrow .git/config read deny — see
+// nativeFsDenies.ts), and any path passed in via ctx.secretDenyPaths (codex auth dir, vertex
+// creds dir, etc.).
 // sandbox.filesystem.denyRead blocks the Bash tool sandbox from reading those paths.
 // allowManagedPermissionRulesOnly prevents malicious PRs from adding allow rules that override
 // our deny rules — safe in CI because --dangerously-skip-permissions makes allow/ask irrelevant.
@@ -914,6 +917,35 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
     `Glob(${path}/**)`,
     `Glob(/${path}/**)`,
   ]);
+  const base: Record<string, unknown> = {
+    allowManagedPermissionRulesOnly: true,
+    allowManagedHooksOnly: true,
+    permissions: {
+      deny: [
+        "Read(//proc/**)",
+        "Read(//sys/**)",
+        "Grep(//proc/**)",
+        "Grep(//sys/**)",
+        "Edit(//proc/**)",
+        "Edit(//sys/**)",
+        "Glob(//proc/**)",
+        "Glob(//sys/**)",
+        // git surfaces — blanket Edit(.git/**) write deny (nothing legit
+        // writes .git via native tools; real commits go through MCP git tools
+        // outside this gate) + narrow Read/Grep/Glob(.git/config) read deny.
+        // mirrors opencode's edit-blanket / read-narrow split. canonical:
+        // action/agents/nativeFsDenies.ts.
+        ...GIT_NATIVE_WRITE_DENY_CLAUDE,
+        ...GIT_NATIVE_READ_DENY_CLAUDE,
+        ...toolDeny,
+      ],
+    },
+    sandbox: {
+      filesystem: {
+        denyRead: ["/proc", "/sys", ...secretDenyPaths],
+      },
+    },
+  };
   // PreToolUse gate replicated into managed settings so it survives the
   // `allowManagedHooksOnly: true` policy gate (see
   // src/utils/hooks/hooksConfigSnapshot.ts in claude-code source). the Stop
@@ -929,29 +961,8 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
       },
     ];
   }
-  return {
-    allowManagedPermissionRulesOnly: true,
-    allowManagedHooksOnly: true,
-    permissions: {
-      deny: [
-        "Read(//proc/**)",
-        "Read(//sys/**)",
-        "Grep(//proc/**)",
-        "Grep(//sys/**)",
-        "Edit(//proc/**)",
-        "Edit(//sys/**)",
-        "Glob(//proc/**)",
-        "Glob(//sys/**)",
-        ...toolDeny,
-      ],
-    },
-    hooks,
-    sandbox: {
-      filesystem: {
-        denyRead: ["/proc", "/sys", ...secretDenyPaths],
-      },
-    },
-  };
+  base.hooks = hooks;
+  return base;
 }
 
 function installManagedSettings(params: ManagedSettingsParams): void {

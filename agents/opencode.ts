@@ -41,6 +41,7 @@ import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { resolveVertexOpenCodeModel } from "../utils/vertex.ts";
+import { GIT_NATIVE_READ_DENY_OPENCODE, GIT_NATIVE_WRITE_DENY_OPENCODE } from "./nativeFsDenies.ts";
 import {
   PULLFROG_BUS_EVENT_TYPE,
   PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME,
@@ -1195,20 +1196,23 @@ export const opencode = agent({
     // codex auth lives at /var/lib/pullfrog/opencode/auth.json (see codexHome.ts),
     // which is outside /tmp/* — deny-default protects it from native FS tools.
     //
-    // edit rule denies git config / hooks / attributes — these live INSIDE the
-    // project root (so external_directory doesn't gate them), but the per-tool
-    // `edit` permission supports last-match-wins Wildcard.match against
-    // worktree-relative paths (see /tmp/opencode/packages/core/src/permission.ts).
-    // covers edit/write/apply_patch via EDIT_TOOLS normalization. mirrors the
-    // FS_MOUNTS read-only protection on the same paths in action/mcp/shell.ts.
+    // read + edit rules deny git surfaces INSIDE the project root (so
+    // external_directory doesn't gate them); the per-tool `read`/`edit`
+    // permissions support last-match-wins Wildcard.match against worktree-
+    // relative paths (see /tmp/opencode/packages/core/src/permission.ts).
+    // edit denies ALL of .git (blanket write — nothing legit writes .git via
+    // native tools; real commits go through MCP git tools in the action
+    // process, outside this gate; `*` is recursive in opencode's Wildcard) and
+    // covers edit/write/apply_patch via EDIT_TOOLS normalization. read denies
+    // only .git/config (narrow — broad .git read-blocks break orientation reads
+    // like .git/HEAD, and ASKPASS keeps live tokens out of .git/config).
+    // grep/glob match the search pattern not a filepath, so they can't be
+    // path-denied. mirrors the FS_MOUNTS read-only protection in
+    // action/mcp/shell.ts. canonical surfaces: action/agents/nativeFsDenies.ts.
     const permissionOverride = JSON.stringify({
       external_directory: { "*": "deny", "/tmp/*": "allow" },
-      edit: {
-        "*": "allow",
-        ".git/config": "deny",
-        ".git/hooks/*": "deny",
-        ".git/info/attributes": "deny",
-      },
+      read: { "*": "allow", ...GIT_NATIVE_READ_DENY_OPENCODE },
+      edit: { "*": "allow", ...GIT_NATIVE_WRITE_DENY_OPENCODE },
     });
 
     const env: Record<string, string | undefined> = {
