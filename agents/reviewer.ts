@@ -7,20 +7,26 @@
  *   allow: file reads, grep/glob, web search/fetch, read-only MCP queries
  *   deny:  state-changing MCP tools, file writes, shell, nested subagent dispatch
  *
- * Enforcement is prose-only. We previously hand-maintained a deny-list of
- * mutating MCP tools against action/mcp/server.ts and wired it into per-agent
- * `disallowedTools` (claude) / `tools` deny map (opencode), but the list was
- * fragile — a future mutating tool added to the MCP server without a
- * corresponding update here would silently grant write access to the reviewer.
- * Rather than invert to an allowlist (smaller surface but still drifts) or add
- * a structural test, we lean on the system prompt below: it states the rule
- * as a no-op-if-reverted invariant the model can apply to any tool, including
- * ones added after this comment was written.
+ * Enforcement is now belt-and-suspenders:
+ *   1. Machine-enforced PreToolUse gates intercept every state-mutating MCP
+ *      tool call originating from a subagent session and refuse it before
+ *      MCP runs. See action/agents/subagentToolGates.ts (the deny list),
+ *      action/agents/claudePretoolGate.ts (Claude Code's PreToolUse hook),
+ *      and action/agents/opencodePlugin.ts (opencode's tool.execute.before
+ *      hook). Followed PR #796 which added runtime backstops inside
+ *      checkout_pr / push_branch after a subagent-originated tool call
+ *      clobbered an unrelated PR branch in zed-industries/cloud.
+ *   2. The prose system prompt below as a backup against (a) tools added
+ *      to the MCP server without a corresponding deny-list update, and
+ *      (b) shell/git read-vs-write distinctions the static gate can't see.
+ *      It states the rule as a no-op-if-reverted invariant the model can
+ *      apply to any tool, including ones added after this comment was
+ *      written.
  *
- * Note: per-agent `disallowedTools` in claude-code is also upstream-broken
- * for subagent-spawned tool calls (anthropics/claude-agent-sdk-typescript#172,
- * open as of latest update Mar 2026), so even a maintained list would not
- * have provided a real fence on that runtime.
+ * Historical note: per-agent `disallowedTools` in claude-code is upstream-
+ * broken for subagent-spawned tool calls (anthropics/claude-agent-sdk-
+ * typescript#172, open as of Mar 2026), which is why the gate runs at
+ * PreToolUse rather than tool-registration time.
  */
 
 export const REVIEWER_AGENT_NAME = "reviewfrog";

@@ -44,7 +44,7 @@
  *   - todo tracker / onToolUse forwarding
  */
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import * as core from "@actions/core";
@@ -69,6 +69,10 @@ import { trackChild, untrackChild } from "../utils/subprocess.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { resolveVertexOpenCodeModel } from "../utils/vertex.ts";
+import {
+  PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME,
+  PULLFROG_OPENCODE_GATE_PLUGIN_SOURCE,
+} from "./opencodePlugin.ts";
 import {
   autoSelectModel,
   buildReviewerAgentConfig,
@@ -924,7 +928,16 @@ export const opencode = agent({
       HOME: ctx.tmpdir,
       XDG_CONFIG_HOME: join(ctx.tmpdir, ".config"),
     };
-    mkdirSync(join(homeEnv.XDG_CONFIG_HOME, "opencode"), { recursive: true });
+    // install the subagent gate into opencode's auto-discovered plugin dir
+    // (under the tmpdir-redirected XDG_CONFIG_HOME). v2 installs ONLY the gate,
+    // not the events re-emitter — it reads subagent events off the SDK stream,
+    // so the re-emitter would be dead weight. see action/agents/opencodePlugin.ts.
+    const opencodePluginDir = join(homeEnv.XDG_CONFIG_HOME, "opencode", "plugin");
+    mkdirSync(opencodePluginDir, { recursive: true });
+    writeFileSync(
+      join(opencodePluginDir, PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME),
+      PULLFROG_OPENCODE_GATE_PLUGIN_SOURCE
+    );
 
     const agentBrowserVersion = getDevDependencyVersion("agent-browser");
     addSkill({

@@ -43,6 +43,8 @@ import { getDevDependencyVersion } from "../utils/version.ts";
 import { resolveVertexOpenCodeModel } from "../utils/vertex.ts";
 import {
   PULLFROG_BUS_EVENT_TYPE,
+  PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME,
+  PULLFROG_OPENCODE_GATE_PLUGIN_SOURCE,
   PULLFROG_OPENCODE_PLUGIN_FILENAME,
   PULLFROG_OPENCODE_PLUGIN_SOURCE,
 } from "./opencodePlugin.ts";
@@ -1159,6 +1161,12 @@ export const opencode = agent({
     writeFileSync(
       join(opencodePluginDir, PULLFROG_OPENCODE_PLUGIN_FILENAME),
       PULLFROG_OPENCODE_PLUGIN_SOURCE
+    );
+    // the subagent gate ships as a separate plugin so the active v2 harness
+    // can install it without the events re-emitter (see opencodePlugin.ts).
+    writeFileSync(
+      join(opencodePluginDir, PULLFROG_OPENCODE_GATE_PLUGIN_FILENAME),
+      PULLFROG_OPENCODE_GATE_PLUGIN_SOURCE
     );
 
     const agentBrowserVersion = getDevDependencyVersion("agent-browser");

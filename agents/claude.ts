@@ -12,7 +12,7 @@
  * security is enforced at the tool layer, not the process layer.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pullfrogMcpName } from "../external.ts";
@@ -45,6 +45,11 @@ import { ThinkingTimer } from "../utils/timer.ts";
 import type { TodoTracker } from "../utils/todoTracking.ts";
 import { getDevDependencyVersion } from "../utils/version.ts";
 import { applyClaudeVertexEnv } from "../utils/vertex.ts";
+import {
+  buildClaudePretoolGateSettings,
+  CLAUDE_PRETOOL_GATE_FILENAME,
+  CLAUDE_PRETOOL_GATE_SOURCE,
+} from "./claudePretoolGate.ts";
 import { startGateServer } from "./gateServer.ts";
 import { finalizeAgentResult } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME, REVIEWER_SYSTEM_PROMPT } from "./reviewer.ts";
@@ -82,6 +87,32 @@ function writeMcpConfig(ctx: AgentRunContext): string {
     })
   );
   return configPath;
+}
+
+/**
+ * Drop the PreToolUse gate script + its `--settings` JSON into the per-run
+ * tmpdir and return the absolute path to the settings file. The script
+ * blocks state-mutating MCP tool calls when `agent_id` is non-empty (i.e.,
+ * the call originates inside a Task/Agent subagent dispatch). See
+ * action/agents/claudePretoolGate.ts for the contract.
+ *
+ * Two paths register the gate:
+ *   1. flag settings (`--settings <path>`) — covers non-CI runs (`pnpm play`,
+ *      local dev) where `installManagedSettings` is a no-op.
+ *   2. managed settings (/etc/claude-code/managed-settings.json) — covers CI,
+ *      where `allowManagedHooksOnly: true` filters flag-settings hooks. The
+ *      same hook entry is embedded in `buildManagedSettings` below.
+ */
+function writePretoolGateAssets(ctx: AgentRunContext): {
+  scriptPath: string;
+  settingsPath: string;
+} {
+  const scriptPath = join(ctx.tmpdir, CLAUDE_PRETOOL_GATE_FILENAME);
+  writeFileSync(scriptPath, CLAUDE_PRETOOL_GATE_SOURCE);
+  chmodSync(scriptPath, 0o755);
+  const settingsPath = join(ctx.tmpdir, "pullfrog-claude-settings.json");
+  writeFileSync(settingsPath, JSON.stringify(buildClaudePretoolGateSettings(scriptPath)));
+  return { scriptPath, settingsPath };
 }
 
 /**
@@ -868,6 +899,7 @@ function buildStopHookScript(): string {
 interface ManagedSettingsParams {
   ctx: AgentRunContext;
   stopHookPath: string | null;
+  pretoolGateScriptPath: string;
 }
 
 function buildManagedSettings(params: ManagedSettingsParams): Record<string, unknown> {
@@ -882,7 +914,22 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
     `Glob(${path}/**)`,
     `Glob(/${path}/**)`,
   ]);
-  const base: Record<string, unknown> = {
+  // PreToolUse gate replicated into managed settings so it survives the
+  // `allowManagedHooksOnly: true` policy gate (see
+  // src/utils/hooks/hooksConfigSnapshot.ts in claude-code source). the Stop
+  // hook (gate-server retries) is layered into the same `hooks` object when
+  // present so both fire under managed settings.
+  const hooks: Record<string, unknown> = {
+    ...buildClaudePretoolGateSettings(params.pretoolGateScriptPath).hooks,
+  };
+  if (params.stopHookPath) {
+    hooks.Stop = [
+      {
+        hooks: [{ type: "command", command: params.stopHookPath }],
+      },
+    ];
+  }
+  return {
     allowManagedPermissionRulesOnly: true,
     allowManagedHooksOnly: true,
     permissions: {
@@ -898,22 +945,13 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
         ...toolDeny,
       ],
     },
+    hooks,
     sandbox: {
       filesystem: {
         denyRead: ["/proc", "/sys", ...secretDenyPaths],
       },
     },
   };
-  if (params.stopHookPath) {
-    base.hooks = {
-      Stop: [
-        {
-          hooks: [{ type: "command", command: params.stopHookPath }],
-        },
-      ],
-    };
-  }
-  return base;
 }
 
 function installManagedSettings(params: ManagedSettingsParams): void {
@@ -986,6 +1024,14 @@ export const claude = agent({
     const mcpConfigPath = writeMcpConfig(ctx);
     const effort = resolveEffort(model);
 
+    // PreToolUse gate that hard-blocks state-mutating MCP tool calls from
+    // subagents (the `agent_id` field is non-empty in the hook input only
+    // for subagent-originated calls — verified against
+    // yasasbanukaofficial/claude-code src/utils/hooks.ts createBaseHookInput).
+    // Wired via two surfaces so it fires in both CI and local (see
+    // writePretoolGateAssets / buildManagedSettings comments).
+    const pretoolGate = writePretoolGateAssets(ctx);
+
     // reflection + every gate retry (dirty tree, unsubmitted review, summary
     // stale) move from post-exit `--resume <sessionId>` subprocesses to a
     // managed Stop hook that curls a sidecar gate server. see
@@ -994,7 +1040,7 @@ export const claude = agent({
     const stopHookPath = join(ctx.tmpdir, "pullfrog-stop-hook.sh");
     writeFileSync(stopHookPath, buildStopHookScript(), { mode: 0o755 });
 
-    installManagedSettings({ ctx, stopHookPath });
+    installManagedSettings({ ctx, stopHookPath, pretoolGateScriptPath: pretoolGate.scriptPath });
 
     // base args shared between initial run and continue runs
     const baseArgs = [
@@ -1004,6 +1050,8 @@ export const claude = agent({
       "--dangerously-skip-permissions",
       "--mcp-config",
       mcpConfigPath,
+      "--settings",
+      pretoolGate.settingsPath,
       "--verbose",
       "--effort",
       effort,
