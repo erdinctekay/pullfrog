@@ -2,7 +2,8 @@
  * Claude Code agent — secure harness around the `claude` CLI.
  *
  * mirrors the opencode harness's security model:
- * - native Bash blocked via --disallowedTools (agent cannot shell out)
+ * - native exec tools (Bash, Monitor, REPL, Workflow) blocked via
+ *   --disallowedTools (agent cannot shell out / run code outside the MCP shell)
  * - managed-settings.json: filesystem sandbox — deny /proc, /sys reads
  * - MCP ShellTool provides restricted shell (filtered env, no secrets)
  * - MCP server injected via --mcp-config (not replacing project config)
@@ -75,6 +76,27 @@ async function installClaudeCli(): Promise<string> {
     installDependencies: true,
   });
 }
+
+/**
+ * Native claude-code tools that execute arbitrary shell/code and therefore
+ * bypass Pullfrog's security boundary (the restricted MCP `shell` tool with a
+ * filtered, secret-free env). These run inside the agent process with full env,
+ * so leaving any of them enabled defeats both `shell: "disabled"` AND the
+ * env-filtering that the MCP shell relies on even when shell is enabled.
+ *
+ * As of claude-code 2.1.150 the exec surface is no longer just `Bash`:
+ *   - `Monitor` runs a shell command/script (the `command` field)
+ *   - `REPL` runs arbitrary JavaScript (can `require("node:child_process")`)
+ *   - `Workflow` orchestrates subagents/pipelines that can reach the above
+ * Each is denied at top level and inside `Agent(...)` (Task subagents), mirroring
+ * the existing `Bash` / `Agent(Bash)` pair. Denying a tool that isn't registered
+ * in a given run is a harmless no-op, so this list is also forward-safe.
+ */
+const CLAUDE_EXEC_TOOLS = ["Bash", "Monitor", "REPL", "Workflow"] as const;
+const CLAUDE_DISALLOWED_TOOLS = [
+  ...CLAUDE_EXEC_TOOLS,
+  ...CLAUDE_EXEC_TOOLS.map((t) => `Agent(${t})`),
+].join(",");
 
 // ── config ─────────────────────────────────────────────────────────────────────
 
@@ -1070,7 +1092,7 @@ export const claude = agent({
       "--effort",
       effort,
       "--disallowedTools",
-      "Bash,Agent(Bash)",
+      CLAUDE_DISALLOWED_TOOLS,
       "--agents",
       buildAgentsJson(),
     ];
@@ -1080,7 +1102,7 @@ export const claude = agent({
     }
 
     // agent process gets full env — needs LLM API keys, PATH, locale, etc.
-    // security is enforced via managed-settings.json, --disallowedTools (Bash), and MCP tool filtering.
+    // security is enforced via managed-settings.json, --disallowedTools (native exec tools), and MCP tool filtering.
     //
     // bedrock route: claude-code reads `CLAUDE_CODE_USE_BEDROCK=1` to switch
     // its provider implementation from the direct Anthropic API to Bedrock.
