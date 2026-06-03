@@ -142,6 +142,33 @@ function buildSecurityConfig(ctx: AgentRunContext, model: string | undefined): s
     const slashIndex = model.indexOf("/");
     if (slashIndex > 0) {
       config.enabled_providers = [model.slice(0, slashIndex).toLowerCase()];
+      // moonshotai/kimi stalls on the @openrouter/ai-sdk-provider 2.8.1 stream
+      // parser opencode 1.15.13 bundles: duplicate tool-call emission on
+      // kimi-k2.6 makes the turn produce zero further part.updated events until
+      // the 120s inner watchdog aborts (47% of kimi proxy runs vs 0% for claude).
+      // upstream fixed it in 2.9.0 (openrouter/ai-sdk-provider PR #489). opencode
+      // only loads a non-bundled provider version when a model is redeclared
+      // under provider.<id>.models with a versioned npm spec — a bare
+      // provider.npm is a no-op for catalog models, which keep the bundled import
+      // (provider.ts BUNDLED_PROVIDERS is keyed by the unversioned name). so pin
+      // 2.9.0 for the redeclared kimi model; opencode installs it on demand via
+      // Npm.add. the empty model body inherits catalog cost/limits; provider id +
+      // model id stay openrouter/kimi so slug/cost/billing are unchanged. scoped
+      // to the moonshot route so other openrouter models keep the bundled parser.
+      if (model.startsWith("openrouter/moonshotai/")) {
+        const modelID = model.slice(slashIndex + 1);
+        config.provider = {
+          ...config.provider,
+          openrouter: {
+            npm: "@openrouter/ai-sdk-provider@2.9.0",
+            options: {
+              baseURL: "https://openrouter.ai/api/v1",
+              apiKey: "{env:OPENROUTER_API_KEY}",
+            },
+            models: { [modelID]: {} },
+          },
+        };
+      }
     }
   }
 
