@@ -44,6 +44,7 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
     customParts,
     model: ctx.toolState.model,
     fallbackFrom: ctx.toolState.modelFallback?.from,
+    oss: ctx.toolState.oss,
   });
 
   const body = `${formattedError}${footer}`;

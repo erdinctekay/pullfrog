@@ -872,6 +872,7 @@ async function createAndSubmitWithFooter(
       customParts,
       model: ctx.toolState.model,
       fallbackFrom: ctx.toolState.modelFallback?.from,
+      oss: ctx.oss,
     });
 
     return await ctx.octokit.rest.pulls.submitReview({

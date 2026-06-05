@@ -34,6 +34,7 @@ function buildCommentFooter(ctx: ToolContext, customParts?: string[]): string {
     customParts,
     model: ctx.toolState.model,
     fallbackFrom: ctx.toolState.modelFallback?.from,
+    oss: ctx.oss,
   });
 }
 

@@ -30,6 +30,12 @@ export interface BuildPullfrogFooterParams {
    * so the substitution is visible in PR comments + reviews.
    */
   fallbackFrom?: string | undefined;
+  /**
+   * true when the run's model costs are covered by the Pullfrog for OSS
+   * program — the footer renders `Using <model> (free via Pullfrog for OSS)`
+   * with the phrase linking to the OSS application page.
+   */
+  oss?: boolean | undefined;
 }
 
 /** Provider display name (e.g. "Anthropic") for the slug, or the raw provider segment as a fallback. */
@@ -46,7 +52,11 @@ function providerDisplayName(slug: string): string {
   }
 }
 
-function formatModelLabel(params: { model: string; fallbackFrom?: string | undefined }): string {
+function formatModelLabel(params: {
+  model: string;
+  fallbackFrom?: string | undefined;
+  oss?: boolean | undefined;
+}): string {
   const alias =
     resolveDisplayAlias(params.model) ??
     // reverse-lookup: when the caller passes an effective model (proxy or
@@ -55,6 +65,11 @@ function formatModelLabel(params: { model: string; fallbackFrom?: string | undef
     // still render a friendly display name.
     modelAliases.find((a) => a.resolve === params.model || a.openRouterResolve === params.model);
   const displayName = alias?.displayName ?? params.model;
+  // OSS runs have their model costs covered by the program — surface that
+  // (and link to the application) instead of the BYOK `(free)` / fallback note.
+  if (params.oss) {
+    return `\`${displayName}\` (free via [Pullfrog for OSS](https://pullfrog.com/for-oss))`;
+  }
   const base = alias?.isFree ? `\`${displayName}\` (free)` : `\`${displayName}\``;
   if (!params.fallbackFrom) return base;
   return `${base} (credentials for ${providerDisplayName(params.fallbackFrom)} not configured)`;
@@ -86,7 +101,7 @@ export function buildPullfrogFooter(params: BuildPullfrogFooterParams): string {
 
   if (params.model) {
     parts.push(
-      `Using ${formatModelLabel({ model: params.model, fallbackFrom: params.fallbackFrom })}`
+      `Using ${formatModelLabel({ model: params.model, fallbackFrom: params.fallbackFrom, oss: params.oss })}`
     );
   }
 

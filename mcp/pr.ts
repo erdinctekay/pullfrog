@@ -24,6 +24,7 @@ function buildPrBodyWithFooter(ctx: ToolContext, body: string): string {
       : undefined,
     model: ctx.toolState.model,
     fallbackFrom: ctx.toolState.modelFallback?.from,
+    oss: ctx.oss,
   });
 
   const bodyWithoutFooter = stripExistingFooter(fixDoubleEscapedString(body));

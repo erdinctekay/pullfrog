@@ -179,6 +179,10 @@ export interface ToolState {
   // configured)" rather than just being silently downgraded. literal record
   // of an event that happened — matches the ToolState design rule.
   modelFallback?: { from: string } | undefined;
+  // true when the run's model costs are covered by the Pullfrog for OSS
+  // program. carried into footers (incl. error comments built from toolState
+  // alone) so the "via Pullfrog for OSS" attribution is consistent everywhere.
+  oss?: boolean | undefined;
   todoTracker?: TodoTracker | undefined;
   diffCoverage?: DiffCoverageState | undefined;
   // mutable handle the agent harness writes to as a run progresses (recent
