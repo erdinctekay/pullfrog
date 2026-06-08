@@ -108,7 +108,7 @@ describe("resolveCliModel", () => {
     expect(resolveCliModel("openai/gpt-codex")).toBe("openai/gpt-5.5");
     expect(resolveCliModel("openai/gpt-codex-mini")).toBe("openai/gpt-5.4-mini");
     expect(resolveCliModel("opencode/gpt-codex")).toBe("opencode/gpt-5.5");
-    expect(resolveCliModel("openrouter/gpt-codex")).toBe("openrouter/openai/gpt-5.5");
+    expect(resolveCliModel("openrouter/gpt-codex")).toBe("openrouter/~openai/gpt-latest");
   });
 
   it("walks fallback chain for hidden deprecated minimax-m2.5-free", () => {

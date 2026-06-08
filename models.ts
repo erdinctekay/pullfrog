@@ -421,25 +421,25 @@ export const providers = {
     models: {
       "claude-opus": {
         displayName: "Claude Opus",
-        resolve: "openrouter/anthropic/claude-opus-4.8",
-        openRouterResolve: "openrouter/anthropic/claude-opus-4.8",
+        resolve: "openrouter/~anthropic/claude-opus-latest",
+        openRouterResolve: "openrouter/~anthropic/claude-opus-latest",
         preferred: true,
         subagentModel: "claude-sonnet",
       },
       "claude-sonnet": {
         displayName: "Claude Sonnet",
-        resolve: "openrouter/anthropic/claude-sonnet-4.6",
-        openRouterResolve: "openrouter/anthropic/claude-sonnet-4.6",
+        resolve: "openrouter/~anthropic/claude-sonnet-latest",
+        openRouterResolve: "openrouter/~anthropic/claude-sonnet-latest",
       },
       "claude-haiku": {
         displayName: "Claude Haiku",
-        resolve: "openrouter/anthropic/claude-haiku-4.5",
-        openRouterResolve: "openrouter/anthropic/claude-haiku-4.5",
+        resolve: "openrouter/~anthropic/claude-haiku-latest",
+        openRouterResolve: "openrouter/~anthropic/claude-haiku-latest",
       },
       gpt: {
         displayName: "GPT",
-        resolve: "openrouter/openai/gpt-5.5",
-        openRouterResolve: "openrouter/openai/gpt-5.5",
+        resolve: "openrouter/~openai/gpt-latest",
+        openRouterResolve: "openrouter/~openai/gpt-latest",
         subagentModel: "gpt-5.4",
       },
       "gpt-pro": {
@@ -457,8 +457,8 @@ export const providers = {
       },
       "gpt-mini": {
         displayName: "GPT Mini",
-        resolve: "openrouter/openai/gpt-5.4-mini",
-        openRouterResolve: "openrouter/openai/gpt-5.4-mini",
+        resolve: "openrouter/~openai/gpt-mini-latest",
+        openRouterResolve: "openrouter/~openai/gpt-mini-latest",
       },
       // legacy aliases — see openai provider for context.
       "gpt-codex": {
@@ -480,14 +480,14 @@ export const providers = {
       },
       "gemini-pro": {
         displayName: "Gemini Pro",
-        resolve: "openrouter/google/gemini-3.1-pro-preview",
-        openRouterResolve: "openrouter/google/gemini-3.1-pro-preview",
+        resolve: "openrouter/~google/gemini-pro-latest",
+        openRouterResolve: "openrouter/~google/gemini-pro-latest",
         // Inherit — see google/gemini-pro for rationale.
       },
       "gemini-flash": {
         displayName: "Gemini Flash",
-        resolve: "openrouter/google/gemini-3.5-flash",
-        openRouterResolve: "openrouter/google/gemini-3.5-flash",
+        resolve: "openrouter/~google/gemini-flash-latest",
+        openRouterResolve: "openrouter/~google/gemini-flash-latest",
       },
       grok: {
         displayName: "Grok",
