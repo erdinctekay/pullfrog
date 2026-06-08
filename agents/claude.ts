@@ -2,8 +2,14 @@
  * Claude Code agent — secure harness around the `claude` CLI.
  *
  * mirrors the opencode harness's security model:
- * - native exec tools (Bash, Monitor, REPL, Workflow) blocked via
- *   --disallowedTools (agent cannot shell out / run code outside the MCP shell)
+ * - native exec tools (Bash, Monitor, REPL, Workflow) blocked via BOTH
+ *   --disallowedTools AND managed-settings.json `permissions.deny` (the agent
+ *   cannot shell out / run code outside the MCP shell). the managed-settings
+ *   deny is the authoritative, bypass-immune layer: `--disallowedTools` alone
+ *   (a `cliArg`-source deny) was observed to leak under
+ *   `--dangerously-skip-permissions`, surfacing a secret env marker via the
+ *   native Bash tool. managed-settings denies are `policySettings`-source,
+ *   highest precedence, and survive bypassPermissions mode.
  * - managed-settings.json: filesystem sandbox — deny /proc, /sys reads
  * - MCP ShellTool provides restricted shell (filtered env, no secrets)
  * - MCP server injected via --mcp-config (not replacing project config)
@@ -85,12 +91,20 @@ async function installClaudeCli(): Promise<string> {
  * Each is denied at top level and inside `Agent(...)` (Task subagents), mirroring
  * the existing `Bash` / `Agent(Bash)` pair. Denying a tool that isn't registered
  * in a given run is a harmless no-op, so this list is also forward-safe.
+ *
+ * `CLAUDE_EXEC_TOOL_DENY_RULES` is wired into TWO surfaces: `--disallowedTools`
+ * (removes the tools from the advertised list) and managed-settings.json
+ * `permissions.deny` (the authoritative, bypass-immune deny — see
+ * buildManagedSettings). The flag alone proved insufficient: under
+ * `--dangerously-skip-permissions` the native Bash tool ran despite
+ * `--disallowedTools Bash`, leaking a per-run secret marker.
  */
 const CLAUDE_EXEC_TOOLS = ["Bash", "Monitor", "REPL", "Workflow"] as const;
-const CLAUDE_DISALLOWED_TOOLS = [
+const CLAUDE_EXEC_TOOL_DENY_RULES = [
   ...CLAUDE_EXEC_TOOLS,
   ...CLAUDE_EXEC_TOOLS.map((t) => `Agent(${t})`),
-].join(",");
+];
+const CLAUDE_DISALLOWED_TOOLS = CLAUDE_EXEC_TOOL_DENY_RULES.join(",");
 
 // ── config ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +136,12 @@ function writeMcpConfig(ctx: AgentRunContext): string {
  *   2. managed settings (/etc/claude-code/managed-settings.json) — covers CI,
  *      where `allowManagedHooksOnly: true` filters flag-settings hooks. The
  *      same hook entry is embedded in `buildManagedSettings` below.
+ *
+ * The flag settings also carry the native exec-tool `permissions.deny`
+ * (via `buildClaudePretoolGateSettings`) so non-CI runs (where managed
+ * settings are absent) still block native Bash et al. at a settings-source
+ * deny, not just the `--disallowedTools` cliArg deny that proved leaky under
+ * `--dangerously-skip-permissions`.
  */
 function writePretoolGateAssets(ctx: AgentRunContext): {
   scriptPath: string;
@@ -131,7 +151,8 @@ function writePretoolGateAssets(ctx: AgentRunContext): {
   writeFileSync(scriptPath, CLAUDE_PRETOOL_GATE_SOURCE);
   chmodSync(scriptPath, 0o755);
   const settingsPath = join(ctx.tmpdir, "pullfrog-claude-settings.json");
-  writeFileSync(settingsPath, JSON.stringify(buildClaudePretoolGateSettings(scriptPath)));
+  const settings = buildClaudePretoolGateSettings(scriptPath, CLAUDE_EXEC_TOOL_DENY_RULES);
+  writeFileSync(settingsPath, JSON.stringify(settings));
   return { scriptPath, settingsPath };
 }
 
@@ -930,11 +951,24 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
     `Glob(${path}/**)`,
     `Glob(/${path}/**)`,
   ]);
+  // single builder for both the PreToolUse gate hook and the native exec-tool
+  // deny — both fields are consumed here (and identically in the flag-settings
+  // path via writePretoolGateAssets), keeping CLAUDE_EXEC_TOOL_DENY_RULES the
+  // single source.
+  const gate = buildClaudePretoolGateSettings(
+    params.pretoolGateScriptPath,
+    CLAUDE_EXEC_TOOL_DENY_RULES
+  );
   const base: Record<string, unknown> = {
     allowManagedPermissionRulesOnly: true,
     allowManagedHooksOnly: true,
     permissions: {
       deny: [
+        // native exec tools — the authoritative, bypass-immune deny.
+        // `--disallowedTools` (a cliArg-source deny) leaked under
+        // `--dangerously-skip-permissions`; policySettings denies survive
+        // bypassPermissions mode. covers top-level + Agent(...) subagent use.
+        ...gate.permissions.deny,
         "Read(//proc/**)",
         "Read(//sys/**)",
         "Grep(//proc/**)",
@@ -965,7 +999,7 @@ function buildManagedSettings(params: ManagedSettingsParams): Record<string, unk
   // hook (gate-server retries) is layered into the same `hooks` object when
   // present so both fire under managed settings.
   const hooks: Record<string, unknown> = {
-    ...buildClaudePretoolGateSettings(params.pretoolGateScriptPath).hooks,
+    ...gate.hooks,
   };
   if (params.stopHookPath) {
     hooks.Stop = [

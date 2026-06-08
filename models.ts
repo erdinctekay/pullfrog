@@ -344,7 +344,7 @@ export const providers = {
         openRouterResolve: "openrouter/moonshotai/kimi-k2.6",
       },
       "minimax-m2.5": {
-        displayName: "MiniMax M2.5",
+        displayName: "MiniMax M2",
         resolve: "opencode/minimax-m2.5",
         openRouterResolve: "openrouter/minimax/minimax-m2.5",
       },
@@ -361,7 +361,7 @@ export const providers = {
         fallback: "opencode/big-pickle",
       },
       "minimax-m2.5-free": {
-        displayName: "MiniMax M2.5",
+        displayName: "MiniMax M2",
         resolve: "opencode/minimax-m2.5-free",
         envVars: [],
         isFree: true,
@@ -518,7 +518,7 @@ export const providers = {
         openRouterResolve: "openrouter/moonshotai/kimi-k2.6",
       },
       "minimax-m2.5": {
-        displayName: "MiniMax M2.5",
+        displayName: "MiniMax M2",
         resolve: "openrouter/minimax/minimax-m2.5",
         openRouterResolve: "openrouter/minimax/minimax-m2.5",
       },
