@@ -18,6 +18,10 @@ export {
   LEAPING_INTO_ACTION_PREFIX,
 } from "../utils/leapingComment.ts";
 
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Not Found");
+}
+
 function buildCommentFooter(ctx: ToolContext, customParts?: string[]): string {
   const runId = ctx.runId;
   return buildPullfrogFooter({
@@ -247,7 +251,43 @@ export async function reportProgress(
     const footer = buildCommentFooter(ctx, customParts);
     const bodyWithFooter = `${bodyWithoutFooter}${footer}`;
 
-    const result = await updateProgressComment(apiCtx, existingComment, bodyWithFooter);
+    // a review-reply progress comment (seeded by the AddressReviews dispatch
+    // path) can become stale before final delivery — the thread is deleted or
+    // otherwise unreachable, so updateReviewComment 404s. rather than fail an
+    // already-completed run, fall back to a fresh top-level comment on the PR
+    // and retarget future writes there. (#919)
+    let result: Awaited<ReturnType<typeof updateProgressComment>>;
+    try {
+      result = await updateProgressComment(apiCtx, existingComment, bodyWithFooter);
+    } catch (error) {
+      // only a deliberate write to a stale review-reply comment falls back. a
+      // liveProgress (todo-tracker) 404 rethrows — it must never create a
+      // user-facing comment, and the next deliberate report_progress recovers.
+      if (
+        params.liveProgress ||
+        existingComment.type !== "review" ||
+        !isNotFoundError(error) ||
+        issueNumber === undefined
+      ) {
+        throw error;
+      }
+      log.warning(
+        `progress review comment ${existingComment.id} is gone (404); posting a top-level comment on #${issueNumber} instead`
+      );
+      const created = await createLeapingProgressComment(
+        apiCtx,
+        { kind: "issue", issueNumber },
+        bodyWithFooter
+      );
+      ctx.toolState.progressComment = created.comment;
+      if (!params.liveProgress) ctx.toolState.wasUpdated = true;
+      return {
+        commentId: created.comment.id,
+        url: created.html_url,
+        body: created.body || "",
+        action: "created",
+      };
+    }
 
     if (!params.liveProgress) ctx.toolState.wasUpdated = true;
 
@@ -391,11 +431,7 @@ export async function deleteProgressComment(ctx: ToolContext): Promise<boolean> 
     );
   } catch (error) {
     // ignore 404 - comment already deleted
-    if (error instanceof Error && error.message.includes("Not Found")) {
-      // comment already deleted, continue
-    } else {
-      throw error;
-    }
+    if (!isNotFoundError(error)) throw error;
   }
 
   // set to null (not undefined) so report_progress skips instead of creating a new comment
