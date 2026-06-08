@@ -271,10 +271,13 @@ export async function main(): Promise<MainResult> {
     // this landed. Router/proxy runs are skipped (Pullfrog mints the key);
     // see `selectFallbackModelIfNeeded` for the full skip set.
     const authorized = getAuthorizedModels();
+    // the fallback gate needs the agent to spare claude-harness runs (own
+    // auth, invisible to `opencode models`) from a spurious downgrade.
     const fallback = selectFallbackModelIfNeeded({
       resolvedModel: initialResolvedModel,
       proxyModel: payload.proxyModel,
       authorized,
+      agentName: resolveAgent({ model: initialResolvedModel }).name,
     });
     // when fallback engages we bypass `resolveModel` for the new slug —
     // `PULLFROG_MODEL` has higher priority than the slug arg inside that

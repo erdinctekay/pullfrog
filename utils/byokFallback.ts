@@ -1,3 +1,5 @@
+import type { AgentId } from "../external.ts";
+
 /**
  * Slug we fall back to when a BYOK-required model is configured but the
  * runner has no provider key in env. Picked because it's free, stable, and
@@ -26,16 +28,22 @@ export type FallbackDecision = { fallback: false } | { fallback: true; from: str
  *   - Resolved model is a raw Bedrock / Vertex ID (no `/`): the routing
  *     validators (`validateBedrockSetup` / `validateVertexSetup`) cover
  *     auth + region/location/model-id; `opencode models` does not.
+ *   - The selected agent is `claude`: the Claude Code harness brings its own
+ *     auth and `resolveAgent` only returns it when that auth is present.
+ *     `opencode models` can't see `CLAUDE_CODE_OAUTH_TOKEN`, so without this
+ *     an OAuth-subscription run on an Anthropic model would wrongly fall back.
  */
 export function selectFallbackModelIfNeeded(input: {
   resolvedModel: string | undefined;
   proxyModel: string | undefined;
   authorized: Set<string>;
+  agentName: AgentId;
 }): FallbackDecision {
   if (input.proxyModel) return { fallback: false };
   if (!input.resolvedModel) return { fallback: false };
   if (input.resolvedModel === FREE_FALLBACK_SLUG) return { fallback: false };
   if (!input.resolvedModel.includes("/")) return { fallback: false };
+  if (input.agentName === "claude") return { fallback: false };
   if (input.authorized.has(input.resolvedModel)) return { fallback: false };
   return {
     fallback: true,

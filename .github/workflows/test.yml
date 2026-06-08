@@ -30,6 +30,7 @@ jobs:
         agent: [claude, opencode]
         test:
           [
+            bedrock-claude,
             codex-auth,
             fs-exfil,
             mcpmerge,
@@ -43,12 +44,16 @@ jobs:
             vertex-opencode,
           ]
         exclude:
+          - agent: opencode
+            test: bedrock-claude
           - agent: claude
             test: skill-invoke-opencode
           - agent: claude
             test: codex-auth
           - agent: opencode
             test: skill-invoke-claude
+          - agent: claude
+            test: vertex-opencode
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
