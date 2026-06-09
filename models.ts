@@ -95,11 +95,20 @@ export const providers = {
     displayName: "Anthropic",
     envVars: ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
     models: {
+      // OpenRouter serves claude-fable-5, but models.dev's OpenRouter mirror
+      // hasn't indexed it yet (shipped 2026-06-09), so the catalog drift gate
+      // can't validate an openRouterResolve. omit it until the mirror catches
+      // up; direct BYOK / Claude Code resolves anthropic/claude-fable-5 fine.
+      "claude-fable": {
+        displayName: "Claude Fable",
+        resolve: "anthropic/claude-fable-5",
+        preferred: true,
+        subagentModel: "claude-sonnet",
+      },
       "claude-opus": {
         displayName: "Claude Opus",
         resolve: "anthropic/claude-opus-4-8",
         openRouterResolve: "openrouter/anthropic/claude-opus-4.8",
-        preferred: true,
         subagentModel: "claude-sonnet",
       },
       "claude-sonnet": {
@@ -166,6 +175,7 @@ export const providers = {
       o3: {
         displayName: "O3",
         resolve: "openai/o3",
+        openRouterResolve: "openrouter/openai/o3",
       },
     },
   }),
