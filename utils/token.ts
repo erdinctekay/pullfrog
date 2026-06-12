@@ -3,7 +3,7 @@ import * as core from "@actions/core";
 import type { PushPermission } from "../external.ts";
 import { log } from "./cli.ts";
 import { onExitSignal } from "./exitHandler.ts";
-import { acquireNewToken } from "./github.ts";
+import { acquireNewToken, type OidcCredentials } from "./github.ts";
 import { isGitHubActions } from "./globals.ts";
 
 // re-export for `pullfrog gha token` subcommand
@@ -12,6 +12,18 @@ export { revokeGitHubInstallationToken as revokeInstallationToken };
 
 // store MCP token in memory for getGitHubInstallationToken()
 let mcpTokenValue: string | undefined;
+
+// single-flight re-acquisition for mid-run 401s, set by resolveTokens on the
+// minted path (external GH_TOKEN can't be re-minted, so it stays undefined)
+let refreshMcpTokenFn: ((stale: string) => Promise<string>) | undefined;
+
+/**
+ * get the refresh function for the MCP token, if re-acquisition is possible.
+ * pass to `createOctokit` so a mid-run 401 triggers a refresh + retry (#891).
+ */
+export function getMcpTokenRefresh(): ((stale: string) => Promise<string>) | undefined {
+  return refreshMcpTokenFn;
+}
 
 /**
  * get the job-scoped token from action input.
@@ -45,6 +57,12 @@ export type TokenRef = {
 
 type ResolveTokensParams = {
   push: PushPermission;
+  /**
+   * OIDC credentials stashed by main.ts before the restricted-mode env wipe —
+   * the mid-run MCP token refresh mints from this snapshot (#891). null when
+   * OIDC isn't available (local dev, external token).
+   */
+  oidc: OidcCredentials | null;
 };
 
 /**
@@ -121,6 +139,39 @@ export async function resolveTokens(params: ResolveTokensParams): Promise<TokenR
   );
 
   mcpTokenValue = mcpToken;
+  let currentMcpToken = mcpToken;
+
+  // GitHub can invalidate an installation token before expiry (see #891).
+  // single-flight: concurrent 401s share one mint, and a caller whose token
+  // was already replaced by a parallel refresh gets the replacement without
+  // minting again. cleared on settle so a transient refresh failure doesn't
+  // poison the rest of the run (acquireNewToken retries transients itself).
+  // note: gitToken deliberately has no refresh path — git auth failures are
+  // stringly (no structured 401) and #891 only evidenced MCP-API 401s.
+  let refreshPromise: Promise<string> | undefined;
+  refreshMcpTokenFn = (stale) => {
+    assert(mcpTokenValue, "tokens already disposed");
+    if (stale !== currentMcpToken) {
+      return Promise.resolve(currentMcpToken);
+    }
+    refreshPromise ??= acquireNewToken({
+      permissions: mcpPermissions,
+      oidc: params.oidc ?? undefined,
+    })
+      .then((fresh) => {
+        if (isGitHubActions) {
+          core.setSecret(fresh);
+        }
+        mcpTokenValue = fresh;
+        currentMcpToken = fresh;
+        log.warning("» GitHub rejected the MCP token; re-acquired a fresh scoped MCP token");
+        return fresh;
+      })
+      .finally(() => {
+        refreshPromise = undefined;
+      });
+    return refreshPromise;
+  };
 
   let disposingRef: PromiseWithResolvers<void> | undefined;
 
@@ -133,10 +184,11 @@ export async function resolveTokens(params: ResolveTokensParams): Promise<TokenR
     disposingRef = Promise.withResolvers();
     try {
       mcpTokenValue = undefined;
-      // revoke both tokens
+      refreshMcpTokenFn = undefined;
+      // revoke both tokens (a refresh may have replaced the original MCP token)
       await Promise.all([
         revokeGitHubInstallationToken(gitToken),
-        revokeGitHubInstallationToken(mcpToken),
+        revokeGitHubInstallationToken(currentMcpToken),
       ]);
     } finally {
       removeSignalHandler();

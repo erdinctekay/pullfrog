@@ -4,7 +4,7 @@ import { buildPullfrogFooter } from "./buildPullfrogFooter.ts";
 import { log } from "./cli.ts";
 import { createOctokit, parseRepoContext } from "./github.ts";
 import { updateProgressComment } from "./progressComment.ts";
-import { getGitHubInstallationToken } from "./token.ts";
+import { getGitHubInstallationToken, getMcpTokenRefresh } from "./token.ts";
 
 interface ReportErrorParams {
   toolState: ToolState;
@@ -25,7 +25,7 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
   const formattedError = ctx.title ? `${ctx.title}\n\n${ctx.error}` : ctx.error;
 
   const repoContext = parseRepoContext();
-  const octokit = createOctokit(getGitHubInstallationToken());
+  const octokit = createOctokit(getGitHubInstallationToken(), getMcpTokenRefresh());
   const runId = process.env.GITHUB_RUN_ID
     ? Number.parseInt(process.env.GITHUB_RUN_ID, 10)
     : undefined;

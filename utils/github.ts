@@ -5,7 +5,17 @@ import * as core from "@actions/core";
 import { throttling } from "@octokit/plugin-throttling";
 import { Octokit } from "@octokit/rest";
 import { apiFetch } from "./apiFetch.ts";
+import { isGitHubActions } from "./globals.ts";
 import { retry } from "./retry.ts";
+
+/** OIDC audience for Pullfrog API token exchanges */
+const OIDC_AUDIENCE = "pullfrog-api";
+
+/** GitHub Actions OIDC request credentials, stashed before env wipes */
+export interface OidcCredentials {
+  requestUrl: string;
+  requestToken: string;
+}
 
 function isObject(value: unknown) {
   return typeof value === "object" && value !== null;
@@ -97,14 +107,20 @@ type GitHubAppPermissions = {
 type AcquireTokenOptions = {
   repos?: string[];
   permissions?: GitHubAppPermissions;
+  /**
+   * stashed OIDC credentials for minting after restricted mode deletes
+   * ACTIONS_ID_TOKEN_REQUEST_* from process.env (mid-run token refresh)
+   */
+  oidc?: OidcCredentials | undefined;
 };
 
 /**
- * Thrown when our token-exchange endpoint returns a non-2xx response.
- * The retry policy in `acquireNewToken` looks for this concrete type to
- * skip retries — 4xx is terminal user state (not-installed, not-authorized)
- * and 5xx is rare enough that re-running the workflow is the right escape
- * hatch. Genuine network failures throw plain `Error` and stay retryable.
+ * Thrown when a token-exchange or OIDC ID-token request returns a non-2xx
+ * response. The retry policy in `acquireNewToken` looks for this concrete
+ * type to skip retries — 4xx is terminal user state (not-installed,
+ * not-authorized) and 5xx is rare enough that re-running the workflow is the
+ * right escape hatch. Genuine network failures throw plain `Error` and stay
+ * retryable.
  */
 class TokenExchangeError extends Error {
   readonly status: number;
@@ -115,8 +131,50 @@ class TokenExchangeError extends Error {
   }
 }
 
+/**
+ * mint a GitHub Actions OIDC ID token from stashed credentials without
+ * touching process.env — `core.getIDToken` reads the env vars directly,
+ * which restricted mode has already deleted by the time a refresh runs.
+ * throws TokenExchangeError on HTTP errors and a "timed out" Error on
+ * timeout so `acquireNewToken`'s retry predicate treats 5xx/429/timeouts
+ * as transient.
+ */
+export async function fetchIdTokenFromStash(creds: OidcCredentials): Promise<string> {
+  const url = new URL(creds.requestUrl);
+  url.searchParams.set("audience", OIDC_AUDIENCE);
+  const timeoutMs = 30000;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${creds.requestToken}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(`ID token request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  }
+  if (!response.ok) {
+    throw new TokenExchangeError(
+      response.status,
+      `Failed to get ID token: ${response.status} ${response.statusText}`
+    );
+  }
+  const body = (await response.json()) as { value?: string };
+  if (!body.value) {
+    throw new Error("ID token response has no value field");
+  }
+  if (isGitHubActions) {
+    core.setSecret(body.value);
+  }
+  return body.value;
+}
+
 async function acquireTokenViaOIDC(opts?: AcquireTokenOptions): Promise<string> {
-  const oidcToken = await core.getIDToken("pullfrog-api");
+  const oidcToken = opts?.oidc
+    ? await fetchIdTokenFromStash(opts.oidc)
+    : await core.getIDToken(OIDC_AUDIENCE);
 
   const repos = [...(opts?.repos ?? [])];
   const targetRepo = process.env.GITHUB_REPOSITORY?.split("/")[1];
@@ -360,24 +418,28 @@ export async function ensureGitHubToken(): Promise<void> {
   }
 }
 
+/**
+ * retry predicate shared by token mints: 4xx is terminal user state (app not
+ * installed, permissions wrong) — retrying just triples our log noise and the
+ * user's CI bill (see #693). 5xx/429 and network failures are transient
+ * (vercel cold start, github outage, rate limit) and should ride the backoff.
+ */
+export function isTransientTokenError(error: unknown): boolean {
+  if (error instanceof TokenExchangeError) return error.status >= 500 || error.status === 429;
+  return (
+    error instanceof Error &&
+    (error.message.includes("timed out") ||
+      error.message.includes("fetch failed") ||
+      error.message.includes("ECONNRESET") ||
+      error.message.includes("ETIMEDOUT"))
+  );
+}
+
 export async function acquireNewToken(opts?: AcquireTokenOptions): Promise<string> {
-  if (isOIDCAvailable()) {
+  if (opts?.oidc || isOIDCAvailable()) {
     return await retry(() => acquireTokenViaOIDC(opts), {
       label: "token exchange",
-      shouldRetry: (error) => {
-        // 4xx is terminal user state (app not installed, permissions wrong) —
-        // retrying just triples our log noise and the user's CI bill (see
-        // #693). 5xx/429 are transient (vercel cold start, github outage,
-        // rate limit) and should ride the existing backoff.
-        if (error instanceof TokenExchangeError) return error.status >= 500 || error.status === 429;
-        return (
-          error instanceof Error &&
-          (error.message.includes("timed out") ||
-            error.message.includes("fetch failed") ||
-            error.message.includes("ECONNRESET") ||
-            error.message.includes("ETIMEDOUT"))
-        );
-      },
+      shouldRetry: isTransientTokenError,
     });
   }
   // running inside GitHub Actions but the OIDC env vars are absent — the
@@ -475,12 +537,17 @@ export async function writeGitHubUsageSummaryToFile(path: string): Promise<void>
   await rename(tmpPath, path);
 }
 
-export function createOctokit(token: string): OctokitWithPlugins {
+export function createOctokit(
+  token: string,
+  refreshAuth?: (stale: string) => Promise<string>
+): OctokitWithPlugins {
+  let currentToken = token;
   // `OctokitWithPlugins` initialization based on https://github.com/actions/toolkit/blob/2506e78e82fbd2f9e94d63e75f5309118c8de1b1/packages/github/src/github.ts#L15-L22
   // we can't use it directly because it's stuck on `@octokit/core@v5` and we use the hottest `@octokit/core@v7`
   const OctokitWithPlugins = Octokit.plugin(throttling);
+  // auth is applied in the request hook below (not via the `auth` option) so a
+  // refreshed token takes effect on the retry and all subsequent requests
   const octokit = new OctokitWithPlugins({
-    auth: token,
     throttle: {
       onRateLimit: (_retryAfter, _options, _octokit, retryCount) => {
         return retryCount <= 2;
@@ -511,6 +578,8 @@ export function createOctokit(token: string): OctokitWithPlugins {
   };
 
   octokit.hook.wrap("request", async (request, options) => {
+    const sentToken = currentToken;
+    options.headers.authorization = `token ${sentToken}`;
     try {
       const response = await request(options);
       onResponse(response);
@@ -524,6 +593,18 @@ export function createOctokit(token: string): OctokitWithPlugins {
         isObject(error.response.headers)
       ) {
         onResponse(error.response as OctokitResponseShim);
+      }
+      // GitHub can invalidate an installation token mid-run (#891): re-acquire
+      // once and retry. passing the token this request was sent with lets the
+      // refresher hand back an already-minted replacement instead of minting
+      // again. if the refresh itself fails, that (actionable) error surfaces
+      // instead of the raw 401.
+      if (refreshAuth && isObject(error) && "status" in error && error.status === 401) {
+        currentToken = await refreshAuth(sentToken);
+        options.headers.authorization = `token ${currentToken}`;
+        const response = await request(options);
+        onResponse(response);
+        return response;
       }
       throw error;
     }

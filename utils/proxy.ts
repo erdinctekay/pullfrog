@@ -4,7 +4,8 @@
  * billing accounts) or OSS-grant paths.
  *
  * Authenticates one of two ways:
- *   - production: GitHub Actions OIDC token via `core.getIDToken`
+ *   - production: GitHub Actions OIDC token minted from the stashed
+ *     credentials via `fetchIdTokenFromStash` (env-free)
  *   - local dev (`API_URL` is localhost): `x-dev-repo` header bypass
  *
  * `runProxyResolution` is the entrypoint `main.ts` calls. It wraps
@@ -29,12 +30,9 @@ import {
 } from "./billingErrors.ts";
 import { log, writeSummary } from "./cli.ts";
 import { reportErrorToComment } from "./errorReport.ts";
+import { fetchIdTokenFromStash, isTransientTokenError, type OidcCredentials } from "./github.ts";
 import type { ResolvedPayload } from "./payload.ts";
-
-export interface OidcCredentials {
-  requestUrl: string;
-  requestToken: string;
-}
+import { retry } from "./retry.ts";
 
 async function mintProxyKey(ctx: {
   oidcCredentials: OidcCredentials | null;
@@ -87,17 +85,16 @@ async function mintProxyKey(ctx: {
     if (error instanceof TransientError) throw error;
     log.warning(`proxy key mint error: ${error instanceof Error ? error.message : String(error)}`);
     return null;
-  } finally {
-    delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
-    delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   }
 }
 
 /**
  * choose how to authenticate the `/api/proxy-token` request:
  *
- * - production: mint a fresh OIDC token via `core.getIDToken` and send as
- *   `Authorization: Bearer …` (the server verifies it cryptographically).
+ * - production: mint a fresh OIDC token from the stashed credentials and
+ *   send as `Authorization: Bearer …` (the server verifies it
+ *   cryptographically). env-free, so the agent never sees the credentials
+ *   even transiently.
  * - local dev (no OIDC + `API_URL` is localhost): send `x-dev-repo:
  *   owner/repo` instead. the server-side route only honors this header
  *   when `NODE_ENV === "development"`, so prod is never reachable through
@@ -110,11 +107,13 @@ async function buildProxyTokenHeaders(ctx: {
   repo: { owner: string; name: string };
 }): Promise<Record<string, string> | null> {
   if (ctx.oidcCredentials) {
-    process.env.ACTIONS_ID_TOKEN_REQUEST_URL = ctx.oidcCredentials.requestUrl;
-    process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = ctx.oidcCredentials.requestToken;
-    const oidcToken = await core.getIDToken("pullfrog-api");
-    delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
-    delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+    // retry transients — core.getIDToken (the previous mint path) retried
+    // 5xx internally, and a soft-skip here degrades the run to BYOK
+    const creds = ctx.oidcCredentials;
+    const oidcToken = await retry(() => fetchIdTokenFromStash(creds), {
+      label: "ID token mint",
+      shouldRetry: isTransientTokenError,
+    });
     return { Authorization: `Bearer ${oidcToken}` };
   }
   if (isLocalApiUrl()) {

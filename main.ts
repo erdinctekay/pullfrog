@@ -24,7 +24,11 @@ import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
 import { onExitSignal } from "./utils/exitHandler.ts";
 import { resolveGit, setGitAuthServer } from "./utils/gitAuth.ts";
 import { startGitAuthServer } from "./utils/gitAuthServer.ts";
-import { createOctokit, writeGitHubUsageSummaryToFile } from "./utils/github.ts";
+import {
+  createOctokit,
+  type OidcCredentials,
+  writeGitHubUsageSummaryToFile,
+} from "./utils/github.ts";
 import { resolveInstructions } from "./utils/instructions.ts";
 import { persistLearnings, seedLearningsFile } from "./utils/learnings.ts";
 import { describeSetupFailure, executeLifecycleHook } from "./utils/lifecycle.ts";
@@ -42,7 +46,7 @@ import {
 } from "./utils/packageManager.ts";
 import { aggregateUsage, patchWorkflowRunFields } from "./utils/patchWorkflowRunFields.ts";
 import { resolveOutputSchema, resolvePayload, resolvePromptInput } from "./utils/payload.ts";
-import { type OidcCredentials, runProxyResolution } from "./utils/proxy.ts";
+import { runProxyResolution } from "./utils/proxy.ts";
 import { fetchPreviousSnapshot, persistSummary, seedSummaryFile } from "./utils/prSummary.ts";
 import { handleAgentResult } from "./utils/run.ts";
 import { resolveRunContextData } from "./utils/runContextData.ts";
@@ -59,7 +63,12 @@ import { killTrackedChildren } from "./utils/subprocess.ts";
 import { resolveTimeoutMs, TIMEOUT_DISABLED } from "./utils/time.ts";
 import { Timer } from "./utils/timer.ts";
 import { createTodoTracker } from "./utils/todoTracking.ts";
-import { getJobToken, resolveTokens } from "./utils/token.ts";
+import {
+  getGitHubInstallationToken,
+  getJobToken,
+  getMcpTokenRefresh,
+  resolveTokens,
+} from "./utils/token.ts";
 import {
   cleanupVertexCredentials,
   materializeVertexCredentials,
@@ -181,17 +190,8 @@ export async function main(): Promise<MainResult> {
     toolState.beforeSha = payload.event.before_sha;
   }
 
-  // resolve tokens first — acquireNewToken needs OIDC env vars for token exchange
-  await using tokenRef = await resolveTokens({ push: payload.push });
-
-  // wipe the GHA runner's known credential leak surface inside $RUNNER_TEMP
-  // before the agent spawns. our installation token is already in memory
-  // (tokenRef above), and setupGit's includeIf strip handles the matching
-  // dangling references in the user's .git/config. see wipeRunnerLeakSurface
-  // for the leak inventory and threat model.
-  wipeRunnerLeakSurface();
-
-  // stash OIDC credentials in memory before wiping from process.env
+  // stash OIDC credentials in memory before wiping from process.env —
+  // consumed by proxy-key minting and the mid-run MCP token refresh (#891).
   // the agent's shell commands can't access JS variables, so this is safe
   const oidcCredentials: OidcCredentials | null =
     process.env.ACTIONS_ID_TOKEN_REQUEST_URL && process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
@@ -200,6 +200,16 @@ export async function main(): Promise<MainResult> {
           requestToken: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
         }
       : null;
+
+  // resolve tokens first — acquireNewToken needs OIDC env vars for token exchange
+  await using tokenRef = await resolveTokens({ push: payload.push, oidc: oidcCredentials });
+
+  // wipe the GHA runner's known credential leak surface inside $RUNNER_TEMP
+  // before the agent spawns. our installation token is already in memory
+  // (tokenRef above), and setupGit's includeIf strip handles the matching
+  // dangling references in the user's .git/config. see wipeRunnerLeakSurface
+  // for the leak inventory and threat model.
+  wipeRunnerLeakSurface();
 
   // clear OIDC env vars in restricted mode to prevent agent from minting tokens
   if (payload.shell !== "enabled") {
@@ -221,8 +231,9 @@ export async function main(): Promise<MainResult> {
     toolState,
   });
 
-  // create octokit with MCP token for GitHub API calls
-  const octokit = createOctokit(tokenRef.mcpToken);
+  // create octokit with MCP token for GitHub API calls.
+  // the refresh handles mid-run token invalidation (#891)
+  const octokit = createOctokit(tokenRef.mcpToken, getMcpTokenRefresh());
 
   const runInfo = await resolveRun({ octokit });
   let toolContext: ToolContext | undefined;
@@ -354,7 +365,11 @@ export async function main(): Promise<MainResult> {
       repo: runContext.repo,
       payload,
       octokit,
-      githubInstallationToken: tokenRef.mcpToken,
+      // live getter so raw-token consumers (asset fetches, plan/summary-comment
+      // GETs) see the refreshed MCP token after a mid-run re-acquisition (#891)
+      get githubInstallationToken() {
+        return getGitHubInstallationToken();
+      },
       gitToken: tokenRef.gitToken,
       apiToken: runContext.apiToken,
       modes,
