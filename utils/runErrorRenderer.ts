@@ -24,8 +24,8 @@
  *      the underlying provider error often lands); `formatApiKeyErrorSummary`
  *      renders provider + console-link copy.
  *
- *   4. ProviderModelNotFoundError — stale free-fallback model id no longer
- *      in the OpenCode catalog; renders a nudge to add a BYOK key.
+ *   4. ProviderModelNotFoundError — configured model id no longer in the
+ *      OpenCode catalog; renders a nudge to pick a different model.
  *
  *   5. Activity-timeout hang — `errorMessage` starts with
  *      `"activity timeout"` or `"agent still pending"` AND none of the
@@ -162,8 +162,8 @@ function formatProviderModelNotFoundSummary(input: {
   raw: string;
 }): string {
   return (
-    `Pullfrog's free fallback model is no longer available in OpenCode's catalog. ` +
-    `Add an API key for your configured model in the Pullfrog console for \`${input.owner}/${input.name}\`, ` +
+    `The configured model is no longer available in OpenCode's catalog. ` +
+    `Pick a different model in the Pullfrog console for \`${input.owner}/${input.name}\`, ` +
     `or contact support if this persists.\n\n` +
     `\`\`\`\n${input.raw}\n\`\`\``
   );

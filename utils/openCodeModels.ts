@@ -14,14 +14,14 @@
 //      serve from the runner's pre-existing environment alone.
 //   2. `captureAuthorizedModels` — called AFTER dbSecrets merge + Codex
 //      auth.json materialization. The authoritative set for BYOK
-//      decisions (fallback + validateAgentApiKey).
+//      decisions (validateAgentApiKey).
 //
 // The set difference (`authorized - baseline`) is the contribution of
 // Pullfrog-stored auth to this run — logged once for operator visibility
 // and reserved for a future server-side "OSS proxy opt-out" detection.
 //
 // Memoized at module scope so the two consumers
-// (`selectFallbackModelIfNeeded` + `autoSelectModel`) share one shell-out.
+// (`validateAgentApiKey` + `autoSelectModel`) share one shell-out.
 
 import { execFileSync } from "node:child_process";
 import { log } from "./cli.ts";
@@ -73,8 +73,8 @@ export function captureAuthorizedModels(cliPath: string): void {
 }
 
 /** Authorized set captured after Pullfrog-stored auth is applied. Throws if
- * called before `captureAuthorizedModels` — the call sites (fallback gate,
- * api-key validation, auto-select) all run strictly after capture. */
+ * called before `captureAuthorizedModels` — the call sites (api-key
+ * validation, auto-select) all run strictly after capture. */
 export function getAuthorizedModels(): Set<string> {
   if (!authorized) {
     throw new Error("getAuthorizedModels called before captureAuthorizedModels");

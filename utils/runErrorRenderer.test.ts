@@ -62,13 +62,13 @@ describe("renderRunError ProviderModelNotFoundError (#816)", () => {
   const bigPickleRaw =
     'ProviderModelNotFoundError: {"providerID":"opencode","modelID":"big-pickle","suggestions":[]}';
 
-  it("renders actionable copy for a stale free fallback model id", () => {
+  it("renders actionable copy for a stale free model id", () => {
     const result = renderRunError({
       errorMessage: staleFreeRaw,
       repo,
       agentDiagnostic: undefined,
     });
-    expect(result.summary).toContain("Pullfrog's free fallback model is no longer available");
+    expect(result.summary).toContain("no longer available in OpenCode's catalog");
     expect(result.summary).toContain("`acme/widget`");
     expect(result.summary).toContain("retired-free-model");
     expect(result.comment).toBe(result.summary);
@@ -80,16 +80,16 @@ describe("renderRunError ProviderModelNotFoundError (#816)", () => {
       repo,
       agentDiagnostic: undefined,
     });
-    expect(result.summary).toContain("Pullfrog's free fallback model is no longer available");
+    expect(result.summary).toContain("no longer available in OpenCode's catalog");
     expect(result.summary).toContain("big-pickle");
   });
 
-  it("does not misclassify unrelated failures as fallback-catalog errors", () => {
+  it("does not misclassify unrelated failures as model-catalog errors", () => {
     const result = renderRunError({
       errorMessage: "activity timeout after 900s",
       repo,
       agentDiagnostic: undefined,
     });
-    expect(result.summary).not.toContain("free fallback model is no longer available");
+    expect(result.summary).not.toContain("no longer available in OpenCode's catalog");
   });
 });

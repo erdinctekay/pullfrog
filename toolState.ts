@@ -173,12 +173,6 @@ export interface ToolState {
   output?: string | undefined;
   usageEntries: AgentUsage[];
   model?: string | undefined;
-  // set by main.ts when the BYOK fallback engaged (configured model needed
-  // a provider key the runner didn't have). carried into PR-comment footers
-  // so users can see "Using <free model> (credentials for <configured> not
-  // configured)" rather than just being silently downgraded. literal record
-  // of an event that happened — matches the ToolState design rule.
-  modelFallback?: { from: string } | undefined;
   // true when the run's model costs are covered by the Pullfrog for OSS
   // program. carried into footers (incl. error comments built from toolState
   // alone) so the "via Pullfrog for OSS" attribution is consistent everywhere.

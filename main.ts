@@ -18,7 +18,6 @@ import {
 import { resolveAgent, resolveModel } from "./utils/agent.ts";
 import { validateAgentApiKey } from "./utils/apiKeys.ts";
 import { resolveBody } from "./utils/body.ts";
-import { selectFallbackModelIfNeeded } from "./utils/byokFallback.ts";
 import { log } from "./utils/cli.ts";
 import { installCodexAuth, PULLFROG_DATA_DIR } from "./utils/codexHome.ts";
 import { recordDiffReadFromToolUse } from "./utils/diffCoverage.ts";
@@ -259,73 +258,43 @@ export async function main(): Promise<MainResult> {
     await using gitAuthServer = await startGitAuthServer(tmpdir);
     setGitAuthServer(gitAuthServer);
 
-    const initialResolvedModel = payload.proxyModel
-      ? undefined
-      : resolveModel({ slug: payload.model });
-
-    // BYOK fallback: if the configured model needs a key the runner doesn't
-    // have, swap to a free OpenCode model so the run can still produce
-    // value. Without this, the agent launches with no key, the LLM provider
-    // 401s, and the run dies in seconds with a synthetic "Invalid API key"
-    // — exactly the silent-churn pattern that took out 15 accounts before
-    // this landed. Router/proxy runs are skipped (Pullfrog mints the key);
-    // see `selectFallbackModelIfNeeded` for the full skip set.
-    const authorized = getAuthorizedModels();
-    // the fallback gate needs the agent to spare claude-harness runs (own
-    // auth, invisible to `opencode models`) from a spurious downgrade.
-    const fallback = selectFallbackModelIfNeeded({
-      resolvedModel: initialResolvedModel,
-      proxyModel: payload.proxyModel,
-      authorized,
-      agentName: resolveAgent({ model: initialResolvedModel }).name,
-    });
-    // when fallback engages we bypass `resolveModel` for the new slug —
-    // `PULLFROG_MODEL` has higher priority than the slug arg inside that
-    // helper and would otherwise re-override back to the unkeyed model.
-    // the free fallback slug is already a CLI-ready specifier, so using
-    // it verbatim is correct and avoids the override.
-    const effectiveSlug = fallback.fallback ? fallback.to : payload.model;
-    const resolvedModel = fallback.fallback ? fallback.to : initialResolvedModel;
-    if (fallback.fallback) {
-      log.warning(
-        `» fell back from ${fallback.from} to ${fallback.to} — no BYOK key present in runner env. add a provider key in repo secrets to use ${fallback.from} instead.`
-      );
-      toolState.modelFallback = { from: fallback.from };
-    }
+    const resolvedModel = payload.proxyModel ? undefined : resolveModel({ slug: payload.model });
 
     vertexCredentials = materializeVertexCredentials({ model: resolvedModel });
 
     const agent = resolveAgent({ model: resolvedModel });
 
     // agent-agnostic best-effort for the model that ran: proxy spec for
-    // router/oss runs, else the post-fallback resolved model, else the slug.
+    // router/oss runs, else the resolved model, else the slug.
     // payload.model is just the stored slug (often undefined for router/oss
     // runs that derive the target from proxyModel). matching priority with
     // resolveModelForLog so the "Using `…`" badge reflects what actually ran.
     // the opencode agent refines this from `rawModel` once it auto-selects (a
     // pick main.ts can't know — see opencode_v2.ts), so auto-select runs persist
     // their real model rather than this placeholder.
-    const effectiveModel = payload.proxyModel ?? resolvedModel ?? effectiveSlug;
+    const effectiveModel = payload.proxyModel ?? resolvedModel ?? payload.model;
     // surface it in comment/review footers and persist it on the end-of-run PATCH.
     toolState.model = effectiveModel;
 
-    // skip validation when fallback engaged: the effective model is the
-    // free fallback (`opencode/big-pickle`) and the fallback gate already
-    // authoritatively decided "this model is OK to run". re-validating
-    // would spuriously throw if `opencode models` doesn't list big-pickle.
+    // fail fast when the configured model needs a key the runner doesn't
+    // have. the thrown markdown is mirrored by `renderRunError` →
+    // `writeRunErrorOutputs` to both the PR/issue comment (when the run has
+    // issue context) and the GHA job summary, with model-specific fix
+    // instructions. Without this, the agent launches with no key, the LLM
+    // provider 401s, and the run dies in seconds with a synthetic "Invalid
+    // API key" — the silent-churn pattern that took out 15 accounts
+    // pre-launch.
     //
-    // also skip when proxyModel is set: `runProxyResolution` already minted
+    // skipped when proxyModel is set: `runProxyResolution` already minted
     // OPENROUTER_API_KEY and the server-side gate (`run-context/route.ts`)
     // is the authority on "can this run use the router". the `authorized`
     // set was captured BEFORE the proxy mint, so it doesn't see the
-    // openrouter slug — re-validating would spuriously throw. mirrors the
-    // analogous `if (input.proxyModel) return { fallback: false }` skip in
-    // `selectFallbackModelIfNeeded`.
-    if (!fallback.fallback && !payload.proxyModel) {
+    // openrouter slug — validating would spuriously throw.
+    if (!payload.proxyModel) {
       validateAgentApiKey({
         agent,
         model: effectiveModel,
-        authorized,
+        authorized: getAuthorizedModels(),
         owner: runContext.repo.owner,
         name: runContext.repo.name,
       });

@@ -1,4 +1,9 @@
-import { BEDROCK_MODEL_ID_ENV, resolveDisplayAlias, VERTEX_MODEL_ID_ENV } from "../models.ts";
+import {
+  BEDROCK_MODEL_ID_ENV,
+  getModelEnvVars,
+  resolveDisplayAlias,
+  VERTEX_MODEL_ID_ENV,
+} from "../models.ts";
 import { getApiUrl } from "./apiUrl.ts";
 import {
   GOOGLE_CLOUD_PROJECT_ENV,
@@ -10,13 +15,34 @@ import {
 /** marker prefix on the throw message for the catch-side reclassification path */
 const MISSING_KEY_MARKER = "no API key found";
 
-/** Markdown body used for both the thrown error and the formatted PR comment summary. */
-function buildMissingApiKeyError(params: { owner: string; name: string }): string {
+/**
+ * Markdown body used for both the thrown error and the formatted PR comment
+ * summary. When the configured model is known, names it and the exact env
+ * var(s) it needs so the user knows precisely what to fix; otherwise falls
+ * back to the generic "any provider key" copy (auto-select path).
+ */
+function buildMissingApiKeyError(params: {
+  owner: string;
+  name: string;
+  model?: string | undefined;
+}): string {
   const githubSecretsUrl = `https://github.com/${params.owner}/${params.name}/settings/secrets/actions`;
   const settingsUrl = `${getApiUrl()}/console/${params.owner}/${params.name}`;
 
+  const envVars = params.model?.includes("/") ? getModelEnvVars(params.model) : [];
+  const [primary, ...alternates] = envVars;
+  const envVarList = primary
+    ? `\`${primary}\`${alternates.length > 0 ? ` (or ${alternates.map((v) => `\`${v}\``).join(" / ")})` : ""}`
+    : undefined;
+
+  const lead = envVarList
+    ? `**${MISSING_KEY_MARKER}** — this repo is configured to use \`${params.model}\`, which needs ${envVarList}, but the runner has no key for it.`
+    : `**${MISSING_KEY_MARKER}** — Pullfrog needs at least one LLM provider API key (e.g. \`ANTHROPIC_API_KEY\`, \`OPENAI_API_KEY\`, \`GEMINI_API_KEY\`) configured as a GitHub Actions secret.`;
+
   return [
-    `**${MISSING_KEY_MARKER}** — Pullfrog needs at least one LLM provider API key (e.g. \`ANTHROPIC_API_KEY\`, \`OPENAI_API_KEY\`, \`GEMINI_API_KEY\`) configured as a GitHub Actions secret.`,
+    lead,
+    "",
+    "**To fix:** add the key as a GitHub Actions secret (referenced from your workflow's `env:` block) or as a Pullfrog secret in the console — or switch this repo to a different model (free models need no key).",
     "",
     `[Open repo secrets →](${githubSecretsUrl}) · [Configure model →](${settingsUrl}) · [Setup docs →](https://docs.pullfrog.com/keys) · [Ask in Discord →](https://discord.gg/8y96raFg8e)`,
   ].join("\n");
@@ -139,12 +165,16 @@ export function validateAgentApiKey(params: {
 
     if (params.agent.name === "opencode") {
       if (params.authorized.has(params.model)) return;
-      throw new Error(buildMissingApiKeyError({ owner: params.owner, name: params.name }));
+      throw new Error(
+        buildMissingApiKeyError({ owner: params.owner, name: params.name, model: params.model })
+      );
     }
 
     // claude: single-provider check on the Anthropic auth shapes.
     if (hasEnvVar("ANTHROPIC_API_KEY") || hasEnvVar("CLAUDE_CODE_OAUTH_TOKEN")) return;
-    throw new Error(buildMissingApiKeyError({ owner: params.owner, name: params.name }));
+    throw new Error(
+      buildMissingApiKeyError({ owner: params.owner, name: params.name, model: params.model })
+    );
   }
 
   // no model configured (auto-select path).
@@ -212,6 +242,11 @@ export function formatApiKeyErrorSummary(params: {
   raw: string;
 }): string {
   if (params.raw.includes(MISSING_KEY_MARKER)) {
+    // a verbatim validateAgentApiKey throw is already the full rendered body
+    // (model-specific copy included) — pass it through. only rebuild the
+    // generic copy when the marker is embedded in surrounding noise (e.g. a
+    // hang body that swallowed the original message).
+    if (params.raw.startsWith(`**${MISSING_KEY_MARKER}**`)) return params.raw;
     return buildMissingApiKeyError({ owner: params.owner, name: params.name });
   }
 

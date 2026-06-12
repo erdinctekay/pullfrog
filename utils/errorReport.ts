@@ -43,7 +43,6 @@ export async function reportErrorToComment(ctx: ReportErrorParams): Promise<void
     workflowRun: runId ? { owner: repoContext.owner, repo: repoContext.name, runId } : undefined,
     customParts,
     model: ctx.toolState.model,
-    fallbackFrom: ctx.toolState.modelFallback?.from,
     oss: ctx.toolState.oss,
   });
 

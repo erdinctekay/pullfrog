@@ -871,7 +871,6 @@ async function createAndSubmitWithFooter(
         : undefined,
       customParts,
       model: ctx.toolState.model,
-      fallbackFrom: ctx.toolState.modelFallback?.from,
       oss: ctx.oss,
     });
 

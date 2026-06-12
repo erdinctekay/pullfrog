@@ -103,7 +103,7 @@ jobs:
       matrix:
         test:
           [
-            byok-no-keys-fallback,
+            byok-missing-key-error,
             git-permissions,
             githooks,
             pkg-json-scripts,
