@@ -396,8 +396,8 @@ export const providers = {
     models: {
       "glm-5.1": {
         displayName: "GLM 5.1",
-        resolve: "opencode-go/glm-5.1",
-        openRouterResolve: "openrouter/z-ai/glm-5.1",
+        resolve: "opencode-go/glm-5.2",
+        openRouterResolve: "openrouter/z-ai/glm-5.2",
         preferred: true,
       },
       "kimi-k2": {
