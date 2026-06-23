@@ -202,6 +202,10 @@ export function validateAgentApiKey(params: {
  *     "Token refresh failed: 401". the Bedrock pattern is anchored to the
  *     Claude CLI emission ("Failed to authenticate. API Error:") so generic
  *     auth chatter in agent stderr can't misclassify a hang as a key error.
+ *   - DeepSeek invalid key (#960): `Authentication Fails, Your api key:
+ *     ****XXXX is invalid`. anchored to "Your api key: ... is invalid" so it
+ *     can't collide with DeepSeek's already-handled `Insufficient balance`
+ *     billing shape (which routes to formatProviderBillingExhausted).
  */
 export function isApiKeyAuthError(text: string): boolean {
   if (!text) return false;
@@ -215,6 +219,7 @@ export function isApiKeyAuthError(text: string): boolean {
     /api_error_status\s*=\s*401/i.test(text) ||
     /API Error:\s*401/i.test(text) ||
     /Failed to authenticate\. API Error:/i.test(text) ||
+    /Your api key:.*is invalid/i.test(text) ||
     isOAuthCredentialExpiredError(text)
   );
 }

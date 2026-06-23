@@ -99,16 +99,20 @@ export const providers = {
       // hasn't indexed it yet (shipped 2026-06-09), so the catalog drift gate
       // can't validate an openRouterResolve. omit it until the mirror catches
       // up; direct BYOK / Claude Code resolves anthropic/claude-fable-5 fine.
+      // not `preferred`: claude-fable-5 is access-gated but the `opencode
+      // models` catalog lists it as authorized for any Anthropic key, so
+      // auto-select would pick it and hard-fail. opus is the universally-
+      // available flagship; fable stays selectable for users with access. #959.
       "claude-fable": {
         displayName: "Claude Fable",
         resolve: "anthropic/claude-fable-5",
-        preferred: true,
         subagentModel: "claude-sonnet",
       },
       "claude-opus": {
         displayName: "Claude Opus",
         resolve: "anthropic/claude-opus-4-8",
         openRouterResolve: "openrouter/anthropic/claude-opus-4.8",
+        preferred: true,
         subagentModel: "claude-sonnet",
       },
       "claude-sonnet": {
