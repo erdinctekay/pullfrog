@@ -54,6 +54,7 @@ import type { AgentDiagnostic } from "./agentHangReport.ts";
 import { formatAgentHangBody } from "./agentHangReport.ts";
 import { formatApiKeyErrorSummary, isApiKeyAuthError } from "./apiKeys.ts";
 import { BillingError, formatBillingErrorSummary } from "./billingErrors.ts";
+import { MODEL_ACCESS_MARKER } from "./modelAccess.ts";
 import {
   extractProviderId,
   isProviderBillingExhausted,
@@ -183,6 +184,13 @@ export function renderRunError(input: {
   if (billingError) {
     const body = formatBillingErrorSummary(billingError, input.repo.owner);
     return { summary: body, comment: body };
+  }
+
+  // model-access gate (explicit `--model`/family flag the run can't serve):
+  // the thrown message already IS the rendered markdown body (built by
+  // `buildModelAccessError`), so surface it verbatim on both surfaces.
+  if (input.errorMessage.includes(MODEL_ACCESS_MARKER)) {
+    return { summary: input.errorMessage, comment: input.errorMessage };
   }
 
   // gated on isHang because the harness sets `agentDiagnostic` on entry, so

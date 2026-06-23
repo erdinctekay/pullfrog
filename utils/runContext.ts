@@ -40,6 +40,12 @@ export interface RepoSettings {
   learnings: string | null;
   learningsHeadings: LearningsHeading[];
   envAllowlist: string | null;
+  // org-level cross-repo context (only used on --xrepo runs). xrepoBrief is
+  // operator-authored (never agent-edited); xrepoLearnings is agent-curated
+  // across runs (org-level analogue of `learnings`).
+  xrepoBrief: string | null;
+  xrepoLearnings: string | null;
+  xrepoLearningsHeadings: LearningsHeading[];
 }
 
 /**
@@ -73,6 +79,9 @@ const defaultSettings: RepoSettings = {
   learnings: null,
   learningsHeadings: [],
   envAllowlist: null,
+  xrepoBrief: null,
+  xrepoLearnings: null,
+  xrepoLearningsHeadings: [],
 };
 
 const defaultRunContext: RunContext = {
@@ -139,6 +148,9 @@ export async function fetchRunContext(params: {
         prepushScript: data.settings?.prepushScript ?? null,
         stopScript: data.settings?.stopScript ?? null,
         learningsHeadings: data.settings?.learningsHeadings ?? [],
+        xrepoBrief: data.settings?.xrepoBrief ?? null,
+        xrepoLearnings: data.settings?.xrepoLearnings ?? null,
+        xrepoLearningsHeadings: data.settings?.xrepoLearningsHeadings ?? [],
       },
       apiToken: data.apiToken,
       oss: data.oss ?? false,

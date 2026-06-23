@@ -3,6 +3,7 @@ import { statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Octokit, RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
+import { primaryRepoState, type RepoToolState, requireRepoState } from "../toolState.ts";
 import { log } from "../utils/cli.ts";
 import { countLines, createDiffCoverageState } from "../utils/diffCoverage.ts";
 import { $git, $gitFetchWithDeepen } from "../utils/gitAuth.ts";
@@ -374,23 +375,25 @@ async function abortIfPullRequestMoved(args: {
 /**
  * Shared helper to checkout a PR branch and configure fork remotes.
  * Assumes origin remote is already configured with authentication.
- * Updates toolState.issueNumber, toolState.checkoutSha, and toolState.pushUrl (for fork PRs).
+ * Updates the primary repo state's issueNumber, checkoutSha, and pushUrl (for fork PRs).
  */
 export async function checkoutPrBranch(
   pr: PrData,
   params: CheckoutPrBranchParams
 ): Promise<{ hookWarning?: string | undefined }> {
   const { octokit, owner, name, gitToken, toolState, beforeSha } = params;
-  log.info(`» checking out PR #${pr.number}...`);
 
   // SECURITY: PR ref names come from GitHub and are attacker-controlled on
   // forks (the PR author picks headRef freely, and baseRef could be a
   // maliciously-named branch on the target repo). reject leading-dash names
-  // before they reach any git command — without this, a ref like
-  // "-upload-pack=evil" fed into `git fetch origin <ref>` would be parsed as
-  // a flag, not a refspec.
+  // before any other work (including repo-state resolution) so they never
+  // reach a git command — without this, a ref like "-upload-pack=evil" fed
+  // into `git fetch origin <ref>` would be parsed as a flag, not a refspec.
   rejectIfLeadingDash(pr.baseRef, "PR base ref");
   rejectIfLeadingDash(pr.headRef, "PR head ref");
+
+  const repoState = requireRepoState(toolState, owner, name);
+  log.info(`» checking out PR #${pr.number}...`);
 
   // self-hosted runners and cancelled jobs frequently leave stale .git/*.lock
   // files behind. without this sweep, the first fetch below aborts with
@@ -411,8 +414,8 @@ export async function checkoutPrBranch(
   const isShallow =
     $("git", ["rev-parse", "--is-shallow-repository"], { log: false }).trim() === "true";
 
-  toolState.checkoutSha = $("git", ["rev-parse", "HEAD"], { log: false }).trim();
-  const alreadyOnBranch = toolState.checkoutSha === pr.headSha;
+  repoState.checkoutSha = $("git", ["rev-parse", "HEAD"], { log: false }).trim();
+  const alreadyOnBranch = repoState.checkoutSha === pr.headSha;
 
   // fetch base branch so origin/<base> exists for diff operations.
   // wrap with deepen-retry: on shallow clones (the actions/checkout default
@@ -432,7 +435,7 @@ export async function checkoutPrBranch(
   // merge commit whose SHA differs from pr.headSha.
   //
   // so the fetch+checkout block below will almost always execute, and the fetched HEAD
-  // might differ from pr.headSha. toolState.checkoutSha is set after to capture the actual SHA.
+  // might differ from pr.headSha. the repo state's checkoutSha is set after to capture the actual SHA.
   if (!alreadyOnBranch) {
     // checkout base branch first to avoid "refusing to fetch into current branch" error
     // -B creates or resets the branch to match origin/baseBranch
@@ -476,8 +479,8 @@ export async function checkoutPrBranch(
     // checkout the branch
     $("git", ["checkout", localBranch], { log: false });
     log.debug(`» checked out PR #${pr.number}`);
-    // make sure toolState.checkoutSha is set to the actual checked-out SHA (which might be different from pr.headSha)
-    toolState.checkoutSha = $("git", ["rev-parse", "HEAD"], { log: false }).trim();
+    // make sure checkoutSha is set to the actual checked-out SHA (which might be different from pr.headSha)
+    repoState.checkoutSha = $("git", ["rev-parse", "HEAD"], { log: false }).trim();
   }
 
   const beforeShaReachable = beforeSha
@@ -507,7 +510,7 @@ export async function checkoutPrBranch(
           owner,
           repo: name,
           base: pr.baseRef,
-          head: toolState.checkoutSha,
+          head: repoState.checkoutSha,
         }),
         beforeSha && beforeShaReachable
           ? octokit.rest.repos.compareCommits({
@@ -582,16 +585,16 @@ export async function checkoutPrBranch(
     $("git", ["config", `branch.${localBranch}.merge`, `refs/heads/${pr.headRef}`], { log: false });
   }
 
-  // update toolState
-  toolState.issueNumber = pr.number;
+  // update repo state
+  repoState.issueNumber = pr.number;
   if (isFork) {
-    toolState.pushUrl = `https://github.com/${pr.headRepoFullName}.git`;
+    repoState.pushUrl = `https://github.com/${pr.headRepoFullName}.git`;
   }
 
   // store push destination so push_branch can use it directly
-  // git config is the primary mechanism, but toolState serves as a reliable fallback
+  // git config is the primary mechanism, but repoState serves as a reliable fallback
   // in case git config reads fail in certain environments
-  toolState.pushDest = {
+  repoState.pushDest = {
     remoteName: isFork ? `pr-${pr.number}` : "origin",
     remoteBranch: pr.headRef,
     localBranch,
@@ -618,7 +621,7 @@ export async function checkoutPrBranch(
  */
 const inFlightCheckouts = new Map<number, Promise<CheckoutPrResult>>();
 
-type InitialHead = NonNullable<ToolContext["toolState"]["initialHead"]>;
+type InitialHead = NonNullable<RepoToolState["initialHead"]>;
 
 function headsEqual(a: InitialHead, b: InitialHead): boolean {
   if (a.kind === "branch" && b.kind === "branch") return a.name === b.name;
@@ -654,6 +657,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
       maintainerCanModify: prResponse.data.maintainer_can_modify,
     };
 
+    const primary = primaryRepoState(ctx.toolState);
     const checkoutResult = await checkoutPrBranch(pr, {
       octokit: ctx.octokit,
       owner: ctx.repo.owner,
@@ -662,7 +666,7 @@ export function CheckoutPrTool(ctx: ToolContext) {
       toolState: ctx.toolState,
       shell: ctx.payload.shell,
       postCheckoutScript: ctx.postCheckoutScript,
-      beforeSha: ctx.toolState.beforeSha,
+      beforeSha: primary.beforeSha,
     });
 
     const tempDir = process.env.PULLFROG_TEMP_DIR;
@@ -672,16 +676,16 @@ export function CheckoutPrTool(ctx: ToolContext) {
       );
     }
 
-    const headShort = ctx.toolState.checkoutSha!.slice(0, 7);
+    const headShort = primary.checkoutSha!.slice(0, 7);
 
     // compute incremental diff if we have a beforeSha to compare against
     let incrementalDiffPath: string | undefined;
-    if (ctx.toolState.beforeSha && ctx.toolState.checkoutSha) {
-      const beforeShort = ctx.toolState.beforeSha.slice(0, 7);
+    if (primary.beforeSha && primary.checkoutSha) {
+      const beforeShort = primary.beforeSha.slice(0, 7);
       const incremental = computeIncrementalDiff({
         baseBranch: pr.baseRef,
-        beforeSha: ctx.toolState.beforeSha,
-        headSha: ctx.toolState.checkoutSha,
+        beforeSha: primary.beforeSha,
+        headSha: primary.checkoutSha,
       });
       if (incremental) {
         incrementalDiffPath = join(
@@ -702,14 +706,14 @@ export function CheckoutPrTool(ctx: ToolContext) {
     const diffPath = join(tempDir, `pr-${pull_number}-${headShort}.diff`);
     writeFileSync(diffPath, formatResult.content);
     log.debug(`wrote diff to ${diffPath} (${formatResult.content.length} bytes)`);
-    ctx.toolState.diffCoverage = createDiffCoverageState({
+    primary.diffCoverage = createDiffCoverageState({
       diffPath,
       totalLines: countLines({ content: formatResult.content }),
       toc: formatResult.toc,
-      previous: ctx.toolState.diffCoverage,
+      previous: primary.diffCoverage,
     });
     log.debug(
-      `» diff coverage initialized: diffPath=${diffPath}, totalLines=${ctx.toolState.diffCoverage.totalLines}, tocEntries=${ctx.toolState.diffCoverage.tocEntries.length}`
+      `» diff coverage initialized: diffPath=${diffPath}, totalLines=${primary.diffCoverage.totalLines}, tocEntries=${primary.diffCoverage.tocEntries.length}`
     );
 
     // cache commentable-lines snapshot so review-time validation matches what
@@ -719,9 +723,9 @@ export function CheckoutPrTool(ctx: ToolContext) {
     for (const file of formatResult.files) {
       cached.set(file.filename, commentableLinesForFile(file.patch));
     }
-    ctx.toolState.commentableLinesByFile = cached;
-    ctx.toolState.commentableLinesPullNumber = pull_number;
-    ctx.toolState.commentableLinesCheckoutSha = ctx.toolState.checkoutSha;
+    primary.commentableLinesByFile = cached;
+    primary.commentableLinesPullNumber = pull_number;
+    primary.commentableLinesCheckoutSha = primary.checkoutSha;
 
     const incrementalInstructions = incrementalDiffPath
       ? ` IMPORTANT: incrementalDiffPath contains ONLY the changes since the last reviewed version ` +
@@ -848,10 +852,10 @@ export function CheckoutPrTool(ctx: ToolContext) {
       // re-fetch after the PR head moved). anything else means a subagent
       // silently parked HEAD on another PR, which is the zed-industries/cloud
       // (2026-05-18) cross-PR clobber shape. uses the same live probe (not
-      // toolState.issueNumber, poisonable per the PR #796 review) and
+      // the repo state's issueNumber, poisonable per the PR #796 review) and
       // discriminates branch vs detached so detached-entry runs don't get a
       // trivial "any future detached state matches" carve-out.
-      const initialHead = ctx.toolState.initialHead;
+      const initialHead = primaryRepoState(ctx.toolState).initialHead;
       if (initialHead) {
         const currentHead = captureInitialHead(process.cwd());
         const targetBranch = `pr-${pull_number}`;

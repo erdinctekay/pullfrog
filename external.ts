@@ -263,6 +263,31 @@ export type PayloadEvent =
   | ImplementPlanEvent
   | UnknownEvent;
 
+/**
+ * cross-repo intent + resolved access sets, computed server-side from the
+ * `--xrepo` flag and the triggerer's own GitHub access. absent on every
+ * single-repo run (the default path is byte-identical to today). repo names
+ * are owner-implicit — a GitHub App installation is scoped to one account, so
+ * every entry shares the primary repo's owner. see utils/flags.ts + wiki.
+ */
+export interface XrepoConfig {
+  /** `all` = bare `--xrepo` (top-N active), `explicit` = `--xrepo=a,b` subset */
+  mode: "all" | "explicit";
+  /** repo names the triggerer can READ (clone-for-reference); includes primary */
+  read: string[];
+  /** repo names the triggerer can WRITE (open PRs); subset of `read` */
+  write: string[];
+  /**
+   * repos the triggerer explicitly named (`--xrepo=a,b`) that were NOT granted —
+   * unknown to the installation, a different owner, or excluded for lacking a
+   * verified per-repo permission. surfaced by `list_repos` so a narrowed request
+   * isn't silently swallowed. empty for bare `--xrepo`. optional (defaulted to
+   * `[]` on read) so an older server build that predates this field can't
+   * hard-fail payload parse against a newer action across a rolling deploy.
+   */
+  unavailable?: string[] | undefined;
+}
+
 // writeable payload type for building payloads
 export interface WriteablePayload {
   "~pullfrog": true;
@@ -270,10 +295,24 @@ export interface WriteablePayload {
   version: string;
   /** provider/model slug (e.g. "anthropic/claude-opus") */
   model?: string | undefined;
+  /**
+   * true when `model` came from a per-run override flag (trigger / user prompt
+   * `--opus`, `--model=<slug>`). drives the model-access gate: an explicit,
+   * inaccessible model hard-fails; a standing default (repo setting or org/repo
+   * baseInstructions flag) keeps the soft-fallback safety net. see modelAccess.ts.
+   */
+  modelExplicit?: boolean | undefined;
   /** the user's actual request (body if @pullfrog tagged) */
   prompt: string;
   /** github username of the human who triggered this workflow run */
   triggerer?: string | undefined;
+  /**
+   * org + repo standing instructions (`Account.baseInstructions` then
+   * `Repo.baseInstructions`), custom-alias-expanded and reserved-flag-stripped
+   * server-side. always applies, regardless of user-prompt precedence — the
+   * most-general levels of the leveled-config stack. see utils/flags.ts.
+   */
+  baseInstructions?: string | undefined;
   /** event-level instructions for this trigger type (flag-expanded server-side) */
   eventInstructions?: string | undefined;
   /**
@@ -285,6 +324,11 @@ export interface WriteablePayload {
   previousRunsNote?: string | undefined;
   /** event data from webhook payload - discriminated union based on trigger field */
   event: PayloadEvent;
+  /**
+   * cross-repo access sets, resolved server-side. absent ⇒ single-repo run
+   * (every cross-repo runtime branch gates on this being present).
+   */
+  xrepo?: XrepoConfig | undefined;
   /** timeout for agent run (e.g., "10m", "1h30m") - defaults to "1h" */
   timeout?: string | undefined;
   /** working directory for the agent */

@@ -23,12 +23,7 @@
  */
 import { createServer } from "node:http";
 import { log } from "../utils/cli.ts";
-import {
-  buildLearningsReflectionPrompt,
-  buildPostRunPrompt,
-  collectPostRunIssues,
-  shouldRunReflection,
-} from "./postRun.ts";
+import { buildPostRunPrompt, buildReflectionPrompt, collectPostRunIssues } from "./postRun.ts";
 import { type AgentRunContext, hasPostRunIssues, MAX_POST_RUN_RETRIES } from "./shared.ts";
 
 export interface GateServerHandle {
@@ -64,14 +59,12 @@ export async function startGateServer(ctx: AgentRunContext): Promise<GateServerH
             .end(JSON.stringify({ block: true, reason }));
           return;
         }
-        const learningsPath = ctx.toolState.learningsFilePath;
-        if (
-          !reflectionDelivered &&
-          learningsPath &&
-          shouldRunReflection(ctx.toolState.selectedMode)
-        ) {
+        const reflectionPrompt = reflectionDelivered
+          ? undefined
+          : buildReflectionPrompt(ctx.toolState);
+        if (reflectionPrompt) {
           reflectionDelivered = true;
-          const reason = buildLearningsReflectionPrompt(learningsPath);
+          const reason = reflectionPrompt;
           log.info("» gate-server: delivering reflection nudge");
           res
             .writeHead(200, { "content-type": "application/json" })

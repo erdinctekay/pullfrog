@@ -3,7 +3,7 @@ import "./arkConfig.ts";
 import { createServer } from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { FastMCP, type Tool } from "fastmcp";
-import { type AgentId, pullfrogMcpName } from "../external.ts";
+import { type AgentId, pullfrogMcpName, type XrepoConfig } from "../external.ts";
 import type { Mode } from "../modes.ts";
 import type { ToolState } from "../toolState.ts";
 import { closeBrowserDaemon } from "../utils/browser.ts";
@@ -50,6 +50,7 @@ import { SelectModeTool } from "./selectMode.ts";
 import { addTools, type PullfrogTool } from "./shared.ts";
 import { KillBackgroundTool, ShellTool } from "./shell.ts";
 import { UploadFileTool } from "./upload.ts";
+import { CheckoutRepoTool, ListReposTool } from "./xrepo.ts";
 
 export interface ToolContext {
   agentId: AgentId;
@@ -58,6 +59,12 @@ export interface ToolContext {
   octokit: OctokitWithPlugins;
   githubInstallationToken: string;
   gitToken: string;
+  // contents:read token over the cross-repo READ set (read-tier secondary
+  // clones). undefined on single-repo runs. see resolveRepoCtx.
+  readToken: string | undefined;
+  // cross-repo access sets, resolved server-side. undefined ⇒ single-repo run.
+  // checkout_repo / list_repos gate on this; resolveRepoCtx routes by tier.
+  xrepo: XrepoConfig | undefined;
   apiToken: string;
   modes: Mode[];
   postCheckoutScript: string | null;
@@ -151,6 +158,12 @@ function buildCommonTools(ctx: ToolContext, outputSchema?: JsonSchema): Pullfrog
     GitFetchTool(ctx),
     UploadFileTool(ctx),
   ];
+
+  // cross-repo tools only surface on --xrepo runs (keeps the single-repo tool
+  // list unchanged). list_repos + checkout_repo gate further on ctx.xrepo.
+  if (ctx.xrepo) {
+    tools.push(ListReposTool(ctx), CheckoutRepoTool(ctx));
+  }
 
   const isStandalone = ctx.payload.event.trigger === "unknown";
   if (isStandalone || outputSchema) {

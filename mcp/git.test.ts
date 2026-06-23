@@ -30,7 +30,7 @@ describe("push URL validation", () => {
   // actual integration testing happens via the agent test suite
 
   it("should block push when actual URL differs from pushUrl", () => {
-    // pushUrl is set by setupGit (base repo) or checkout_pr (fork repo)
+    // pushUrl is set at checkout configuration (setupGit / checkout_repo) or checkout_pr (fork repo)
     const pushUrl = "https://github.com/fork-owner/repo.git";
     const actualUrl = "https://github.com/base-owner/repo.git"; // different repo
 

@@ -18,12 +18,22 @@ export const JsonPayload = type({
   "~pullfrog": "true",
   version: "string",
   "model?": "string | undefined",
+  "modelExplicit?": "boolean | undefined",
   prompt: "string",
   "triggerer?": "string | undefined",
 
+  "baseInstructions?": "string | undefined",
   "eventInstructions?": "string",
   "previousRunsNote?": "string",
   "event?": "object",
+  "xrepo?": type({
+    mode: "'all' | 'explicit'",
+    read: "string[]",
+    write: "string[]",
+    // optional so a payload from an older server build (pre-`unavailable`)
+    // still parses against a newer action across a rolling deploy.
+    "unavailable?": "string[]",
+  }).or("undefined"),
   "timeout?": "string | undefined",
   "progressComment?": type({
     id: "string",
@@ -153,14 +163,19 @@ export function resolvePayload(
     "~pullfrog": true as const,
     version: jsonPayload?.version ?? packageJson.version,
     model,
+    // explicit only when the model came from a per-run override flag (carried on
+    // the JSON payload). a GHA `model` input or the repo default is not explicit.
+    modelExplicit: jsonPayload?.modelExplicit ?? false,
     prompt,
     triggerer:
       jsonPayload?.triggerer ??
       // it's not a common use case but GITHUB_ACTOR can be a user when the workflow is manually triggered by a user through GitHub Actions UI
       (!isPullfrog(process.env.GITHUB_ACTOR) ? process.env.GITHUB_ACTOR : undefined),
+    baseInstructions: jsonPayload?.baseInstructions,
     eventInstructions: jsonPayload?.eventInstructions,
     previousRunsNote: jsonPayload?.previousRunsNote,
     event,
+    xrepo: jsonPayload?.xrepo,
     timeout: inputs.timeout ?? jsonPayload?.timeout,
     cwd: resolveCwd(inputs.cwd),
     progressComment: jsonPayload?.progressComment,

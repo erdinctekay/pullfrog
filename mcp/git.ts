@@ -3,7 +3,13 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { regex } from "arkregex";
 import { type } from "arktype";
-import type { StoredPushDest } from "../toolState.ts";
+import {
+  primaryRepoState,
+  type RepoAccess,
+  type RepoToolState,
+  requireRepoState,
+  type StoredPushDest,
+} from "../toolState.ts";
 import {
   assertApiCommittable,
   createSignedCommit,
@@ -13,6 +19,7 @@ import { log } from "../utils/cli.ts";
 import { $git, $gitFetchWithDeepen } from "../utils/gitAuth.ts";
 import { executeLifecycleHook, type LifecycleHookFailure } from "../utils/lifecycle.ts";
 import { $ } from "../utils/shell.ts";
+import { resolveRepoCtx } from "./resolveRepoCtx.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -33,12 +40,14 @@ type PushDestination = {
  */
 function getPushDestination(
   branch: string,
-  storedDest: StoredPushDest | undefined
+  storedDest: StoredPushDest | undefined,
+  cwd: string
 ): PushDestination {
   // prefer stored destination from checkout_pr when it matches the current branch
   if (storedDest && storedDest.localBranch === branch) {
     log.debug(`using stored push destination: ${storedDest.remoteName}/${storedDest.remoteBranch}`);
     const url = $("git", ["remote", "get-url", "--push", storedDest.remoteName], {
+      cwd,
       log: false,
     }).trim();
     return { remoteName: storedDest.remoteName, remoteBranch: storedDest.remoteBranch, url };
@@ -46,15 +55,18 @@ function getPushDestination(
 
   // fall back to git config (for branches not created by checkout_pr)
   try {
-    const pushRemote = $("git", ["config", `branch.${branch}.pushRemote`], { log: false }).trim();
-    const merge = $("git", ["config", `branch.${branch}.merge`], { log: false }).trim();
+    const pushRemote = $("git", ["config", `branch.${branch}.pushRemote`], {
+      cwd,
+      log: false,
+    }).trim();
+    const merge = $("git", ["config", `branch.${branch}.merge`], { cwd, log: false }).trim();
     const remoteBranch = merge.replace(/^refs\/heads\//, "");
-    const url = $("git", ["remote", "get-url", "--push", pushRemote], { log: false }).trim();
+    const url = $("git", ["remote", "get-url", "--push", pushRemote], { cwd, log: false }).trim();
     return { remoteName: pushRemote, remoteBranch, url };
   } catch {
     // no push config - branch was created locally without checkout_pr
     log.debug(`no push config for ${branch}, falling back to origin/${branch}`);
-    const url = $("git", ["remote", "get-url", "--push", "origin"], { log: false }).trim();
+    const url = $("git", ["remote", "get-url", "--push", "origin"], { cwd, log: false }).trim();
     return { remoteName: "origin", remoteBranch: branch, url };
   }
 }
@@ -142,18 +154,23 @@ export function validateTagName(tag: string): void {
  */
 function pushesToBaseRepo(ctx: ToolContext): boolean {
   const baseUrl = `https://github.com/${ctx.repo.owner}/${ctx.repo.name}.git`;
-  return normalizeUrl(ctx.toolState.pushUrl ?? "") === normalizeUrl(baseUrl);
+  return normalizeUrl(primaryRepoState(ctx.toolState).pushUrl ?? "") === normalizeUrl(baseUrl);
 }
 
 /**
  * validate that the push destination matches expected URL.
- * pushUrl is set by setupGit (base repo) and updated by checkout_pr (fork repo).
+ * pushUrl is set at checkout configuration (setupGit for the primary, checkout_repo for
+ * secondaries) and updated by checkout_pr (fork repo).
  */
-function validatePushDestination(ctx: ToolContext, branch: string): PushDestination {
-  const pushUrl = ctx.toolState.pushUrl;
+function validatePushDestination(
+  repoState: RepoToolState,
+  branch: string,
+  cwd: string
+): PushDestination {
+  const pushUrl = repoState.pushUrl;
   if (!pushUrl) throw new Error("pushUrl not set - setupGit must run before push_branch");
 
-  const dest = getPushDestination(branch, ctx.toolState.pushDest);
+  const dest = getPushDestination(branch, repoState.pushDest, cwd);
 
   if (normalizeUrl(dest.url) !== normalizeUrl(pushUrl)) {
     throw new Error(
@@ -172,11 +189,27 @@ export const PushBranch = type({
     .describe("The branch name to push (defaults to current branch)")
     .optional(),
   force: type.boolean.describe("Force push (use with caution)").default(false),
+  "repo?": type.string.describe(
+    "cross-repo runs only: the writable secondary repo whose checkout to push from (bare name, from list_repos). omit for the primary repo."
+  ),
 });
 
 /** target guards shared by push_branch and commit_changes: the cross-PR
- * backstop and the restricted-mode default-branch block. */
-function assertPushTarget(ctx: ToolContext, branch: string, pushDest: PushDestination): void {
+ * backstop and the default-branch block. the default-branch block fires in
+ * restricted mode (any repo) and for every non-primary secondary — cross-repo
+ * secondaries are PR-only by design, so a writable secondary must never push
+ * straight to its default branch even when the primary's `push` is `enabled`. */
+function assertPushTarget(
+  ctx: ToolContext,
+  params: {
+    branch: string;
+    pushDest: PushDestination;
+    defaultBranch: string;
+    access: RepoAccess;
+  }
+): void {
+  const branch = params.branch;
+  const pushDest = params.pushDest;
   // backstop against subagent-induced cross-PR clobbers: a subagent
   // shares cwd + toolState with the orchestrator, so its `checkout_pr(N)`
   // moves HEAD to pr-N and persists pushDest pointing at the foreign
@@ -199,11 +232,13 @@ function assertPushTarget(ctx: ToolContext, branch: string, pushDest: PushDestin
     }
   }
 
-  // block pushes to default branch in restricted mode
-  const defaultBranch = ctx.repo.data.default_branch || "main";
-  if (ctx.payload.push === "restricted" && pushDest.remoteBranch === defaultBranch) {
+  // block default-branch pushes in restricted mode, and always on secondaries
+  // (cross-repo write checkouts are PR-only — never a direct default-branch push).
+  const blockDefaultBranch = ctx.payload.push === "restricted" || params.access !== "primary";
+  if (blockDefaultBranch && pushDest.remoteBranch === params.defaultBranch) {
+    const where = params.access === "primary" ? "" : ` of secondary repo '${pushDest.remoteName}'`;
     throw new Error(
-      `Push blocked: cannot push directly to default branch '${pushDest.remoteBranch}'. ` +
+      `Push blocked: cannot push directly to default branch '${pushDest.remoteBranch}'${where}. ` +
         `Create a feature branch and open a PR instead.`
     );
   }
@@ -314,11 +349,15 @@ const TRANSIENT_RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 30000];
  * only push_branch retried, so a tag push or branch delete that happened to
  * hit an un-replicated edge failed outright even though the token was valid.
  */
-async function pushWithRetry(args: string[], token: string): Promise<void> {
+async function pushWithRetry(
+  args: string[],
+  token: string,
+  cwd: string = process.cwd()
+): Promise<void> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      await $git("push", args, { token });
+      await $git("push", args, { token, cwd });
       if (attempt > 0) log.info(`push succeeded on attempt ${attempt + 1}`);
       return;
     } catch (err) {
@@ -342,6 +381,7 @@ async function pushWithRetry(args: string[], token: string): Promise<void> {
 }
 
 export function PushBranchTool(ctx: ToolContext) {
+  const primaryDefaultBranch = ctx.repo.data.default_branch || "main";
   const pushPermission = ctx.payload.push;
 
   return tool({
@@ -356,13 +396,26 @@ export function PushBranchTool(ctx: ToolContext) {
       "Never force push unless explicitly requested. Pushes to the default branch are blocked in restricted mode. " +
       "If the response reports a timeout, the underlying push may have actually succeeded — verify with `git log origin/<branch>` (or this tool with command 'log') before retrying, otherwise you'll push a duplicate.",
     parameters: PushBranch,
-    execute: execute(async ({ branchName, force }) => {
+    execute: execute(async ({ branchName, force, repo }) => {
       // permission check
       if (pushPermission === "disabled") {
         throw new Error("Push is disabled. This repository is configured for read-only access.");
       }
 
-      const branch = branchName || $("git", ["rev-parse", "--abbrev-ref", "HEAD"], { log: false });
+      const rc = resolveRepoCtx(ctx, repo);
+      if (rc.access === "read") {
+        throw new Error(
+          `push blocked: ${rc.owner}/${rc.name} is read-only (reference-only) in this run.`
+        );
+      }
+      const cwd = rc.dir;
+      const repoState = requireRepoState(ctx.toolState, rc.owner, rc.name);
+      // primary's default branch comes from ctx.repo.data; secondaries store it at checkout_repo.
+      const defaultBranch =
+        rc.access === "primary" ? primaryDefaultBranch : repoState.defaultBranch || "main";
+
+      const branch =
+        branchName || $("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, log: false });
       // check the resolved branch too — rev-parse could surface a weird current
       // branch name that would otherwise bypass the user-facing check. use
       // rejectSpecialRef so "refs/heads/main" and symbolic refs like HEAD
@@ -372,7 +425,9 @@ export function PushBranchTool(ctx: ToolContext) {
       // signed-commits mode: same-repo commits are created directly on the
       // remote by commit_changes, so there is nothing to push. fork PRs keep
       // the git push path (the app can't API-commit to a contributor's fork).
-      if (ctx.signedCommits && pushesToBaseRepo(ctx)) {
+      // signedCommits is the primary repo's setting — cross-repo secondaries
+      // keep the normal push path (commit_changes only targets the primary).
+      if (ctx.signedCommits && rc.access === "primary" && pushesToBaseRepo(ctx)) {
         throw new Error(
           "push_branch is not used in signed-commits mode — commits land on the remote via the commit_changes tool. " +
             "call commit_changes to commit your working-tree changes as a GitHub-signed commit. " +
@@ -381,7 +436,7 @@ export function PushBranchTool(ctx: ToolContext) {
       }
 
       // reject push if working tree is dirty — forces agent to commit or discard before pushing
-      const status = $("git", ["status", "--porcelain"], { log: false });
+      const status = $("git", ["status", "--porcelain"], { cwd, log: false });
       if (status) {
         throw new Error(
           `push blocked: working tree is not clean (tracked changes and/or untracked files). commit, discard, or remove stray artifacts before pushing.\n\n` +
@@ -393,8 +448,8 @@ export function PushBranchTool(ctx: ToolContext) {
       }
 
       // validate push destination matches expected URL
-      const pushDest = validatePushDestination(ctx, branch);
-      assertPushTarget(ctx, branch, pushDest);
+      const pushDest = validatePushDestination(repoState, branch, cwd);
+      assertPushTarget(ctx, { branch, pushDest, defaultBranch, access: rc.access });
 
       // use refspec when local and remote branch names differ
       const refspec =
@@ -403,14 +458,16 @@ export function PushBranchTool(ctx: ToolContext) {
         ? ["--force", "-u", pushDest.remoteName, refspec]
         : ["-u", pushDest.remoteName, refspec];
 
-      const prepushSkipped = await runPrepushHook(ctx, "push_branch");
-      if (!prepushSkipped && ctx.prepushScript) {
+      // the prepush hook is a primary-repo setting — secondaries skip it.
+      const prepushSkipped =
+        rc.access === "primary" ? await runPrepushHook(ctx, "push_branch") : false;
+      if (rc.access === "primary" && !prepushSkipped && ctx.prepushScript) {
         // re-verify clean working tree after prepush. a hook that writes tracked
         // files (formatter, type generator, build artifacts) would leave those
         // changes uncommitted — pushing now would silently drop them, and the
         // agent would report a "successful push" of code the hook had expected
         // to be included.
-        const postHookStatus = $("git", ["status", "--porcelain"], { log: false });
+        const postHookStatus = $("git", ["status", "--porcelain"], { cwd, log: false });
         if (postHookStatus) {
           throw new Error(
             `push blocked: the prepush hook modified the working tree. those changes are not included in the push. commit or discard them (or change the hook to not mutate tracked files) before retrying.\n\n` +
@@ -429,7 +486,7 @@ export function PushBranchTool(ctx: ToolContext) {
       // transient — it surfaces here so we can render the integrate-and-retry
       // recovery the agent needs.
       try {
-        await pushWithRetry(pushArgs, ctx.gitToken);
+        await pushWithRetry(pushArgs, rc.gitToken, cwd);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (classifyPushError(msg) === "concurrent-push") {
@@ -452,7 +509,7 @@ export function PushBranchTool(ctx: ToolContext) {
         throw err;
       }
 
-      const pushedSha = $("git", ["rev-parse", "HEAD"], { log: false }).trim();
+      const pushedSha = $("git", ["rev-parse", "HEAD"], { cwd, log: false }).trim();
       log.info(
         `» pushed branch ${branch} to ${pushDest.remoteName}/${pushDest.remoteBranch} (sha ${pushedSha})`
       );
@@ -563,14 +620,26 @@ export function CommitChangesTool(ctx: ToolContext) {
       }
       rejectSpecialRef(branch, "branch");
 
-      const pushDest = validatePushDestination(ctx, branch);
+      // signed commits are a primary-repo concern: the tool operates on the
+      // run's working directory and the base repo's branch.
+      const pushDest = validatePushDestination(
+        primaryRepoState(ctx.toolState),
+        branch,
+        process.cwd()
+      );
       if (!pushesToBaseRepo(ctx)) {
         throw new Error(
           `'${branch}' pushes to the fork '${pushDest.url}', where the app can't create signed commits. ` +
             `commit locally via the git tool and use push_branch instead (those commits will be unsigned).`
         );
       }
-      assertPushTarget(ctx, branch, pushDest);
+      assertPushTarget(ctx, {
+        branch,
+        pushDest,
+        defaultBranch: ctx.repo.data.default_branch || "main",
+        // commit_changes (signed commits) only ever targets the primary repo.
+        access: "primary",
+      });
 
       // run the hook before reading file content so formatter/codegen
       // effects land inside the commit instead of being silently dropped
@@ -752,7 +821,8 @@ const OVERFLOW_PREVIEW_MAX_CHARS = 5_000;
  * shorthand for a merge-base diff, also safe). see [run 26545933188](https://github.com/pullfrog/app/actions/runs/26545933188)
  * for the failure mode this guards against. */
 function detectSymmetricDiffTrap(
-  args: string[]
+  args: string[],
+  cwd: string
 ): { arg: string; aheadRef: string; ahead: number } | null {
   // git's own `--merge-base` flag (2.30+) produces a safe merge-base diff
   // regardless of the positional ref; the GHA runner has git 2.54.x.
@@ -780,8 +850,8 @@ function detectSymmetricDiffTrap(
       if (parts.length !== 2) continue;
       const left = parts[0] || "HEAD";
       const right = parts[1] || "HEAD";
-      const leftAhead = countAhead(right, left);
-      const rightAhead = countAhead(left, right);
+      const leftAhead = countAhead(right, left, cwd);
+      const rightAhead = countAhead(left, right, cwd);
       if (leftAhead === null || rightAhead === null) continue;
       if (leftAhead > 0 && rightAhead > 0) {
         const aheadRef = leftAhead >= rightAhead ? left : right;
@@ -789,7 +859,7 @@ function detectSymmetricDiffTrap(
       }
       continue;
     }
-    const ahead = countAhead("HEAD", p);
+    const ahead = countAhead("HEAD", p, cwd);
     if (ahead === null) continue;
     if (ahead > 0) return { arg: p, aheadRef: p, ahead };
   }
@@ -798,9 +868,9 @@ function detectSymmetricDiffTrap(
 
 /** `rev-list --count head..base` = commits on `base` not on `head`. returns
  * null if either ref is unresolvable (probably a pathspec). */
-function countAhead(head: string, base: string): number | null {
+function countAhead(head: string, base: string, cwd: string): number | null {
   try {
-    const out = $("git", ["rev-list", "--count", `${head}..${base}`], { log: false }).trim();
+    const out = $("git", ["rev-list", "--count", `${head}..${base}`], { cwd, log: false }).trim();
     const n = parseInt(out, 10);
     return Number.isFinite(n) ? n : null;
   } catch {
@@ -846,6 +916,9 @@ const subcommandPattern = regex("^[a-z][a-z0-9-]*$");
 const Git = type({
   command: type(subcommandPattern).describe("Git command (e.g., 'status', 'log', 'diff')"),
   args: type.string.array().describe("Additional arguments for the git command").optional(),
+  "repo?": type.string.describe(
+    "cross-repo runs only: run this git command inside the named secondary repo's checkout (bare name, from list_repos). omit for the primary repo."
+  ),
 });
 
 export function GitTool(ctx: ToolContext) {
@@ -867,6 +940,7 @@ export function GitTool(ctx: ToolContext) {
     execute: execute(async (params) => {
       const command = params.command;
       const args = params.args ?? [];
+      const cwd = resolveRepoCtx(ctx, params.repo).dir;
 
       // guard: {command:"status",args:["status"]} → `git status status`, where
       // git silently treats args[0] as a pathspec. when nothing matches the
@@ -949,7 +1023,7 @@ export function GitTool(ctx: ToolContext) {
       // reviewer subagents. three-dot (`A...B`) and `--merge-base` are
       // always allowed (both produce merge-base diffs).
       if (command === "diff") {
-        const trap = detectSymmetricDiffTrap(args);
+        const trap = detectSymmetricDiffTrap(args, cwd);
         if (trap) {
           throw new Error(
             `git diff '${trap.arg}' would include the inverse of ${trap.ahead} commit(s) on '${trap.aheadRef}' that aren't on the other side — that's a symmetric tree diff full of upstream noise, not your branch's own changes.\n\n` +
@@ -967,6 +1041,7 @@ export function GitTool(ctx: ToolContext) {
       if (command === "merge-base" && args.includes("--is-ancestor")) {
         let isAncestor = true;
         $("git", [command, ...args], {
+          cwd,
           log: false,
           onError: (r) => {
             if (r.status === 1) {
@@ -985,7 +1060,7 @@ export function GitTool(ctx: ToolContext) {
         return { success: true, isAncestor };
       }
 
-      const output = $("git", [command, ...args], { log: false });
+      const output = $("git", [command, ...args], { cwd, log: false });
       const lineCount = output.split("\n").length;
       if (output.length > MAX_GIT_OUTPUT_CHARS) {
         const spilled = spillGitOutput({ command, args, output, lineCount });
@@ -1007,6 +1082,9 @@ export function GitTool(ctx: ToolContext) {
 const GitFetch = type({
   ref: type.string.describe("Ref to fetch: branch name, tag, or 'pull/N/head' for PRs"),
   depth: type.number.describe("Fetch depth (for shallow clones)").optional(),
+  "repo?": type.string.describe(
+    "cross-repo runs only: fetch inside the named secondary repo's checkout (bare name, from list_repos). omit for the primary repo."
+  ),
 });
 
 export function GitFetchTool(ctx: ToolContext) {
@@ -1018,11 +1096,12 @@ export function GitFetchTool(ctx: ToolContext) {
     parameters: GitFetch,
     execute: execute(async (params) => {
       rejectIfLeadingDash(params.ref, "ref");
+      const rc = resolveRepoCtx(ctx, params.repo);
       const fetchArgs = ["--no-tags", "origin", params.ref];
       if (params.depth !== undefined) {
         fetchArgs.push(`--depth=${params.depth}`);
       }
-      await $gitFetchWithDeepen(fetchArgs, { token: ctx.gitToken }, "git_fetch");
+      await $gitFetchWithDeepen(fetchArgs, { token: rc.gitToken, cwd: rc.dir }, "git_fetch");
       return { success: true, ref: params.ref };
     }),
   });

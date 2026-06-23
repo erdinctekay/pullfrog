@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, realpathSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ShellPermission } from "../external.ts";
-import type { ToolState } from "../toolState.ts";
+import { requireRepoState, type ToolState } from "../toolState.ts";
 import { log } from "./cli.ts";
 import type { OctokitWithPlugins } from "./github.ts";
 import { isInsideDocker } from "./globals.ts";
@@ -222,16 +222,37 @@ export interface GitContext {
 
 export type SetupGitParams = GitContext;
 
+/** GitContext plus an explicit working-tree directory (primary cwd or a
+ * secondary clone under ctx.tmpdir/xrepo/<name>). */
+export interface ConfigureRepoGitParams extends GitContext {
+  dir: string;
+}
+
 /**
- * setup git configuration and authentication for the repository.
+ * setup git configuration + authentication for the PRIMARY repo working tree
+ * (process.cwd()). thin wrapper over configureRepoGit. preserves the existing
+ * single-repo call shape in main.ts.
+ */
+export async function setupGit(params: SetupGitParams): Promise<void> {
+  await configureRepoGit({ ...params, dir: process.cwd() });
+}
+
+/**
+ * setup git configuration and authentication for a repository working tree at
+ * `params.dir`. used for the primary repo (dir = cwd) and for secondary repos
+ * cloned on demand by checkout_repo (dir = ctx.tmpdir/xrepo/<name>).
  * - configures git identity (user.email, user.name)
  * - sets up authentication via gitToken (minimal contents:write)
+ * - records pushUrl + initialHead onto the repo's RepoToolState (must already
+ *   be registered in toolState.repos)
  *
  * gitToken is a minimal-permission token (contents + workflows) used for git operations.
  * it is assumed to be potentially exfiltratable, so it has limited scope.
  */
-export async function setupGit(params: SetupGitParams): Promise<void> {
-  const repoDir = process.cwd();
+export async function configureRepoGit(params: ConfigureRepoGitParams): Promise<void> {
+  const repoDir = params.dir;
+  const repoState = requireRepoState(params.toolState, params.owner, params.name);
+  repoState.dir = repoDir;
 
   // 1. configure git identity
   log.info("» setting up git configuration...");
@@ -306,7 +327,7 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
   $("git", ["remote", "set-url", "origin", originUrl], { cwd: repoDir });
 
   // initialize pushUrl to base repo - may be updated by checkout_pr for fork PRs
-  params.toolState.pushUrl = originUrl;
+  repoState.pushUrl = originUrl;
 
   // disable credential helpers to prevent prompts and ensure clean auth state
   $("git", ["config", "--local", "credential.helper", ""], { cwd: repoDir });
@@ -314,7 +335,7 @@ export async function setupGit(params: SetupGitParams): Promise<void> {
   // pin the run-entry HEAD for the checkout_pr initial-branch invariant; see
   // captureInitialHead for the named-branch vs detached split and why it
   // matters (zed-industries/cloud 2026-05-18 cross-PR clobber shape).
-  params.toolState.initialHead = captureInitialHead(repoDir);
+  repoState.initialHead = captureInitialHead(repoDir);
 
   log.info("» git authentication configured");
 }

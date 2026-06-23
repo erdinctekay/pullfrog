@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { primaryRepoState } from "../toolState.ts";
 import { resolveBodyAssets } from "../utils/body.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -32,7 +33,7 @@ export function IssueInfoTool(ctx: ToolContext) {
       });
 
       // set issue context
-      ctx.toolState.issueNumber = issue_number;
+      primaryRepoState(ctx.toolState).issueNumber = issue_number;
 
       const hints: string[] = [];
       if (data.comments > 0) {

@@ -36,9 +36,14 @@ export { MAX_LEARNINGS_LENGTH, truncateAtLineBoundary };
  */
 
 export const LEARNINGS_FILE_NAME = "pullfrog-learnings.md";
+export const XREPO_LEARNINGS_FILE_NAME = "pullfrog-xrepo-learnings.md";
 
 export function learningsFilePath(tmpdir: string): string {
   return join(tmpdir, LEARNINGS_FILE_NAME);
+}
+
+export function xrepoLearningsFilePath(tmpdir: string): string {
+  return join(tmpdir, XREPO_LEARNINGS_FILE_NAME);
 }
 
 /** seed the rolling learnings tmpfile with the verbatim DB body (or empty
@@ -51,6 +56,17 @@ export async function seedLearningsFile(params: {
   current: string | null;
 }): Promise<string> {
   const path = learningsFilePath(params.tmpdir);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, params.current ?? "", "utf8");
+  return path;
+}
+
+/** seed the org-level cross-repo learnings tmpfile (--xrepo runs only). */
+export async function seedXrepoLearningsFile(params: {
+  tmpdir: string;
+  current: string | null;
+}): Promise<string> {
+  const path = xrepoLearningsFilePath(params.tmpdir);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, params.current ?? "", "utf8");
   return path;
@@ -126,5 +142,50 @@ export async function persistLearnings(ctx: ToolContext): Promise<void> {
     log.info("» learnings updated");
   } catch (err) {
     log.warning(`learnings persist failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Read the agent-edited cross-repo learnings tmpfile and PATCH it to
+ * `Account.xrepoLearnings`. Org-level analogue of `persistLearnings` —
+ * same best-effort + unchanged-from-seed gating. Only seeded on --xrepo runs,
+ * so this is a no-op when `xrepoLearningsFilePath` is unset.
+ */
+export async function persistXrepoLearnings(ctx: ToolContext): Promise<void> {
+  const filePath = ctx.toolState.xrepoLearningsFilePath;
+  if (!filePath) return;
+  if (ctx.toolState.xrepoLearningsPersistAttempted) return;
+  ctx.toolState.xrepoLearningsPersistAttempted = true;
+  const current = await readLearningsFile(filePath);
+  if (current === null) {
+    log.debug(`xrepo learnings tmpfile missing or unreadable at ${filePath} — skipping persist`);
+    return;
+  }
+  const seed = ctx.toolState.xrepoLearningsSeed?.trim() ?? "";
+  if (current === seed) {
+    log.debug("xrepo learnings tmpfile unchanged from seed — skipping persist");
+    return;
+  }
+  try {
+    const response = await apiFetch({
+      path: `/api/account/${ctx.repo.owner}/xrepo-learnings`,
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${ctx.apiToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ learnings: current, model: ctx.toolState.model }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+      const error = await response.text().catch(() => "(no body)");
+      log.warning(`xrepo learnings persist failed (${response.status}): ${error}`);
+      return;
+    }
+    log.info("» xrepo learnings updated");
+  } catch (err) {
+    log.warning(
+      `xrepo learnings persist failed: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }

@@ -33,36 +33,34 @@ export type StoredPushDest = {
  */
 export type CommentableLines = { RIGHT: Set<number>; LEFT: Set<number> };
 
+/** access tier of a checked-out repo, drives token routing + push gating. */
+export type RepoAccess = "primary" | "write" | "read";
+
 /**
- * mutable per-run record of facts that occurred during execution. shared
- * between the action process and the MCP server (one process — toolState is
- * just a JS object passed by reference into both surfaces).
- *
- * design rule: ToolState is LITERAL. each field records a thing that
- * happened — `review` is set when `create_pull_request_review` succeeded,
- * `finalSummaryWritten` flips when `report_progress` wrote a non-plan body,
- * `selectedMode` is set when `select_mode` was called. fields should never
- * encode the absence of an event ("unsubmittedReview", "missingArtifact"),
- * speculative state, or values derived from other fields.
- *
- * any predicate the rest of the code needs ("the agent picked review mode but
- * never produced a review or progress write") is computed inline at the call
- * site, not stored. derived state in this struct invariably drifts from the
- * literal fields under refactors and is the wrong layer for the check.
- *
- * write narrowly: prefer adding state inside the tool that mutates it (e.g.
- * `create_pull_request_review` populates `toolState.review`) and reading
- * narrowly elsewhere. don't introduce flags from main.ts that mirror what an
- * MCP tool already records.
+ * per-repo working-tree + PR state. the primary repo is keyed like any other
+ * in `toolState.repos`; secondaries are added by `checkout_repo`. this is the
+ * single source of truth for all repo-scoped git/PR state — there are no
+ * parallel inline fields on `ToolState`. read via `primaryRepoState(toolState)`
+ * for primary-only call sites, or `requireRepoState(toolState, owner, name)`
+ * when a `repo` param routes to a specific checkout.
  */
-export interface ToolState {
+export interface RepoToolState {
+  owner: string;
+  name: string;
+  /** working directory: primary = `process.cwd()`; secondary = `ctx.tmpdir/xrepo/<name>` */
+  dir: string;
+  access: RepoAccess;
+  // default branch name. for the primary this comes from ctx.repo.data; for
+  // secondaries it's captured by checkout_repo and drives the restricted-mode
+  // default-branch push guard.
+  defaultBranch?: string;
   // where we're allowed to push - base repo initially, fork URL for fork PRs
-  // set by setupGit, updated by checkout_pr. always set before push validation.
+  // set by configureRepoGit, updated by checkout_pr. always set before push validation.
   pushUrl?: string;
   // push destination set by checkout_pr - used as primary source in push_branch
   // because git config reads can fail in certain environments
   pushDest?: StoredPushDest;
-  // HEAD identity captured by setupGit at run start. load-bearing for the
+  // HEAD identity captured by configureRepoGit at run start. load-bearing for the
   // checkout_pr initial-branch invariant: the only sanctioned HEAD positions
   // when calling checkout_pr are the run-entry HEAD or the target `pr-N`.
   // blocks the zed-style cross-PR clobber where a subagent left HEAD on
@@ -101,6 +99,40 @@ export interface ToolState {
   // SHA to diff incrementally against — set from event payload on first checkout,
   // then from checkoutSha when review.ts detects new commits mid-review
   beforeSha?: string;
+  diffCoverage?: DiffCoverageState | undefined;
+}
+
+/**
+ * mutable per-run record of facts that occurred during execution. shared
+ * between the action process and the MCP server (one process — toolState is
+ * just a JS object passed by reference into both surfaces).
+ *
+ * design rule: ToolState is LITERAL. each field records a thing that
+ * happened — `review` is set when `create_pull_request_review` succeeded,
+ * `finalSummaryWritten` flips when `report_progress` wrote a non-plan body,
+ * `selectedMode` is set when `select_mode` was called. fields should never
+ * encode the absence of an event ("unsubmittedReview", "missingArtifact"),
+ * speculative state, or values derived from other fields.
+ *
+ * any predicate the rest of the code needs ("the agent picked review mode but
+ * never produced a review or progress write") is computed inline at the call
+ * site, not stored. derived state in this struct invariably drifts from the
+ * literal fields under refactors and is the wrong layer for the check.
+ *
+ * write narrowly: prefer adding state inside the tool that mutates it (e.g.
+ * `create_pull_request_review` populates `toolState.review`) and reading
+ * narrowly elsewhere. don't introduce flags from main.ts that mirror what an
+ * MCP tool already records.
+ */
+export interface ToolState {
+  // single source of truth for per-repo git/PR working-tree state, keyed by
+  // "owner/name". the primary (triggering) repo is keyed like any other —
+  // seeded at init; secondaries are added on demand by checkout_repo. read via
+  // primaryRepoState() or requireRepoState() — never re-introduce inline
+  // per-repo fields here.
+  repos: Map<string, RepoToolState>;
+  // key into `repos` for the primary (triggering) repo.
+  primaryRepoKey: string;
   selectedMode?: string;
   // number of prepush hook failures this run. push_branch runs the hook
   // while this is 0 and skips it once non-zero; never decremented within
@@ -170,6 +202,12 @@ export interface ToolState {
   // the error-path / exit-signal callers from a redundant second PATCH
   // after the success path already persisted.
   learningsPersistAttempted?: boolean;
+  // org-level cross-repo learnings tmpfile — same lifecycle as the repo-level
+  // learnings file but seeded from `Account.xrepoLearnings` and only on
+  // --xrepo runs. persisted to /api/account/[owner]/xrepo-learnings.
+  xrepoLearningsFilePath?: string;
+  xrepoLearningsSeed?: string;
+  xrepoLearningsPersistAttempted?: boolean;
   output?: string | undefined;
   usageEntries: AgentUsage[];
   model?: string | undefined;
@@ -178,7 +216,6 @@ export interface ToolState {
   // alone) so the "via Pullfrog for OSS" attribution is consistent everywhere.
   oss?: boolean | undefined;
   todoTracker?: TodoTracker | undefined;
-  diffCoverage?: DiffCoverageState | undefined;
   // mutable handle the agent harness writes to as a run progresses (recent
   // stderr ring buffer reference, last provider-error label, event count).
   // read by main.ts's outer catch so a watchdog-fired activity timeout still
@@ -189,6 +226,10 @@ export interface ToolState {
 
 interface InitToolStateParams {
   progressComment: { id: string; type: ProgressCommentType } | undefined;
+  // primary repo identity + working tree (process.cwd()), seeded into `repos`.
+  owner: string;
+  name: string;
+  dir: string;
 }
 
 export function initToolState(params: InitToolStateParams): ToolState {
@@ -198,11 +239,66 @@ export function initToolState(params: InitToolStateParams): ToolState {
     log.info(`» using pre-created progress comment: ${resolved.id} (${resolved.type})`);
   }
 
+  const primaryRepoKey = repoKey(params.owner, params.name);
+  const repos = new Map<string, RepoToolState>([
+    [
+      primaryRepoKey,
+      { owner: params.owner, name: params.name, dir: params.dir, access: "primary" },
+    ],
+  ]);
+
   return {
+    repos,
+    primaryRepoKey,
     progressComment: resolved,
     hadProgressComment: !!resolved,
     prepushFailureCount: 0,
     backgroundProcesses: new Map(),
     usageEntries: [],
   };
+}
+
+/** stable "owner/name" key for the `repos` map. lowercased — GitHub repo names are case-insensitive. */
+export function repoKey(owner: string, name: string): string {
+  return `${owner}/${name}`.toLowerCase();
+}
+
+/** the primary (triggering) repo's state. throws if init hasn't run. */
+export function primaryRepoState(toolState: ToolState): RepoToolState {
+  const state = toolState.repos.get(toolState.primaryRepoKey);
+  if (!state) throw new Error("primary repo state not initialized");
+  return state;
+}
+
+/**
+ * state for a specific checked-out repo. throws when the repo isn't a
+ * registered checkout — keeps the push/PR allow-set honest (the only way a
+ * secondary becomes registered is via `checkout_repo`).
+ */
+export function requireRepoState(toolState: ToolState, owner: string, name: string): RepoToolState {
+  const state = toolState.repos.get(repoKey(owner, name));
+  if (!state) {
+    throw new Error(
+      `repo ${repoKey(owner, name)} is not a registered checkout — use checkout_repo first`
+    );
+  }
+  return state;
+}
+
+/** get-or-create a repo's state (used by checkout_repo when registering a secondary). */
+export function ensureRepoState(
+  toolState: ToolState,
+  init: { owner: string; name: string; dir: string; access: RepoAccess }
+): RepoToolState {
+  const key = repoKey(init.owner, init.name);
+  const existing = toolState.repos.get(key);
+  if (existing) return existing;
+  const created: RepoToolState = {
+    owner: init.owner,
+    name: init.name,
+    dir: init.dir,
+    access: init.access,
+  };
+  toolState.repos.set(key, created);
+  return created;
 }

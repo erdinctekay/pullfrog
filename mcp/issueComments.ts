@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { primaryRepoState } from "../toolState.ts";
 import { resolveBodyAssets } from "../utils/body.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
@@ -16,7 +17,7 @@ export function GetIssueCommentsTool(ctx: ToolContext) {
     parameters: GetIssueComments,
     execute: execute(async ({ issue_number }) => {
       // set issue context
-      ctx.toolState.issueNumber = issue_number;
+      primaryRepoState(ctx.toolState).issueNumber = issue_number;
 
       const comments = await ctx.octokit.paginate(ctx.octokit.rest.issues.listComments, {
         owner: ctx.repo.owner,

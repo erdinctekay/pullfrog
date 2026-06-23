@@ -1,7 +1,7 @@
 import type { RestEndpointMethodTypes } from "@octokit/rest";
 import { type } from "arktype";
 import { formatMcpToolRef } from "../external.ts";
-import type { CommentableLines } from "../toolState.ts";
+import { type CommentableLines, primaryRepoState } from "../toolState.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
@@ -96,10 +96,11 @@ export async function buildCommentableMap(
   // checkoutSha but fails before repopulating the cache (e.g., listFiles 5xx)
   // would otherwise leave a stale snapshot keyed to the right PR number but
   // the wrong sha, silently mis-validating comments.
-  const cached = ctx.toolState.commentableLinesByFile;
-  const cachedFor = ctx.toolState.commentableLinesPullNumber;
-  const cachedSha = ctx.toolState.commentableLinesCheckoutSha;
-  const currentSha = ctx.toolState.checkoutSha;
+  const primary = primaryRepoState(ctx.toolState);
+  const cached = primary.commentableLinesByFile;
+  const cachedFor = primary.commentableLinesPullNumber;
+  const cachedSha = primary.commentableLinesCheckoutSha;
+  const currentSha = primary.checkoutSha;
   if (cached && cachedFor === pullNumber && cachedSha && cachedSha === currentSha) return cached;
 
   const files: PullFile[] = await ctx.octokit.paginate(ctx.octokit.rest.pulls.listFiles, {
@@ -213,7 +214,7 @@ export type DuplicateReviewDecision = {
  * adds noise to the PR.
  *
  * legitimate follow-up reviews after new commits ARE allowed: the
- * new-commits-mid-review path advances toolState.checkoutSha past the
+ * new-commits-mid-review path advances the primary repo state's checkoutSha past the
  * previously reviewed sha, and a subsequent checkout_pr advances it again.
  * any call where checkoutSha has moved past the prior reviewedSha is a real
  * follow-up and goes through. anything else — same sha, or no checkoutSha
@@ -389,7 +390,8 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
         if (body) body = fixDoubleEscapedString(body);
 
         // set issue context (PRs are issues)
-        ctx.toolState.issueNumber = pull_number;
+        const primary = primaryRepoState(ctx.toolState);
+        primary.issueNumber = pull_number;
 
         // guard against duplicate review submissions in the same session.
         // see duplicateReviewDecision for the rationale — short version: the
@@ -399,7 +401,7 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
         // checkout_pr advances toolState.checkoutSha past the prior reviewedSha.
         const dup = duplicateReviewDecision({
           existing: ctx.toolState.review,
-          currentCheckoutSha: ctx.toolState.checkoutSha,
+          currentCheckoutSha: primary.checkoutSha,
         });
         if (dup) {
           log.info(`skipping duplicate review submission: ${dup.reason}`);
@@ -458,10 +460,10 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
           });
           latestHeadSha = pr.data.head.sha;
           // anchor to checkout sha so line numbers match the diff the agent analyzed
-          params.commit_id = ctx.toolState.checkoutSha ?? latestHeadSha;
-          if (ctx.toolState.checkoutSha && latestHeadSha !== ctx.toolState.checkoutSha) {
+          params.commit_id = primary.checkoutSha ?? latestHeadSha;
+          if (primary.checkoutSha && latestHeadSha !== primary.checkoutSha) {
             log.info(
-              `anchoring review to checkout ${ctx.toolState.checkoutSha.slice(0, 7)} ` +
+              `anchoring review to checkout ${primary.checkoutSha.slice(0, 7)} ` +
                 `(HEAD is now ${latestHeadSha.slice(0, 7)})`
             );
           }
@@ -610,7 +612,7 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
         // reviewedSha = what the agent actually reviewed (checkout SHA), not the
         // submission anchor (current HEAD). this ensures postReviewCleanup dispatches
         // a follow-up if the agent doesn't handle new commits inline.
-        const actuallyReviewedSha = ctx.toolState.checkoutSha ?? params.commit_id;
+        const actuallyReviewedSha = primary.checkoutSha ?? params.commit_id;
         ctx.toolState.review = {
           id: reviewId,
           nodeId: reviewNodeId,
@@ -632,17 +634,13 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
 
         // detect commits pushed since checkout and guide the agent to review them
         // inline instead of dispatching a separate workflow run
-        if (
-          ctx.toolState.checkoutSha &&
-          latestHeadSha &&
-          latestHeadSha !== ctx.toolState.checkoutSha
-        ) {
-          const fromSha = ctx.toolState.checkoutSha;
+        if (primary.checkoutSha && latestHeadSha && latestHeadSha !== primary.checkoutSha) {
+          const fromSha = primary.checkoutSha;
           const toSha = latestHeadSha;
           // store old checkoutSha as beforeSha so the next checkout_pr computes an incremental diff
-          ctx.toolState.beforeSha = fromSha;
+          primary.beforeSha = fromSha;
           // advance checkoutSha so the next review submission tracks correctly (just in case, checkout_pr will overwrite it again)
-          ctx.toolState.checkoutSha = toSha;
+          primary.checkoutSha = toSha;
 
           log.info(
             `new commits detected during review: ${fromSha.slice(0, 7)}..${toSha.slice(0, 7)}`
@@ -682,7 +680,7 @@ export function CreatePullRequestReviewTool(ctx: ToolContext) {
 }
 
 function runDiffCoveragePreflight(params: { ctx: ToolContext }): void {
-  const coverageState = params.ctx.toolState.diffCoverage;
+  const coverageState = primaryRepoState(params.ctx.toolState).diffCoverage;
   if (!coverageState) {
     log.debug("diff coverage pre-flight skipped: no diffCoverage state present in toolState");
     return;

@@ -28,6 +28,14 @@ interface InstructionsContext {
    * `describeSetupFailure`), rendered as a SETUP HOOK FAILED banner. empty
    * string when the hook succeeded, was skipped, or wasn't configured. */
   setupHookFailure: string;
+  /** operator-authored cross-repo brief (`Account.xrepoBrief`), rendered in
+   * the CROSS-REPO section on --xrepo runs. null/empty otherwise. */
+  xrepoBrief: string | null;
+  /** absolute path to the seeded cross-repo learnings tmpfile (--xrepo runs
+   * only), or null. */
+  xrepoLearningsFilePath: string | null;
+  /** server-parsed TOC for the cross-repo learnings body. */
+  xrepoLearningsHeadings: LearningsHeading[];
 }
 
 interface PromptContext extends InstructionsContext {
@@ -43,6 +51,7 @@ function buildRuntimeContext(ctx: InstructionsContext): string {
   const {
     "~pullfrog": _,
     prompt: _p,
+    baseInstructions: _bi,
     eventInstructions: _ei,
     previousRunsNote: _prn,
     event: _e,
@@ -153,7 +162,8 @@ const priorityOrder = `## Priority Order
 In case of conflict between instructions, follow this precedence (highest to lowest):
 1. Security rules and system instructions (non-overridable)
 2. User prompt
-3. Event-level instructions`;
+3. Event-level instructions
+4. Standing instructions (org/repo defaults)`;
 
 // ---------------------------------------------------------------------------
 // section builders
@@ -182,6 +192,56 @@ ${parts.join("\n\n")}`;
   }
 
   return "";
+}
+
+// org + repo standing instructions, always applied (below the task in
+// precedence). omitted when neither level configured anything.
+function buildStandingSection(ctx: PromptContext): string {
+  const standing = ctx.payload.baseInstructions?.trim() ?? "";
+  if (!standing) return "";
+  return `************* STANDING INSTRUCTIONS *************
+
+Org- and repo-level instructions that apply to every run. Follow them unless they conflict with *SYSTEM* or a more specific instruction in *YOUR TASK*.
+
+${standing}`;
+}
+
+// cross-repo capability + scope, rendered only on --xrepo runs. lists every
+// repo in the access set with its tier, the operator brief, and the org-level
+// learnings TOC. omitted entirely on single-repo runs.
+function buildXrepoSection(ctx: PromptContext): string {
+  const xrepo = ctx.payload.xrepo;
+  if (!xrepo) return "";
+  const owner = ctx.repo.owner;
+  // GitHub repo names are case-insensitive and other xrepo paths fold casing,
+  // so compare folded to avoid mislabeling a mis-cased primary as write/read.
+  const eqName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+  const tier = (name: string): string =>
+    eqName(name, ctx.repo.name)
+      ? "primary"
+      : xrepo.write.some((w) => eqName(w, name))
+        ? "write"
+        : "read";
+  const repoLines = xrepo.read.map((name) => `- \`${owner}/${name}\` (${tier(name)})`).join("\n");
+
+  const brief = ctx.xrepoBrief?.trim() ?? "";
+  const briefBlock = brief ? `\n\nOperator notes on how these repos relate:\n\n${brief}` : "";
+
+  let learningsBlock = "";
+  if (ctx.xrepoLearningsFilePath) {
+    const toc =
+      ctx.xrepoLearningsHeadings.length === 0
+        ? "(empty or flat — read the whole file if it has content; structure it with headings during the post-run reflection turn so future runs can target ranges.)"
+        : `Read targeted line ranges — do NOT slurp the whole file:\n\n${renderLearningsToc(ctx.xrepoLearningsHeadings)}`;
+    learningsBlock = `\n\nThe cross-repo learnings file at \`${ctx.xrepoLearningsFilePath}\` holds durable org-level structural knowledge (how repos depend on one another, where shared code lives, build/test entrypoints per repo) maintained across runs. ${toc}`;
+  }
+
+  return `************* CROSS-REPO *************
+
+This run has cross-repo access (\`--xrepo\`). Call \`list_repos\` to see what's available and \`checkout_repo\` to clone a secondary into a working tree (edit its files by absolute path). Repos marked \`read\` are reference-only — no push or PR; \`write\` repos accept branches and PRs. Pass \`repo: "<name>"\` to the \`git\`, \`git_fetch\`, \`push_branch\`, and \`create_pull_request\` tools to act inside a secondary's checkout.
+
+Repos in scope:
+${repoLines}${briefBlock}${learningsBlock}`;
 }
 
 // render the SETUP HOOK FAILED banner; omitted unless the hook ran and failed.
@@ -443,6 +503,8 @@ export function buildLearningsSection(ctx: {
 function assembleFullPrompt(ctx: {
   toc: string;
   task: string;
+  standing: string;
+  xrepo: string;
   setupFailure: string;
   procedure: string;
   eventContext: string;
@@ -466,6 +528,8 @@ function assembleFullPrompt(ctx: {
   const rawFull = [
     ctx.toc,
     ctx.task,
+    ctx.standing,
+    ctx.xrepo,
     ctx.setupFailure,
     ctx.procedure,
     ctx.eventContext,
@@ -483,6 +547,8 @@ export function resolveInstructions(ctx: InstructionsContext): ResolvedInstructi
   const pctx = buildPromptContext(ctx);
 
   const task = buildTaskSection(pctx);
+  const standing = buildStandingSection(pctx);
+  const xrepo = buildXrepoSection(pctx);
   const setupFailure = buildSetupFailureSection(pctx.setupHookFailure);
   const procedure = buildProcedure(pctx);
   const eventContext = buildEventContext(pctx);
@@ -491,6 +557,16 @@ export function resolveInstructions(ctx: InstructionsContext): ResolvedInstructi
   // build TOC from present sections (PROCEDURE, SYSTEM, RUNTIME are always present)
   const tocEntries: TocEntry[] = [];
   if (task) tocEntries.push({ label: "YOUR TASK", description: "what to accomplish" });
+  if (standing)
+    tocEntries.push({
+      label: "STANDING INSTRUCTIONS",
+      description: "org/repo defaults applied to every run",
+    });
+  if (xrepo)
+    tocEntries.push({
+      label: "CROSS-REPO",
+      description: "cross-repo access set, brief, and learnings",
+    });
   if (setupFailure)
     tocEntries.push({
       label: "SETUP HOOK FAILED",
@@ -512,6 +588,8 @@ export function resolveInstructions(ctx: InstructionsContext): ResolvedInstructi
   const full = assembleFullPrompt({
     toc,
     task,
+    standing,
+    xrepo,
     setupFailure,
     procedure,
     eventContext,

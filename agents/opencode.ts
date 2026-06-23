@@ -50,11 +50,7 @@ import {
   installOpencodeCli,
   type OpenCodeConfig,
 } from "./opencodeShared.ts";
-import {
-  buildLearningsReflectionPrompt,
-  runPostRunRetryLoop,
-  shouldRunReflection,
-} from "./postRun.ts";
+import { buildReflectionPrompt, runPostRunRetryLoop } from "./postRun.ts";
 import { REVIEWER_AGENT_NAME } from "./reviewer.ts";
 import { formatWithLabel, ORCHESTRATOR_LABEL, SessionLabeler } from "./sessionLabeler.ts";
 import {
@@ -1253,10 +1249,7 @@ export const opencode = agent({
       ctx,
       initialResult: result,
       initialUsage: result.usage,
-      reflectionPrompt:
-        ctx.toolState.learningsFilePath && shouldRunReflection(ctx.toolState.selectedMode)
-          ? buildLearningsReflectionPrompt(ctx.toolState.learningsFilePath)
-          : undefined,
+      reflectionPrompt: buildReflectionPrompt(ctx.toolState),
       resume: async (c) =>
         runOpenCode({
           ...runParams,

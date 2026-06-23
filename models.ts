@@ -99,10 +99,15 @@ export const providers = {
       // hasn't indexed it yet (shipped 2026-06-09), so the catalog drift gate
       // can't validate an openRouterResolve. omit it until the mirror catches
       // up; direct BYOK / Claude Code resolves anthropic/claude-fable-5 fine.
-      // not `preferred`: claude-fable-5 is access-gated but the `opencode
-      // models` catalog lists it as authorized for any Anthropic key, so
-      // auto-select would pick it and hard-fail. opus is the universally-
-      // available flagship; fable stays selectable for users with access. #959.
+      //
+      // not `preferred` while fable is still gated behind limited Anthropic
+      // model access — the `opencode models` catalog lists it as authorized for
+      // any Anthropic key, so auto-select would pick it and hard-fail (most
+      // orgs' keys 404 on claude-fable-5 today). opus is the universally-
+      // available flagship, so auto-select and the "Recommended" UI badge point
+      // there; fable stays selectable for users with access. flip `preferred`
+      // back to fable once it's broadly available (and add its `openRouterResolve`
+      // once the mirror indexes it). see ModelSelector's LIMITED_AVAILABILITY note. #959.
       "claude-fable": {
         displayName: "Claude Fable",
         resolve: "anthropic/claude-fable-5",

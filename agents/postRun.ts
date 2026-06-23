@@ -292,9 +292,53 @@ export async function finalizeAgentResult<R extends AgentResult>(params: {
  */
 const REFLECTION_SKIP_MODES: ReadonlySet<string> = new Set(["IncrementalReview"]);
 
-export function shouldRunReflection(mode: string | undefined): boolean {
+function shouldRunReflection(mode: string | undefined): boolean {
   if (!mode) return true;
   return !REFLECTION_SKIP_MODES.has(mode);
+}
+
+/**
+ * org-level analogue of `buildLearningsReflectionPrompt`, delivered on the same
+ * reflection turn during --xrepo runs. nudges the agent to persist *structural*
+ * cross-repo knowledge (how repos depend on each other, where shared code
+ * lives, per-repo build/test entrypoints) — the durable map that makes the next
+ * cross-repo run skip the rediscovery cost. deliberately scoped away from
+ * single-repo facts, which belong in the per-repo learnings file.
+ */
+function buildXrepoLearningsReflectionPrompt(filePath: string): string {
+  return [
+    `CROSS-REPO REFLECTION — this was a cross-repo (--xrepo) run. did you discover anything about how these repos relate that a future cross-repo run would benefit from: dependency direction, where shared code / types / configs live, per-repo build & test entrypoints, or which repo owns a given concern?`,
+    "",
+    `the org-level cross-repo learnings file is at \`${filePath}\`. read it first if you haven't, then edit it in place — the server persists changes at end-of-run, there is no tool to call.`,
+    "",
+    `keep it STRUCTURAL and org-level. single-repo facts (one repo's test command, a local quirk) belong in that repo's own learnings file, not here. record the relationships between repos: "\`api\` consumes types from \`shared\`", "\`web\` and \`mobile\` both depend on \`design-system\`", "run \`pnpm -r build\` from \`platform\` before touching downstream repos".`,
+    "",
+    `same hygiene as the repo learnings file: \`## \` / \`### \` headings, one fact per \`- \` line ≤ 240 chars, evergreen only (no commit/PR/branch refs or line numbers), prune stale or wrong entries. if nothing structural is worth adding and the file looks healthy, leave it alone.`,
+    "",
+    `do NOT call \`set_output\` during this turn.`,
+  ].join("\n");
+}
+
+/**
+ * the combined post-run reflection nudge for a run: the repo-level learnings
+ * reflection, plus the org-level cross-repo reflection when this is an --xrepo
+ * run. each half is gated on its own seeded file — the two seeds are
+ * independent best-effort steps in main.ts, so a failed repo-learnings seed
+ * must not also suppress an org-level cross-repo reflection that did seed.
+ * returns undefined when reflection should be skipped (neither file seeded, or
+ * a reflection-skip mode like IncrementalReview).
+ */
+export function buildReflectionPrompt(toolState: ToolState): string | undefined {
+  if (!shouldRunReflection(toolState.selectedMode)) return undefined;
+  const parts: string[] = [];
+  if (toolState.learningsFilePath) {
+    parts.push(buildLearningsReflectionPrompt(toolState.learningsFilePath));
+  }
+  if (toolState.xrepoLearningsFilePath) {
+    parts.push(buildXrepoLearningsReflectionPrompt(toolState.xrepoLearningsFilePath));
+  }
+  if (parts.length === 0) return undefined;
+  return parts.join("\n\n---\n\n");
 }
 
 /**
@@ -328,7 +372,7 @@ export function shouldRunReflection(mode: string | undefined): boolean {
  * repos, so when a quirk is fixed upstream in tool descriptions the
  * per-repo bullets go stale and we have no batch-invalidation path.
  */
-export function buildLearningsReflectionPrompt(filePath: string): string {
+function buildLearningsReflectionPrompt(filePath: string): string {
   return [
     `REFLECTION — before you finish, think back over this task: did you discover anything about this repo's setup, test commands, conventions, or patterns that is high-confidence and would reliably help future runs?`,
     "",

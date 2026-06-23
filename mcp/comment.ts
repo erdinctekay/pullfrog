@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { primaryRepoState } from "../toolState.ts";
 import { getApiUrl } from "../utils/apiUrl.ts";
 import { buildPullfrogFooter, stripExistingFooter } from "../utils/buildPullfrogFooter.ts";
 import { log } from "../utils/cli.ts";
@@ -203,7 +204,7 @@ export async function reportProgress(
     return { body, action: "skipped" };
   }
 
-  const issueNumber = ctx.payload.event.issue_number ?? ctx.toolState.issueNumber;
+  const issueNumber = ctx.payload.event.issue_number ?? primaryRepoState(ctx.toolState).issueNumber;
   const isPlanMode = ctx.toolState.selectedMode === "Plan";
   const apiCtx = { octokit: ctx.octokit, owner: ctx.repo.owner, repo: ctx.repo.name };
 

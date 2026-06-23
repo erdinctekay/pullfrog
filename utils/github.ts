@@ -105,7 +105,7 @@ type GitHubAppPermissions = {
 };
 
 type AcquireTokenOptions = {
-  repos?: string[];
+  repos?: string[] | undefined;
   permissions?: GitHubAppPermissions;
   /**
    * stashed OIDC credentials for minting after restricted mode deletes

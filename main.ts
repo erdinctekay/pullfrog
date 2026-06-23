@@ -9,7 +9,7 @@ import { reportProgress } from "./mcp/comment.ts";
 import { startInstallation } from "./mcp/dependencies.ts";
 import { startMcpHttpServer, type ToolContext } from "./mcp/server.ts";
 import { computeModes } from "./modes.ts";
-import { initToolState } from "./toolState.ts";
+import { initToolState, primaryRepoState } from "./toolState.ts";
 import {
   type ActivityTimeout,
   AGENT_ACTIVITY_TIMEOUT_MS,
@@ -31,8 +31,14 @@ import {
   writeGitHubUsageSummaryToFile,
 } from "./utils/github.ts";
 import { resolveInstructions } from "./utils/instructions.ts";
-import { persistLearnings, seedLearningsFile } from "./utils/learnings.ts";
+import {
+  persistLearnings,
+  persistXrepoLearnings,
+  seedLearningsFile,
+  seedXrepoLearningsFile,
+} from "./utils/learnings.ts";
 import { describeSetupFailure, executeLifecycleHook } from "./utils/lifecycle.ts";
+import { buildModelAccessError, decideModelAccess } from "./utils/modelAccess.ts";
 import { normalizeEnv, sanitizeSecret } from "./utils/normalizeEnv.ts";
 import {
   captureAuthorizedModels,
@@ -122,11 +128,6 @@ export async function main(): Promise<MainResult> {
   // parse prompt early to extract progressComment for toolState
   const resolvedPromptInput = resolvePromptInput();
 
-  const toolState = initToolState({
-    progressComment:
-      typeof resolvedPromptInput !== "string" ? resolvedPromptInput.progressComment : undefined,
-  });
-
   // resolve and fingerprint git binary before any agent code runs
   resolveGit();
 
@@ -135,6 +136,16 @@ export async function main(): Promise<MainResult> {
   const initialOctokit = createOctokit(jobToken);
   const runContext = await resolveRunContextData({ octokit: initialOctokit, token: jobToken });
   timer.checkpoint("runContextData");
+
+  // seed toolState with the primary repo (keyed in `repos`). dir is the
+  // run-entry cwd; configureRepoGit refreshes it after any payload.cwd chdir.
+  const toolState = initToolState({
+    progressComment:
+      typeof resolvedPromptInput !== "string" ? resolvedPromptInput.progressComment : undefined,
+    owner: runContext.repo.owner,
+    name: runContext.repo.name,
+    dir: process.cwd(),
+  });
 
   // tmpdir hoisted out of the try block: `installFromNpmTarball` reads
   // PULLFROG_TEMP_DIR (set as a side effect of createTempDirectory) when
@@ -188,7 +199,7 @@ export async function main(): Promise<MainResult> {
   toolState.model = payload.model;
   toolState.oss = runContext.oss;
   if (payload.event.trigger === "pull_request_synchronize") {
-    toolState.beforeSha = payload.event.before_sha;
+    primaryRepoState(toolState).beforeSha = payload.event.before_sha;
   }
 
   // stash OIDC credentials in memory before wiping from process.env —
@@ -202,8 +213,21 @@ export async function main(): Promise<MainResult> {
         }
       : null;
 
+  // surface a narrowed cross-repo request in the run output (not just the
+  // server-side dispatch log) so the triggerer sees what wasn't granted.
+  const xrepoUnavailable = payload.xrepo?.unavailable ?? [];
+  if (xrepoUnavailable.length > 0) {
+    log.warning(
+      `» --xrepo: requested but not granted: ${xrepoUnavailable.join(", ")} (unknown repo, different owner, or you lack access)`
+    );
+  }
+
   // resolve tokens first — acquireNewToken needs OIDC env vars for token exchange
-  await using tokenRef = await resolveTokens({ push: payload.push, oidc: oidcCredentials });
+  await using tokenRef = await resolveTokens({
+    push: payload.push,
+    xrepo: payload.xrepo,
+    oidc: oidcCredentials,
+  });
 
   // wipe the GHA runner's known credential leak surface inside $RUNNER_TEMP
   // before the agent spawns. our installation token is already in memory
@@ -269,6 +293,34 @@ export async function main(): Promise<MainResult> {
 
     await using gitAuthServer = await startGitAuthServer(tmpdir);
     setGitAuthServer(gitAuthServer);
+
+    // model-access gate: an explicitly-requested per-run model (`--opus`,
+    // `--model=<slug>`) that this run can't serve hard-fails here, before the
+    // agent starts. standing defaults keep `modelExplicit = false` and fall
+    // through to `validateAgentApiKey`'s missing-key error below (#938).
+    // proxy / byok decisions mutate `payload.proxyModel` so the resolution
+    // beneath sees the corrected routing.
+    const access = decideModelAccess({
+      modelExplicit: payload.modelExplicit ?? false,
+      model: payload.model,
+      oss: runContext.oss,
+      proxyActive: !!payload.proxyModel,
+      subsidyTarget: runContext.proxyModel,
+      resolvedModel: resolveModel({ slug: payload.model }),
+      authorized: getAuthorizedModels(),
+    });
+    if (access.kind === "error") {
+      throw new Error(
+        buildModelAccessError({
+          reason: access.reason,
+          model: payload.model ?? "(unknown)",
+          owner: runContext.repo.owner,
+          name: runContext.repo.name,
+        })
+      );
+    }
+    if (access.kind === "proxy") payload.proxyModel = access.target;
+    if (access.kind === "byok") payload.proxyModel = undefined;
 
     const resolvedModel = payload.proxyModel ? undefined : resolveModel({ slug: payload.model });
 
@@ -372,6 +424,8 @@ export async function main(): Promise<MainResult> {
         return getGitHubInstallationToken();
       },
       gitToken: tokenRef.gitToken,
+      readToken: tokenRef.readToken,
+      xrepo: payload.xrepo,
       apiToken: runContext.apiToken,
       modes,
       postCheckoutScript: runContext.repoSettings.postCheckoutScript,
@@ -434,6 +488,29 @@ export async function main(): Promise<MainResult> {
       );
     }
 
+    // on --xrepo runs, seed the org-level cross-repo learnings tmpfile too.
+    // same lifecycle as repo learnings (read at startup, agent-editable,
+    // persisted at end), but org-scoped and only present cross-repo.
+    if (payload.xrepo) {
+      try {
+        const xrepoPath = await seedXrepoLearningsFile({
+          tmpdir,
+          current: runContext.repoSettings.xrepoLearnings,
+        });
+        toolState.xrepoLearningsFilePath = xrepoPath;
+        toolState.xrepoLearningsSeed = (runContext.repoSettings.xrepoLearnings ?? "").trim();
+        log.info(
+          `» xrepo learnings seeded at ${xrepoPath} (existing=${runContext.repoSettings.xrepoLearnings ? "yes" : "no"})`
+        );
+        const ctxForExit = toolContext;
+        onExitSignal(() => persistXrepoLearnings(ctxForExit));
+      } catch (err) {
+        log.warning(
+          `» xrepo learnings seed failed: ${err instanceof Error ? err.message : String(err)} — continuing without xrepo learnings file`
+        );
+      }
+    }
+
     // seed the rolling PR summary tmpfile when the dispatcher requested it.
     // gated on event being a PR — issue/workflow_dispatch runs have no
     // summarySnapshot to maintain. file path is exposed to the agent via
@@ -479,6 +556,9 @@ export async function main(): Promise<MainResult> {
       learningsFilePath: toolState.learningsFilePath ?? null,
       learningsHeadings: runContext.repoSettings.learningsHeadings,
       setupHookFailure: describeSetupFailure(setupHook.failure),
+      xrepoBrief: runContext.repoSettings.xrepoBrief,
+      xrepoLearningsFilePath: toolState.xrepoLearningsFilePath ?? null,
+      xrepoLearningsHeadings: runContext.repoSettings.xrepoLearningsHeadings,
     });
     const logParts = [
       instructions.eventInstructions
@@ -589,13 +669,13 @@ export async function main(): Promise<MainResult> {
       onActivityTimeout: onInnerActivityTimeout,
       onToolUse: (event) => {
         const wasTracked = recordDiffReadFromToolUse({
-          state: toolState.diffCoverage,
+          state: primaryRepoState(toolState).diffCoverage,
           toolName: event.toolName,
           input: event.input,
           cwd: process.cwd(),
         });
         if (!wasTracked) return;
-        const trackedRanges = toolState.diffCoverage?.coveredRanges ?? [];
+        const trackedRanges = primaryRepoState(toolState).diffCoverage?.coveredRanges ?? [];
         log.debug(
           `» diff coverage tracked from tool ${event.toolName} (${trackedRanges.length} merged range${trackedRanges.length === 1 ? "" : "s"})`
         );

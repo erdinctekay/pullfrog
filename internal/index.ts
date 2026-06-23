@@ -14,6 +14,7 @@ export type {
   ShellPermission,
   ToolPermission,
   WriteablePayload,
+  XrepoConfig,
 } from "../external.ts";
 export {
   DEFAULT_PROXY_MODEL,

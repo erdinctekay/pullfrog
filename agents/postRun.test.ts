@@ -4,6 +4,8 @@ import { getUnsubmittedReview } from "./postRun.ts";
 
 function makeToolState(overrides: Partial<ToolState> = {}): ToolState {
   return {
+    repos: new Map([["o/r", { owner: "o", name: "r", dir: "/tmp/r", access: "primary" }]]),
+    primaryRepoKey: "o/r",
     progressComment: undefined,
     hadProgressComment: true,
     prepushFailureCount: 0,

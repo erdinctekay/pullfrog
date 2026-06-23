@@ -4,6 +4,7 @@ import { log } from "../utils/cli.ts";
 import { fixDoubleEscapedString } from "../utils/fixDoubleEscapedString.ts";
 import { patchWorkflowRunFields } from "../utils/patchWorkflowRunFields.ts";
 import { $ } from "../utils/shell.ts";
+import { resolveRepoCtx } from "./resolveRepoCtx.ts";
 import type { ToolContext } from "./server.ts";
 import { execute, tool } from "./shared.ts";
 
@@ -13,6 +14,9 @@ export const PullRequest = type({
   base: type.string.describe("the base branch to merge into (e.g., 'main')"),
   "draft?": type.boolean.describe(
     "if true, create the pull request as a draft. use when the user explicitly asks for a draft PR."
+  ),
+  "repo?": type.string.describe(
+    "cross-repo runs only: the writable secondary repo to open this PR on (bare name, from list_repos). omit to target the primary repo."
   ),
 });
 
@@ -103,30 +107,39 @@ export function CreatePullRequestTool(ctx: ToolContext) {
     description: "Create a pull request from the current branch",
     parameters: PullRequest,
     execute: execute(async (params) => {
-      const currentBranch = $("git", ["rev-parse", "--abbrev-ref", "HEAD"], { log: false });
+      const rc = resolveRepoCtx(ctx, params.repo);
+      if (rc.access === "read") {
+        throw new Error(
+          `cannot open a pull request on read-only repo ${rc.owner}/${rc.name} — it's reference-only in this run.`
+        );
+      }
+      const currentBranch = $("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: rc.dir,
+        log: false,
+      });
       log.debug(`Current branch: ${currentBranch}`);
 
       const bodyWithFooter = buildPrBodyWithFooter(ctx, params.body);
 
-      const result = await ctx.octokit.rest.pulls.create({
-        owner: ctx.repo.owner,
-        repo: ctx.repo.name,
+      const result = await rc.octokit.rest.pulls.create({
+        owner: rc.owner,
+        repo: rc.name,
         title: params.title,
         body: bodyWithFooter,
         head: currentBranch,
         base: params.base,
         draft: params.draft ?? false,
       });
-      log.info(`» created pull request #${result.data.number} (id ${result.data.id})`);
+      log.info(`» created pull request ${rc.name}#${result.data.number} (id ${result.data.id})`);
 
       // best-effort: request review from the user who triggered the workflow
       const reviewer = ctx.payload.triggerer;
       if (reviewer) {
         try {
           log.debug(`requesting review from ${reviewer} on PR #${result.data.number}`);
-          await ctx.octokit.rest.pulls.requestReviewers({
-            owner: ctx.repo.owner,
-            repo: ctx.repo.name,
+          await rc.octokit.rest.pulls.requestReviewers({
+            owner: rc.owner,
+            repo: rc.name,
             pull_number: result.data.number,
             reviewers: [reviewer],
           });
@@ -135,7 +148,12 @@ export function CreatePullRequestTool(ctx: ToolContext) {
         }
       }
 
-      if (typeof result.data.node_id === "string" && result.data.node_id.length > 0) {
+      // workflow-run linkage only tracks the PRIMARY repo's PR (the run lives there).
+      if (
+        rc.access === "primary" &&
+        typeof result.data.node_id === "string" &&
+        result.data.node_id.length > 0
+      ) {
         await patchWorkflowRunFields(ctx, {
           prNodeId: result.data.node_id,
         });
