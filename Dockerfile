@@ -33,11 +33,14 @@ RUN apt-get update -qq \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# node 24 from nodesource + corepack (provides pnpm without a global install).
+# node 24 from nodesource + corepack (corepack still provisions the customer's
+# declared pnpm/yarn at runtime — see action/utils/packageManager.ts). nub is
+# the repo's own toolchain (`nub run`, `nub ci`, native .ts execution).
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && corepack enable
+    && corepack enable \
+    && npm install -g --ignore-scripts=false @nubjs/nub
 
 # gh cli (matches GHA pre-installed tooling).
 RUN mkdir -p /etc/apt/keyrings \
