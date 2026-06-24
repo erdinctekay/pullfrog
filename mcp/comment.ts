@@ -93,6 +93,15 @@ export function CreateCommentTool(ctx: ToolContext) {
       ctx.toolState.wasUpdated = true;
       log.info(`» created comment ${result.data.id}`);
 
+      // a standalone answer comment on the run's OWN target makes the sticky
+      // progress comment redundant — record it so run-end cleanup deletes the
+      // progress comment even after report_progress finalized (see runLifecycle).
+      // scoped to the target so commenting on a DIFFERENT issue/PR doesn't trip it,
+      // and excludes Plan comments (their own deliberate deliverable, not chrome).
+      if (commentType !== "Plan" && issueNumber === ctx.payload.event.issue_number) {
+        ctx.toolState.answerCommentPosted = true;
+      }
+
       if (commentType === "Plan") {
         if (result.data.node_id) {
           await patchWorkflowRunFields(ctx, { planCommentNodeId: result.data.node_id });

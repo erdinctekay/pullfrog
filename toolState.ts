@@ -169,6 +169,10 @@ export interface ToolState {
   // set after a non-plan report_progress successfully writes the final summary.
   // decoupled from todoTracker.enabled so cleanup detection survives API failures.
   finalSummaryWritten?: boolean;
+  // set when create_issue_comment posted a standalone comment on the run's OWN
+  // target issue/PR. signals the progress comment is now redundant chrome so
+  // run-end cleanup deletes it even though report_progress finalized.
+  answerCommentPosted?: boolean;
   // set by select_mode when Plan + issue_number and plan-comment API returns existing plan (for report_progress target_plan_comment)
   existingPlanCommentId?: number;
   previousPlanBody?: string;

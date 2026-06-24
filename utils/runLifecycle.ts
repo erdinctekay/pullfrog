@@ -125,11 +125,17 @@ export async function finalizeSuccessRun(input: {
   // — when there's nothing to salvage — reports the failure into it. deleting
   // here would strand the user with a vanished "Leaping into action" comment
   // and a no-op error report (see #868).
+  //
+  // the `answerCommentPosted` clause handles the inverse: when the agent posted
+  // a standalone answer comment on the run's OWN target (create_issue_comment)
+  // AND finalized report_progress, the progress comment is redundant chrome
+  // duplicating the answer — delete it so the run leaves a single clean comment
+  // (the answer also notifies subscribers, which an in-place edit would not).
   if (
     input.result.success &&
     input.toolState.progressComment &&
     input.toolState.wasUpdated &&
-    !input.toolState.finalSummaryWritten
+    (!input.toolState.finalSummaryWritten || input.toolState.answerCommentPosted)
   ) {
     await deleteProgressComment(input.toolContext).catch((error) => {
       log.debug(`stranded progress comment cleanup failed: ${error}`);
